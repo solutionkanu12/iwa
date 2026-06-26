@@ -1,0 +1,20 @@
+# Generated build artifacts (r1cs, wasm, ptau, zkey, witnesses, proofs, vk)
+build/
+
+# Generated circuit inputs (produced by gen_input.js)
+input_*.json
+
+# Third-party library (fetched by scripts/setup.sh)
+circomlib/
+
+# Node deps and lockfile
+node_modules/
+package-lock.json
+
+# Stray heavy artifacts if produced outside build/
+*.ptau
+*.zkey
+*.wtns
+*.r1cs
+*.wasm
+*.sym
