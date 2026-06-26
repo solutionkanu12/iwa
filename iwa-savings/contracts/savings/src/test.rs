@@ -221,3 +221,107 @@ fn get_circle_not_found() {
         _ => panic!("expected CircleNotFound"),
     }
 }
+
+#[test]
+fn reputation_perfect_member() {
+    let env = Env::default();
+    let id = env.register(SavingsContract, ());
+    let client = SavingsContractClient::new(&env, &id);
+
+    let cid = client.create_circle(&50i128, &1_000u64, &3u32);
+    let m = member(&env, 1);
+    // Contributed in all three rounds, every one on time.
+    client.seed_contribution(&cid, &1u32, &m, &true);
+    client.seed_contribution(&cid, &2u32, &m, &true);
+    client.seed_contribution(&cid, &3u32, &m, &true);
+
+    let rep = client.get_reputation(&cid, &m);
+    assert_eq!(
+        rep,
+        Reputation {
+            completed_cycles: 3,
+            on_time_count: 3,
+            default_count: 0,
+        }
+    );
+}
+
+#[test]
+fn reputation_one_late_payment() {
+    let env = Env::default();
+    let id = env.register(SavingsContract, ());
+    let client = SavingsContractClient::new(&env, &id);
+
+    let cid = client.create_circle(&50i128, &1_000u64, &3u32);
+    let m = member(&env, 2);
+    client.seed_contribution(&cid, &1u32, &m, &true);
+    client.seed_contribution(&cid, &2u32, &m, &false); // late
+    client.seed_contribution(&cid, &3u32, &m, &true);
+
+    let rep = client.get_reputation(&cid, &m);
+    // Contributed in all three rounds, but one was late, so one default.
+    assert_eq!(rep.completed_cycles, 3);
+    assert_eq!(rep.on_time_count, 2);
+    assert_eq!(rep.default_count, 1);
+}
+
+#[test]
+fn reputation_missed_a_round() {
+    let env = Env::default();
+    let id = env.register(SavingsContract, ());
+    let client = SavingsContractClient::new(&env, &id);
+
+    let cid = client.create_circle(&50i128, &1_000u64, &3u32);
+    let m = member(&env, 3);
+    // Paid rounds 1 and 3 on time, missed round 2 entirely (no record).
+    client.seed_contribution(&cid, &1u32, &m, &true);
+    client.seed_contribution(&cid, &3u32, &m, &true);
+
+    let rep = client.get_reputation(&cid, &m);
+    assert_eq!(rep.completed_cycles, 2); // two rounds contributed
+    assert_eq!(rep.on_time_count, 2);
+    assert_eq!(rep.default_count, 1); // the missed round counts as a default
+}
+
+#[test]
+fn reputation_no_history_is_all_zeros() {
+    let env = Env::default();
+    let id = env.register(SavingsContract, ());
+    let client = SavingsContractClient::new(&env, &id);
+
+    let cid = client.create_circle(&50i128, &1_000u64, &3u32);
+    let m = member(&env, 7);
+
+    let rep = client.get_reputation(&cid, &m);
+    assert_eq!(
+        rep,
+        Reputation {
+            completed_cycles: 0,
+            on_time_count: 0,
+            default_count: 0,
+        }
+    );
+}
+
+#[test]
+fn reputation_derives_from_real_payments() {
+    let env = Env::default();
+    let id = env.register(SavingsContract, ());
+    let client = SavingsContractClient::new(&env, &id);
+
+    // Reputation reads the same records that pay_contribution writes, not only
+    // seeded ones. Round length 1000, so the round 1 deadline is 1000.
+    let cid = client.create_circle(&50i128, &1_000u64, &2u32);
+    let m1 = member(&env, 1);
+    let m2 = member(&env, 2);
+    client.join_circle(&cid, &m1);
+    client.join_circle(&cid, &m2);
+
+    env.ledger().set_timestamp(500);
+    client.pay_contribution(&cid, &1u32, &m1); // on time
+
+    let rep = client.get_reputation(&cid, &m1);
+    assert_eq!(rep.completed_cycles, 1);
+    assert_eq!(rep.on_time_count, 1);
+    assert_eq!(rep.default_count, 0);
+}

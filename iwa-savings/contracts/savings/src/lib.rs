@@ -104,6 +104,20 @@ pub struct CollectResult {
     pub ledger: u32,
 }
 
+/// A member's reputation, derived from contribution records. Never stored, only
+/// computed, so it can never drift from the records it is built from. These are
+/// the three numbers the reputation circuit will later prove over.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Reputation {
+    /// Rounds the member contributed in (on time or late).
+    pub completed_cycles: u32,
+    /// Contributions that were on time.
+    pub on_time_count: u32,
+    /// Rounds the member paid late or missed entirely.
+    pub default_count: u32,
+}
+
 /// On-chain storage keys. None of these reference a real identity.
 #[contracttype]
 #[derive(Clone)]
@@ -343,6 +357,62 @@ impl SavingsContract {
         env.storage()
             .persistent()
             .get(&DataKey::Contribution(circle_id, round, member_commitment))
+    }
+
+    /// Derive a member's reputation from their stored contribution records.
+    ///
+    /// Nothing here is stored separately. The numbers are computed from the same
+    /// `Contribution` records `get_contribution` exposes, so they can never drift
+    /// out of sync. Evaluated over rounds `1..=through`, where `through` is the
+    /// highest round the member has a record for. A round inside that span with
+    /// no record counts as a miss; a record with `on_time == false` counts as a
+    /// late payment. Both feed `default_count`.
+    pub fn get_reputation(
+        env: Env,
+        circle_id: u32,
+        member_commitment: BytesN<32>,
+    ) -> Reputation {
+        let circle = load_circle(&env, circle_id);
+
+        // Bound the scan by the full cycle length (a cycle is `size` rounds) or
+        // how far the circle has advanced, whichever is larger.
+        let cap = if circle.size > circle.current_round {
+            circle.size
+        } else {
+            circle.current_round
+        };
+
+        let mut on_time_count: u32 = 0;
+        let mut late_count: u32 = 0;
+        let mut through: u32 = 0; // highest round the member has a record for
+
+        let mut r: u32 = 1;
+        while r <= cap {
+            let key = DataKey::Contribution(circle_id, r, member_commitment.clone());
+            if let Some(c) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, Contribution>(&key)
+            {
+                if c.on_time {
+                    on_time_count += 1;
+                } else {
+                    late_count += 1;
+                }
+                through = r;
+            }
+            r += 1;
+        }
+
+        let paid = on_time_count + late_count;
+        let missed = through - paid; // rounds in 1..=through with no record
+        let default_count = late_count + missed;
+
+        Reputation {
+            completed_cycles: paid,
+            on_time_count,
+            default_count,
+        }
     }
 
     /// DEMO ONLY. Write a historical contribution record directly so reputation
