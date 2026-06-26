@@ -1,0 +1,24 @@
+[package]
+name = "iwa-reputation-verifier"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["lib", "cdylib"]
+doctest = false
+
+[dependencies]
+soroban-sdk = { workspace = true, features = ["alloc"] }
+
+[build-dependencies]
+# Used only at build time to convert our snarkjs verification_key.json into
+# Soroban-ordered byte constants. No external arkworks dependency: we do the
+# decimal -> big-endian field element encoding ourselves with num-bigint.
+serde_json = "1"
+num-bigint = "0.4"
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+num-bigint = "0.4"
