@@ -1,0 +1,10 @@
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+*.tsbuildinfo
+
+# Editor / OS
+.DS_Store
+*.swp

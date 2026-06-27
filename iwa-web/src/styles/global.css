@@ -1,0 +1,67 @@
+@import "./tokens.css";
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--mist); /* never pure white */
+  color: var(--ink); /* primary text always set explicitly */
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+.display {
+  font-family: var(--font-display);
+  color: var(--ink);
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+p {
+  margin: 0;
+  color: var(--ink);
+}
+
+.mono,
+.data {
+  font-family: var(--font-data);
+}
+
+a {
+  color: var(--iris);
+  text-decoration: none;
+}
+
+/* Visible keyboard focus, Iris outline (quality floor). */
+:focus-visible {
+  outline: 2px solid var(--iris);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Reduced motion respected: every animation off. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

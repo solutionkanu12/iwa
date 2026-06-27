@@ -1,0 +1,13 @@
+/*
+ * Glass card: translucent cloud over imagery, with backdrop blur and a hairline
+ * border. Intentional frosted glass, not a dimming overlay.
+ */
+.glass {
+  background: var(--glass-fill);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--brd);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-soft);
+  padding: 24px;
+}

@@ -1,0 +1,306 @@
+/* Flow 3: Generate proof and the Verified moment. Matched to
+ * design/iwa-prototype.html (#screen-prove, #screen-verified, #screen-verifier).
+ * This is the hero screen, so the verified motion is reproduced faithfully. */
+
+.card {
+  padding: 20px;
+  margin-bottom: 14px;
+}
+.center {
+  text-align: center;
+}
+.h2 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 19px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin: 0 0 4px;
+}
+.meta {
+  font-size: 13px;
+  color: var(--mut);
+  margin: 0 0 16px;
+}
+.backBtn {
+  font-family: var(--font-data);
+  font-size: 12px;
+  color: var(--mut);
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin-bottom: 14px;
+  cursor: pointer;
+}
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.stack button {
+  width: 100%;
+}
+
+/* Claim picker */
+.claimList {
+  margin: 0 0 6px;
+}
+.claim {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0.5px solid var(--brd);
+  background: var(--mist);
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 10px;
+  font-family: var(--font-body);
+  font-size: 14px;
+  color: var(--ink);
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+.claim[aria-pressed="true"] {
+  border-color: var(--iris);
+  background: #efeafd;
+}
+.ck {
+  float: right;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1.5px solid var(--brd);
+}
+.claim[aria-pressed="true"] .ck {
+  border-color: var(--iris);
+  background: var(--iris);
+}
+
+/* Progress */
+.progressWrap {
+  margin-top: 6px;
+}
+.progress {
+  height: 6px;
+  background: var(--brd);
+  border-radius: 6px;
+  overflow: hidden;
+  margin: 18px 0 6px;
+}
+.bar {
+  height: 100%;
+  width: 0;
+  background: var(--iris);
+  border-radius: 6px;
+  transition: width 0.4s ease;
+}
+.progLabel {
+  text-align: center;
+  font-size: 13px;
+  color: var(--mut);
+  min-height: 20px;
+}
+
+/* ---------- Verified moment ---------- */
+.proofSeal {
+  width: 158px;
+  margin: 6px auto 18px;
+}
+.verifiedLine {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  font-size: 14px;
+  color: var(--ink);
+  text-align: center;
+  margin: 0 auto 18px;
+  max-width: 34ch;
+}
+/* The mint check. Mint is reserved for this verified / good-standing state. */
+.vdot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--mint);
+  color: var(--mint-dk);
+  flex: none;
+}
+.proofCard {
+  border: 0.5px solid var(--brd);
+  border-radius: 14px;
+  padding: 16px;
+  background: var(--mist);
+  text-align: left;
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #e2f7f1;
+  color: var(--mint-dk);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: 20px;
+}
+.badgeDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mint-dk);
+  display: inline-block;
+}
+.claimtext {
+  font-size: 15px;
+  color: var(--ink);
+  margin: 12px 0 14px;
+  font-weight: 500;
+}
+.kv {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 0.5px solid var(--brd);
+}
+.k {
+  font-size: 13px;
+  color: var(--mut);
+}
+.v {
+  font-family: var(--font-data);
+  font-size: 12px;
+  color: var(--ink);
+}
+
+/* Lender view */
+.lenderNote {
+  font-family: var(--font-data);
+  font-size: 12px;
+  color: var(--mut);
+  margin: 0 0 14px;
+}
+.lenderHead {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 6px;
+}
+.lenderBrand {
+  font-family: var(--font-display);
+  font-size: 16px;
+  color: var(--ink);
+}
+.lenderClaim {
+  margin-top: 14px;
+}
+.lenderMuted {
+  color: var(--mut);
+  font-size: 13px;
+  margin: 16px 0 18px;
+}
+
+/* ---------- cowrie: soft 3D life + verified moment ---------- */
+.cowrieSvg {
+  overflow: visible;
+  transform-origin: 50% 56%;
+  will-change: transform;
+  filter: drop-shadow(0 26px 30px rgba(42, 33, 64, 0.26))
+    drop-shadow(0 8px 14px rgba(109, 77, 242, 0.2));
+  animation: sealFloat 7s ease-in-out infinite;
+}
+@keyframes sealFloat {
+  0% {
+    transform: perspective(560px) rotateY(-26deg) rotateX(9deg) translateY(0);
+  }
+  50% {
+    transform: perspective(560px) rotateY(26deg) rotateX(-8deg) translateY(-13px);
+  }
+  100% {
+    transform: perspective(560px) rotateY(-26deg) rotateX(9deg) translateY(0);
+  }
+}
+.cwBody,
+.cwHi,
+.cwShade {
+  transition: fill 0.7s ease;
+}
+.cwHalo {
+  opacity: 0;
+  transform-origin: 100px 110px;
+}
+.cwRing {
+  stroke-dasharray: 604;
+  stroke-dashoffset: 604;
+}
+
+/* When the card enters the verified state, the seal settles facing front, the
+ * fill shifts to mint, the ring draws, the halo pulses, and the card content
+ * rises in with a short stagger. */
+.verify .cowrieSvg {
+  animation: sealSettle 1.05s cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
+}
+@keyframes sealSettle {
+  0% {
+    transform: perspective(560px) rotateY(18deg) rotateX(4deg) translateY(0)
+      scale(1);
+  }
+  55% {
+    transform: perspective(560px) rotateY(0) rotateX(0) translateY(-6px)
+      scale(1.08);
+  }
+  100% {
+    transform: perspective(560px) rotateY(0) rotateX(0) translateY(0) scale(1);
+  }
+}
+.verify .cwBody {
+  fill: #7fe0cc;
+}
+.verify .cwHi {
+  fill: #bdf0e6;
+}
+.verify .cwShade {
+  fill: #4fd9c0;
+}
+.verify .cwRing {
+  transition: stroke-dashoffset 1s ease 0.2s;
+  stroke-dashoffset: 0;
+}
+.verify .cwHalo {
+  animation: halo 1.2s ease-out 0.3s forwards;
+}
+@keyframes halo {
+  0% {
+    opacity: 0.45;
+    transform: scale(0.92);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.32);
+  }
+}
+.verify .verifiedLine {
+  animation: rise2 0.6s ease 0.5s both;
+}
+.verify .proofCard {
+  animation: rise2 0.6s ease 0.68s both;
+}
+.verify .stack {
+  animation: rise2 0.6s ease 0.85s both;
+}
+@keyframes rise2 {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

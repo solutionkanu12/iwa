@@ -1,0 +1,77 @@
+/*
+ * Button: Iris fill, Cloud text. Hover shrinks to ~0.95 and deepens to
+ * ink-black. Never scales up. Ghost variant is transparent with a hairline
+ * border and the same hover.
+ */
+.button {
+  font-family: var(--font-body);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  padding: 13px 24px;
+  border-radius: var(--radius-control);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
+  transform: scale(1);
+  will-change: transform;
+}
+
+.button:disabled {
+  background: var(--brd);
+  color: #7a7397;
+  cursor: default;
+  transform: none;
+}
+
+/* Solid (default): Iris fill, Cloud text. */
+.solid {
+  background: var(--iris);
+  color: var(--cloud);
+}
+.solid:hover:not(:disabled),
+.solid:focus-visible:not(:disabled) {
+  background: var(--ink-black); /* deepen to near-black ink */
+  transform: scale(0.95); /* shrink, never grow */
+}
+.solid:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+/* Dark: ink fill, Cloud text. A non-purple primary for screens where iris would
+ * out-saturate (e.g. the verified moment, where mint must stay brightest). Same
+ * hover: shrink to ~0.95 and deepen toward ink-black. */
+.dark {
+  background: var(--ink);
+  color: var(--cloud);
+}
+.dark:hover:not(:disabled),
+.dark:focus-visible:not(:disabled) {
+  background: var(--ink-black);
+  transform: scale(0.95);
+}
+.dark:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+/* Ghost: transparent with hairline border, same hover. */
+.ghost {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--brd);
+}
+.ghost:hover:not(:disabled),
+.ghost:focus-visible:not(:disabled) {
+  background: var(--ink-black);
+  color: var(--cloud);
+  border-color: var(--ink-black);
+  transform: scale(0.95);
+}
+.ghost:active:not(:disabled) {
+  transform: scale(0.95);
+}

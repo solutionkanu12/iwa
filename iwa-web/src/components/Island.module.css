@@ -1,0 +1,11 @@
+/*
+ * Island: the canonical surface from the prototype. Flat by default, cloud fill,
+ * hairline border, soft 15px radius. Padding and any shadow are added by the
+ * consumer (e.g. the app card, the app nav), matching the prototype where the
+ * base .island carries no padding or shadow.
+ */
+.island {
+  background: var(--cloud);
+  border: 0.5px solid var(--brd);
+  border-radius: 15px;
+}

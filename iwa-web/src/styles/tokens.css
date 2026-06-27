@@ -1,0 +1,37 @@
+/*
+ * Iwa design tokens (PRD section 7). These are fixed. Do not hand-pick values
+ * elsewhere; reference these variables.
+ */
+:root {
+  /* Color */
+  --mist: #f6f4fc; /* default background, never pure white */
+  --cloud: #fbfafe; /* raised surfaces and cards */
+  --ink: #2a2140; /* primary text, always set explicitly */
+  --ink-black: #1b1430; /* button hover fill */
+  --mut: #5b5478; /* secondary text */
+  --lav: #b6a6f2; /* signature colour and ambient orbs */
+  --lav2: #cecbf6; /* lighter lavender: member slots and orbs (prototype) */
+  --lav3: #afa9ec; /* deeper lavender shade (prototype) */
+  --iris: #6d4df2; /* primary actions */
+  --iris-dk: #5d3eea;
+  --mint: #4fd9c0; /* good standing and proof confirmed only */
+  --mint-dk: #0f6e56; /* mint text */
+  --brd: #e7e3f6; /* hairline borders */
+
+  /* Type families */
+  --font-display: "Bricolage Grotesque", "Inter", system-ui, sans-serif;
+  --font-body: "Inter", system-ui, sans-serif;
+  --font-data: "Space Mono", ui-monospace, monospace;
+
+  /* Island shape: floating, detached, soft lavender-tinted shadow */
+  --radius-island: 24px;
+  --radius-card: 18px;
+  --radius-control: 12px;
+  --shadow-island: 0 18px 50px -20px rgba(109, 77, 242, 0.28),
+    0 6px 18px -12px rgba(42, 33, 64, 0.18);
+  --shadow-soft: 0 10px 30px -16px rgba(109, 77, 242, 0.22);
+
+  /* Glass (translucent cloud + backdrop blur) */
+  --glass-fill: rgba(251, 250, 254, 0.66);
+  --glass-blur: 16px;
+}
