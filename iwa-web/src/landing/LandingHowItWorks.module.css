@@ -1,0 +1,108 @@
+/* Section 4: how it works. Matched to design/iwa-prototype.html (.how,
+ * .how-grid, .how-aside, .how-steps, .step). Two-up: the coin-hands image on the
+ * left (sticky), the 01/02/03 steps on the right. Sits on the mist ground below
+ * the shared basket field. */
+.how {
+  position: relative;
+  z-index: 1;
+  max-width: 980px;
+  margin: 64px auto 0;
+  padding: 0 24px;
+}
+
+.label {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--mut);
+  letter-spacing: 0.02em;
+  margin: 0 0 20px;
+}
+
+.grid {
+  display: flex;
+  gap: 44px;
+  align-items: flex-start;
+}
+
+.aside {
+  flex: 0 0 270px;
+  position: sticky;
+  top: 100px;
+}
+.asideImg {
+  width: 100%;
+  height: auto;
+  display: block;
+  filter: drop-shadow(0 20px 34px rgba(109, 77, 242, 0.2));
+}
+
+.steps {
+  flex: 1;
+  min-width: 0;
+}
+
+.step {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  padding: 24px 0;
+  border-top: 0.5px solid var(--brd);
+}
+.num {
+  font-family: var(--font-data);
+  font-size: 13px;
+  color: var(--iris);
+  padding-top: 4px;
+  min-width: 34px;
+}
+.stepH {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 20px;
+  color: var(--ink);
+  margin: 0 0 6px;
+  letter-spacing: -0.01em;
+}
+.stepP {
+  margin: 0;
+  color: var(--mut);
+  font-size: 15px;
+  max-width: 46ch;
+}
+
+/* Scroll reveal: steps start lower and invisible, fade and rise on enter,
+ * staggered by index (delay set inline by JS). */
+.reveal {
+  opacity: 0;
+  transform: translateY(34px);
+  transition:
+    opacity 0.7s cubic-bezier(0.2, 0.7, 0.2, 1),
+    transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1);
+  will-change: opacity, transform;
+}
+.in {
+  opacity: 1;
+  transform: none;
+}
+
+@media (max-width: 760px) {
+  .grid {
+    flex-direction: column;
+  }
+  .aside {
+    position: static;
+    flex: none;
+    max-width: 300px;
+    margin: 0 auto 6px;
+  }
+}
+
+/* Reduced motion: reveal off, content shows immediately. */
+@media (prefers-reduced-motion: reduce) {
+  .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}

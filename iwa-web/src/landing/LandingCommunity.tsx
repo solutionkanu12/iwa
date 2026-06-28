@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useReveal } from "./useReveal.ts";
 import styles from "./LandingCommunity.module.css";
 
 // Section 3 of 8: the community card. A frosted glass card centered over the
@@ -7,47 +7,13 @@ import styles from "./LandingCommunity.module.css";
 // the community body copy (exact from the prototype). The hero, nav, app, and
 // seams are untouched.
 
-function prefersReducedMotion(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  );
-}
-
 export function LandingCommunity() {
-  const cardRef = useRef<HTMLDivElement>(null);
-  const [shown, setShown] = useState(false);
-
-  // Reveal once when the card enters view; off (shown immediately) under
-  // reduced motion or without IntersectionObserver.
-  useEffect(() => {
-    if (prefersReducedMotion() || !("IntersectionObserver" in window)) {
-      setShown(true);
-      return;
-    }
-    const el = cardRef.current;
-    if (!el) return;
-    const io = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((e) => {
-          if (e.isIntersecting) {
-            setShown(true);
-            io.unobserve(e.target);
-          }
-        });
-      },
-      { threshold: 0.1, rootMargin: "0px 0px -12% 0px" },
-    );
-    io.observe(el);
-    return () => io.disconnect();
-  }, []);
+  // Reveal that replays on every re-entry. Same motion as before, only replay.
+  const sectionRef = useReveal<HTMLElement>({ visibleClass: styles.in });
 
   return (
-    <section className={styles.community} aria-label="Community">
-      <div
-        ref={cardRef}
-        className={`${styles.communityCard} ${styles.reveal} ${shown ? styles.in : ""}`}
-      >
+    <section className={styles.community} aria-label="Community" ref={sectionRef}>
+      <div className={`${styles.communityCard} ${styles.reveal}`} data-reveal>
         <img
           className={styles.communityIll}
           src="/assets/iwa-circle.png"
