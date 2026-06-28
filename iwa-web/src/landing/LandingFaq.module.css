@@ -1,0 +1,179 @@
+/* Section 6: Questions (FAQ). Matched to design/iwa-prototype.html (.faq,
+ * .faq-bg, .faq-card, .faq-item, .faq-q, .faq-ic, .faq-a). Full-bleed handshake
+ * image behind a frosted glass card holding the heading and accordion. */
+.faq {
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+  margin: 88px 0 0;
+  padding: 86px 24px;
+  display: flex;
+  justify-content: center;
+}
+.bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  opacity: 0.5;
+  z-index: 0;
+  pointer-events: none;
+  user-select: none;
+}
+
+.card {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  max-width: 760px;
+  background: rgba(251, 250, 254, 0.7); /* frosted cloud, translucent */
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  border: 0.5px solid rgba(255, 255, 255, 0.65);
+  border-radius: 26px;
+  padding: 40px 30px 34px;
+  box-shadow: 0 30px 70px rgba(42, 33, 64, 0.14);
+}
+
+.h2 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(26px, 4vw, 36px);
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  margin: 0 0 6px;
+  text-align: center;
+}
+.lead {
+  color: var(--mut);
+  font-size: 15px;
+  text-align: center;
+  margin: 0 auto 26px;
+}
+
+/* Accordion rows: transparent within the card, divided by hairlines. */
+.item {
+  background: transparent;
+  border: 0;
+  border-bottom: 0.5px solid var(--brd);
+  border-radius: 0;
+  margin: 0;
+  overflow: visible;
+}
+.item:last-child {
+  border-bottom: 0;
+}
+
+.q {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  text-align: left;
+  padding: 18px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 16px;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.q:hover {
+  background: var(--mist);
+}
+
+/* Plus that rotates to an x when the row opens. */
+.icon {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  position: relative;
+  transition: transform 0.25s ease;
+}
+.icon::before,
+.icon::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  background: var(--iris);
+  border-radius: 2px;
+}
+.icon::before {
+  width: 13px;
+  height: 2px;
+  transform: translate(-50%, -50%);
+}
+.icon::after {
+  width: 2px;
+  height: 13px;
+  transform: translate(-50%, -50%);
+  transition: opacity 0.25s ease;
+}
+.item.open .icon {
+  transform: rotate(45deg);
+}
+
+.answer {
+  max-height: 0;
+  opacity: 0;
+  transition:
+    max-height 0.3s ease,
+    opacity 0.25s ease,
+    padding 0.3s ease;
+  padding: 0 18px;
+}
+.item.open .answer {
+  max-height: 320px;
+  opacity: 1;
+  padding: 0 18px 18px;
+}
+.answer p {
+  margin: 0;
+  color: var(--mut);
+  font-size: 15px;
+  line-height: 1.62;
+}
+
+/* Scroll reveal: rows fade and rise, staggered by index, replays on re-entry. */
+.reveal {
+  opacity: 0;
+  transform: translateY(34px);
+  transition:
+    opacity 0.7s cubic-bezier(0.2, 0.7, 0.2, 1),
+    transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1);
+  will-change: opacity, transform;
+}
+.in {
+  opacity: 1;
+  transform: none;
+}
+
+@media (max-width: 760px) {
+  .card {
+    padding: 28px 16px 22px;
+  }
+  .bg {
+    width: 175%;
+    opacity: 0.42;
+  }
+}
+
+/* Reduced motion: reveal off and shown immediately; accordion still toggles,
+ * just without the expand/icon transition. */
+@media (prefers-reduced-motion: reduce) {
+  .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  .icon,
+  .answer {
+    transition: none;
+  }
+}
