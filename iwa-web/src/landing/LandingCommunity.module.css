@@ -1,0 +1,79 @@
+/* Section 3: community card. Matched to design/iwa-prototype.html (.community,
+ * .community-card, .community-ill).
+ *
+ * The cowrie-basket is a single shared field owned by the landing page (the
+ * prototype's topband), spanning the hero and this section as one continuous
+ * image with no seam. This section sits above that shared basket; the frosted
+ * glass card frosts over it. */
+.community {
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+  margin: 34px 0 0;
+  padding: 82px 24px;
+  display: flex;
+  justify-content: center;
+}
+
+.communityCard {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  max-width: 680px;
+  text-align: center;
+  background: rgba(251, 250, 254, 0.66); /* frosted cloud, translucent */
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  border: 0.5px solid rgba(255, 255, 255, 0.65);
+  border-radius: 26px;
+  padding: 34px 30px;
+  box-shadow: 0 30px 70px rgba(42, 33, 64, 0.14);
+}
+
+.communityIll {
+  width: min(340px, 68%);
+  height: auto;
+  display: block;
+  margin: 0 auto 4px;
+  filter: drop-shadow(0 18px 30px rgba(109, 77, 242, 0.2));
+}
+
+.h2 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(24px, 4vw, 34px);
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  margin: 6px 0 10px;
+}
+
+.body {
+  color: var(--mut);
+  font-size: 16px;
+  line-height: 1.55;
+  max-width: 46ch;
+  margin: 0 auto;
+}
+
+/* Scroll reveal: card starts lower and invisible, fades and rises on enter. */
+.reveal {
+  opacity: 0;
+  transform: translateY(34px);
+  transition:
+    opacity 0.7s cubic-bezier(0.2, 0.7, 0.2, 1),
+    transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1);
+  will-change: opacity, transform;
+}
+.in {
+  opacity: 1;
+  transform: none;
+}
+
+/* Reduced motion: reveal off, content shows immediately. */
+@media (prefers-reduced-motion: reduce) {
+  .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}

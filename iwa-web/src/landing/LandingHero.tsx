@@ -47,14 +47,7 @@ export function LandingHero() {
   }, []);
 
   return (
-    <div className={styles.topband}>
-      <img
-        className={styles.topbandBg}
-        src="/assets/iwa-cowrie-basket.jpg"
-        alt=""
-        aria-hidden="true"
-      />
-      <section className={styles.hero} ref={heroRef} aria-label="Hero">
+    <section className={styles.hero} ref={heroRef} aria-label="Hero">
         <p className={styles.eyebrow}>savings circles · private proof</p>
         <div className={styles.seal}>
           <svg
@@ -131,7 +124,6 @@ export function LandingHero() {
             Enter the circle
           </button>
         </div>
-      </section>
-    </div>
+    </section>
   );
 }

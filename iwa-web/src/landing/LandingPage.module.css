@@ -6,3 +6,22 @@
   min-height: 100vh;
   background: var(--mist); /* off-white ground, never pure white */
 }
+
+/* The prototype's topband: one continuous cowrie-basket field behind the hero
+ * and community, so the imagery reads as a single open field with no seam. */
+.topband {
+  position: relative;
+  overflow: hidden;
+}
+.topbandBg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  opacity: 0.3;
+  z-index: 0;
+  pointer-events: none;
+  user-select: none;
+}

@@ -1,24 +1,7 @@
-/* Section 2: hero. Matched to design/iwa-prototype.html (.hero, .topband).
- * The cowrie-basket image sits full-bleed behind the hero at ~0.3 opacity, in a
- * topband wrapper that will also hold the community card (section 3) so the
- * basket continues into it. The fixed glass nav frosts over this imagery. */
-.topband {
-  position: relative;
-  overflow: hidden;
-}
-.topbandBg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: center;
-  opacity: 0.3;
-  z-index: 0;
-  pointer-events: none;
-  user-select: none;
-}
-
+/* Section 2: hero. Matched to design/iwa-prototype.html (.hero).
+ * The cowrie-basket image is a single shared field owned by the landing page
+ * (the prototype's topband), spanning the hero and the community section. The
+ * fixed glass nav frosts over this imagery. The hero content sits above it. */
 .hero {
   position: relative;
   z-index: 1;
