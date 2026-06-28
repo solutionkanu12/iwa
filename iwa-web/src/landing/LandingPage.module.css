@@ -3,6 +3,6 @@
  * nav be seen floating over content as you scroll. */
 .page {
   position: relative;
-  min-height: 200vh;
+  min-height: 100vh;
   background: var(--mist); /* off-white ground, never pure white */
 }

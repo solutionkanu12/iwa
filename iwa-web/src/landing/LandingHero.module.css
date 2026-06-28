@@ -1,0 +1,169 @@
+/* Section 2: hero. Matched to design/iwa-prototype.html (.hero, .topband).
+ * The cowrie-basket image sits full-bleed behind the hero at ~0.3 opacity, in a
+ * topband wrapper that will also hold the community card (section 3) so the
+ * basket continues into it. The fixed glass nav frosts over this imagery. */
+.topband {
+  position: relative;
+  overflow: hidden;
+}
+.topbandBg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  opacity: 0.3;
+  z-index: 0;
+  pointer-events: none;
+  user-select: none;
+}
+
+.hero {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 104px 24px 30px; /* top clears the fixed nav */
+}
+
+.eyebrow {
+  font-family: var(--font-data);
+  font-size: 12px;
+  color: var(--iris);
+  letter-spacing: 0.02em;
+  margin: 0;
+}
+
+.seal {
+  width: 138px;
+  margin: 0 auto 26px;
+}
+
+.h1 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(34px, 6vw, 52px);
+  line-height: 1.08;
+  letter-spacing: -0.025em;
+  color: var(--ink);
+  margin: 18px auto 16px;
+  max-width: 14ch;
+}
+
+.sub {
+  font-size: clamp(16px, 2.4vw, 19px);
+  line-height: 1.55;
+  color: var(--mut);
+  max-width: 48ch;
+  margin: 0 auto 28px;
+}
+
+.ctaRow {
+  display: flex;
+  justify-content: center;
+}
+
+/* Iris CTA (the existing primary token), full hero size. Hover shrinks to ~0.95
+ * and deepens to ink-black, never scales up. */
+.cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  font-family: var(--font-body);
+  font-weight: 500;
+  font-size: 15px;
+  padding: 13px 24px;
+  border-radius: 12px;
+  border: 0;
+  background: var(--iris);
+  color: var(--cloud);
+  cursor: pointer;
+  transition:
+    transform 0.16s cubic-bezier(0.2, 0.7, 0.2, 1),
+    background 0.2s ease,
+    color 0.2s ease;
+}
+.cta:hover,
+.cta:focus-visible {
+  transform: scale(0.95);
+  background: var(--ink-black);
+}
+.cta:active {
+  transform: scale(0.92);
+}
+
+/* Page-load rise: hero elements rise in with a short stagger. */
+.eyebrow,
+.seal,
+.h1,
+.sub,
+.ctaRow {
+  opacity: 0;
+  animation: rise2 0.75s cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
+}
+.seal {
+  animation-delay: 0.06s;
+}
+.h1 {
+  animation-delay: 0.15s;
+}
+.sub {
+  animation-delay: 0.24s;
+}
+.ctaRow {
+  animation-delay: 0.32s;
+}
+@keyframes rise2 {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Cowrie seal: slow continuous float on a short perspective. Cursor-tilt is
+ * applied inline by JS and uses the tilting class to pause the float. */
+.cowrieSvg {
+  overflow: visible;
+  transform-origin: 50% 56%;
+  will-change: transform;
+  filter: drop-shadow(0 26px 30px rgba(42, 33, 64, 0.26))
+    drop-shadow(0 8px 14px rgba(109, 77, 242, 0.2));
+  animation: sealFloat 7s ease-in-out infinite;
+}
+@keyframes sealFloat {
+  0% {
+    transform: perspective(560px) rotateY(-26deg) rotateX(9deg) translateY(0);
+  }
+  50% {
+    transform: perspective(560px) rotateY(26deg) rotateX(-8deg) translateY(-13px);
+  }
+  100% {
+    transform: perspective(560px) rotateY(-26deg) rotateX(9deg) translateY(0);
+  }
+}
+.tilting {
+  animation: none;
+  transition: transform 0.12s ease-out;
+}
+
+/* Reduced motion: tilt and rise switch off, content shows immediately. */
+@media (prefers-reduced-motion: reduce) {
+  .eyebrow,
+  .seal,
+  .h1,
+  .sub,
+  .ctaRow {
+    opacity: 1;
+    animation: none;
+  }
+  .cowrieSvg {
+    animation: none;
+  }
+}
