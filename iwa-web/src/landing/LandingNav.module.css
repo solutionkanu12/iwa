@@ -1,0 +1,109 @@
+/* Section 1: glass nav (fixed). Matched to design/iwa-prototype.html (.nav).
+ * Frosted glass island that floats over content on scroll. */
+.nav {
+  position: fixed;
+  top: 14px;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: calc(100% - 28px);
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 8px 10px 8px 18px;
+  border-radius: 15px;
+  box-shadow:
+    0 10px 30px rgba(42, 33, 64, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  background: rgba(246, 244, 252, 0.38); /* frosted mist, translucent */
+  backdrop-filter: blur(22px) saturate(1.7);
+  -webkit-backdrop-filter: blur(22px) saturate(1.7);
+  border: 0.5px solid rgba(255, 255, 255, 0.55);
+}
+
+.links {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+}
+.glyph {
+  display: inline-flex;
+}
+.link {
+  font-family: var(--font-body);
+  font-size: 14px;
+  color: var(--mut);
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.brand {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 21px;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.right {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.login {
+  font-size: 14px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+/* Iris CTA (the existing primary CTA token), small nav size. Hover shrinks to
+ * ~0.95 and deepens to ink-black, never scales up. */
+.cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-body);
+  font-weight: 500;
+  font-size: 13px;
+  padding: 9px 16px;
+  border-radius: 12px;
+  border: 0;
+  background: var(--iris);
+  color: var(--cloud);
+  cursor: pointer;
+  transition:
+    transform 0.16s cubic-bezier(0.2, 0.7, 0.2, 1),
+    background 0.2s ease,
+    color 0.2s ease;
+}
+.cta:hover,
+.cta:focus-visible {
+  transform: scale(0.95);
+  background: var(--ink-black);
+}
+.cta:active {
+  transform: scale(0.92);
+}
+
+.gridBtn {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 0.5px solid var(--brd);
+  background: var(--mist);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--mut);
+}
+.gridDots {
+  display: block;
+  width: 14px;
+  height: 14px;
+  background-image: radial-gradient(currentColor 1.4px, transparent 1.5px);
+  background-size: 5px 5px;
+}

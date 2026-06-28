@@ -1,0 +1,8 @@
+/* The public landing page ground. The fixed glass nav floats over this. Built
+ * section by section; for now only the nav exists. The tall min-height lets the
+ * nav be seen floating over content as you scroll. */
+.page {
+  position: relative;
+  min-height: 200vh;
+  background: var(--mist); /* off-white ground, never pure white */
+}

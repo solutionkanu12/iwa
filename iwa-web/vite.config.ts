@@ -9,4 +9,14 @@ export default defineConfig({
     host: true,
     port: 5173,
   },
+  build: {
+    rollupOptions: {
+      // Two pages: the app (index.html) and the public marketing landing page
+      // (landing.html). The app entry is unchanged.
+      input: {
+        main: "index.html",
+        landing: "landing.html",
+      },
+    },
+  },
 });
