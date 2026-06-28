@@ -11,11 +11,13 @@ export default defineConfig({
   },
   build: {
     rollupOptions: {
-      // Two pages: the app (index.html) and the public marketing landing page
-      // (landing.html). The app entry is unchanged.
+      // Three pages: the app (index.html), the marketing landing page
+      // (landing.html), and the litepaper (litepaper.html). The app and landing
+      // entries are unchanged.
       input: {
         main: "index.html",
         landing: "landing.html",
+        litepaper: "litepaper.html",
       },
     },
   },

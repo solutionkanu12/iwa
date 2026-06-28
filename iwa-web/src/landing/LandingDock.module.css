@@ -1,0 +1,99 @@
+/* Section 8: dock (fixed glass). Matched to design/iwa-prototype.html (.dock).
+ * Slim frosted-glass island pinned to the bottom of the viewport, the bottom
+ * bookend to the fixed top nav. Floats over content. The footer's bottom padding
+ * (120px) clears this fixed bar, as in the prototype. */
+.dock {
+  position: fixed;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 1012px;
+  margin: 0 auto;
+  padding: 9px 10px 9px 16px;
+  border-radius: 15px;
+  border: 0.5px solid rgba(255, 255, 255, 0.6);
+  background: rgba(251, 250, 254, 0.62); /* frosted cloud, translucent */
+  backdrop-filter: blur(16px) saturate(1.4);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  box-shadow: 0 10px 26px rgba(42, 33, 64, 0.14);
+}
+
+.l {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+.nm {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 16px;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+.sep {
+  width: 0.5px;
+  height: 18px;
+  background: var(--brd);
+}
+.tag {
+  font-size: 13px;
+  color: var(--mut);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.r {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+/* Network tag: Space Mono, iris (not mint). */
+.net {
+  font-family: var(--font-data);
+  font-size: 12px;
+  color: var(--iris);
+  white-space: nowrap;
+}
+
+/* Iris CTA (the existing primary token), small. Hover shrinks to ~0.95 and
+ * deepens to ink-black, never scales up. */
+.cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-body);
+  font-weight: 500;
+  font-size: 13px;
+  padding: 9px 16px;
+  border-radius: 12px;
+  border: 0;
+  background: var(--iris);
+  color: var(--cloud);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    transform 0.16s cubic-bezier(0.2, 0.7, 0.2, 1),
+    background 0.2s ease,
+    color 0.2s ease;
+}
+.cta:hover,
+.cta:focus-visible {
+  transform: scale(0.95);
+  background: var(--ink-black);
+}
+.cta:active {
+  transform: scale(0.92);
+}
+
+/* The descriptor hides on small screens, as in the prototype. */
+@media (max-width: 680px) {
+  .tag {
+    display: none;
+  }
+}
