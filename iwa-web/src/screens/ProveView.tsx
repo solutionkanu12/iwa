@@ -299,9 +299,11 @@ function LenderCard({
       <p className={styles.lenderNote}>a lender opened your proof link</p>
       <div className={styles.proofCard}>
         <div className={styles.lenderHead}>
+          {/* Lavender cowrie glyph (matches the app nav). Not mint: on the
+              lender view mint is reserved for the verified badge only. */}
           <svg width="20" height="22" viewBox="0 0 60 70" aria-hidden="true">
-            <ellipse cx="30" cy="36" rx="20" ry="26" fill="#4FD9C0" />
-            <ellipse cx="25" cy="29" rx="11" ry="15" fill="#bdf0e6" opacity=".8" />
+            <ellipse cx="30" cy="36" rx="20" ry="26" fill="#B6A6F2" />
+            <ellipse cx="25" cy="29" rx="11" ry="15" fill="#CECBF6" opacity=".8" />
             <path d="M30 12C34 30 34 42 30 60C26 42 26 30 30 12Z" fill="#F6F4FC" />
           </svg>
           <strong className={styles.lenderBrand}>
