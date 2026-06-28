@@ -1,0 +1,109 @@
+/* Section 5: see it in action. Matched to design/iwa-prototype.html (.showcase,
+ * .showcase-mark, .frames, .phone, .screen, .ph-note, .phone-fig). The
+ * circle-hands mark sits above the heading, then three placeholder phone frames.
+ * Sits on the mist ground below how it works. No mint anywhere here. */
+.showcase {
+  position: relative;
+  z-index: 1;
+  max-width: 980px;
+  margin: 84px auto 0;
+  padding: 0 24px;
+  text-align: center;
+}
+
+.mark {
+  width: 60px;
+  height: auto;
+  display: block;
+  margin: 0 auto 14px;
+}
+
+.h2 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(26px, 4vw, 36px);
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  margin: 0 0 8px;
+}
+
+.lead {
+  color: var(--mut);
+  font-size: 16px;
+  max-width: 48ch;
+  margin: 0 auto 30px;
+}
+
+.frames {
+  display: flex;
+  gap: 18px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.phoneFig {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Empty placeholder frame (real screenshots drop in later). */
+.phone {
+  width: 228px;
+  height: 466px;
+  border-radius: 30px;
+  border: 0.5px solid var(--brd);
+  background: var(--cloud);
+  box-shadow: 0 26px 52px rgba(42, 33, 64, 0.16);
+  padding: 10px;
+  overflow: hidden;
+}
+.screen {
+  width: 100%;
+  height: 100%;
+  border-radius: 22px;
+  overflow: hidden;
+  background: #ece5fb; /* light lavender placeholder, not white, not mint */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.phNote {
+  font-family: var(--font-data);
+  font-size: 11px;
+  color: var(--mut);
+  padding: 0 18px;
+  text-align: center;
+  line-height: 1.5;
+}
+.caption {
+  font-family: var(--font-data);
+  font-size: 12px;
+  color: var(--mut);
+}
+
+/* Scroll reveal: frames start lower and invisible, fade and rise on enter,
+ * staggered by index (delay set by the shared hook). Replays on re-entry. */
+.reveal {
+  opacity: 0;
+  transform: translateY(34px);
+  transition:
+    opacity 0.7s cubic-bezier(0.2, 0.7, 0.2, 1),
+    transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1);
+  will-change: opacity, transform;
+}
+.in {
+  opacity: 1;
+  transform: none;
+}
+
+/* Reduced motion: frames show immediately and stay shown. */
+@media (prefers-reduced-motion: reduce) {
+  .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
