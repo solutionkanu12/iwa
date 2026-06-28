@@ -5,6 +5,11 @@ dist-ssr/
 .vite/
 *.tsbuildinfo
 
+# Prover wasm artifacts must be tracked so the browser can load them at runtime.
+# This overrides the repo-wide *.wasm ignore for the copied-in prover files.
+!public/zk/reputation.wasm
+!public/zk/iwa_prover/iwa_prover_bg.wasm
+
 # Editor / OS
 .DS_Store
 *.swp

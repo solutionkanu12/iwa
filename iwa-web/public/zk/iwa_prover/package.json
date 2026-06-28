@@ -1,0 +1,12 @@
+{
+  "name": "iwa-prover",
+  "description": "Browser/WASM Groth16 (BN254) prover for the Iwa reputation circuit",
+  "version": "0.1.0",
+  "files": [
+    "iwa_prover_bg.wasm",
+    "iwa_prover.js",
+    "iwa_prover.d.ts"
+  ],
+  "main": "iwa_prover.js",
+  "types": "iwa_prover.d.ts"
+}
