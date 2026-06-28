@@ -4,12 +4,13 @@ import { LandingCommunity } from "./LandingCommunity.tsx";
 import { LandingHowItWorks } from "./LandingHowItWorks.tsx";
 import { LandingShowcase } from "./LandingShowcase.tsx";
 import { LandingFaq } from "./LandingFaq.tsx";
+import { LandingFooter } from "./LandingFooter.tsx";
 import styles from "./LandingPage.module.css";
 
 // Public marketing landing page (PRD section 9). Grows section by section.
 // Done: section 1 (glass nav), section 2 (hero), section 3 (community),
-// section 4 (how it works), section 5 (see it in action), section 6 (FAQ).
-// Later sections below.
+// section 4 (how it works), section 5 (see it in action), section 6 (FAQ),
+// section 7 (footer). Section 8 (dock) below later.
 export function LandingPage() {
   return (
     <div className={styles.page}>
@@ -29,6 +30,7 @@ export function LandingPage() {
       <LandingHowItWorks />
       <LandingShowcase />
       <LandingFaq />
+      <LandingFooter />
     </div>
   );
 }

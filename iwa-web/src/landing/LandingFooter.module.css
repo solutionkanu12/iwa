@@ -1,0 +1,139 @@
+/* Section 7: footer. Matched to design/iwa-prototype.html (.footer, .footer-wm,
+ * .footer-inner, .footer-top, .footer-cols, .footer-col, .footer-bottom,
+ * .social). Dancers silhouette on top, four link columns, X and GitHub icons,
+ * and a large faded "iwa" wordmark behind. */
+.footer {
+  position: relative;
+  z-index: 1;
+  margin-top: 92px;
+  padding: 50px 24px 120px;
+  background: #efeafb; /* light lavender footer ground, not pure white */
+  border-top: 0.5px solid var(--brd);
+  overflow: hidden;
+}
+
+/* Large faded wordmark behind the columns. Faded solid color, not a gradient. */
+.wm {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -14px;
+  text-align: center;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(110px, 30vw, 300px);
+  line-height: 0.78;
+  letter-spacing: -0.04em;
+  color: #d9cffa;
+  opacity: 0.6;
+  z-index: 1;
+  pointer-events: none;
+  user-select: none;
+}
+
+.inner {
+  max-width: 1040px;
+  margin: 0 auto;
+  position: relative;
+  z-index: 2;
+}
+
+.top {
+  text-align: center;
+  margin-bottom: 34px;
+}
+.topImg {
+  width: min(260px, 58%);
+  height: auto;
+  opacity: 0.92;
+  filter: drop-shadow(0 16px 26px rgba(109, 77, 242, 0.22));
+}
+
+.cols {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 30px 52px;
+}
+.col {
+  min-width: 128px;
+}
+.colH {
+  font-family: var(--font-data);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--mut);
+  margin: 0 0 14px;
+  font-weight: 400;
+}
+.link {
+  display: block;
+  color: var(--ink);
+  font-size: 15px;
+  margin-bottom: 11px;
+  transition: color 0.15s;
+}
+.link:hover {
+  color: var(--iris);
+}
+
+.bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 42px;
+  flex-wrap: wrap;
+}
+.social {
+  display: flex;
+  gap: 10px;
+}
+/* Icon link: lifts and deepens to ink-black on hover. No scale-up. */
+.socialLink {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  border: 0.5px solid var(--brd);
+  background: var(--cloud);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink);
+  transition:
+    background 0.2s,
+    color 0.2s,
+    transform 0.16s;
+}
+.socialLink:hover {
+  background: var(--ink-black);
+  color: var(--cloud);
+  transform: translateY(-2px);
+}
+.copy {
+  font-size: 13px;
+  color: var(--mut);
+}
+
+/* Scroll reveal: columns fade and rise, staggered by index. Footer is the one
+ * reveal-once group (no replay) via the hook's once option. */
+.reveal {
+  opacity: 0;
+  transform: translateY(34px);
+  transition:
+    opacity 0.7s cubic-bezier(0.2, 0.7, 0.2, 1),
+    transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1);
+  will-change: opacity, transform;
+}
+.in {
+  opacity: 1;
+  transform: none;
+}
+
+/* Reduced motion: columns show immediately and stay shown. */
+@media (prefers-reduced-motion: reduce) {
+  .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
