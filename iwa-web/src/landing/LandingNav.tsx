@@ -1,8 +1,9 @@
+import { scrollToId } from "./smoothScroll.ts";
 import styles from "./LandingNav.module.css";
 
 // Section 1 of 8: the fixed glass nav. Matched to the prototype's landing nav.
-// Links and CTA are inert for now; their targets (later sections, the app) wire
-// up as the landing grows. The app and its nav are untouched.
+// "How it works" smooth-scrolls to that section; "Roadmap" goes to the roadmap
+// page. The CTA and Log in stay inert for now. The app and its nav are untouched.
 
 // The cowrie glyph, the same lavender mark used elsewhere (inline SVG).
 function CowrieGlyph() {
@@ -22,12 +23,16 @@ export function LandingNav() {
         <span className={styles.glyph} aria-hidden="true">
           <CowrieGlyph />
         </span>
-        <button type="button" className={styles.link}>
+        <button
+          type="button"
+          className={styles.link}
+          onClick={() => scrollToId("how")}
+        >
           How it works
         </button>
-        <button type="button" className={styles.link}>
+        <a className={styles.link} href="/roadmap.html">
           Roadmap
-        </button>
+        </a>
       </div>
 
       <div className={styles.brand}>iwa</div>

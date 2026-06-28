@@ -70,6 +70,7 @@
   color: var(--ink);
   font-size: 15px;
   margin-bottom: 11px;
+  cursor: pointer; /* inert links have no href, keep the link look */
   transition: color 0.15s;
 }
 .link:hover {

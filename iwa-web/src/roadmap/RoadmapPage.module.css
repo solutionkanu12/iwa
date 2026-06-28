@@ -1,0 +1,197 @@
+/* Iwa roadmap. Same style language as the litepaper: Bricolage display, Inter
+ * body, Space Mono data. Lavender and iris palette, off-white surfaces, no pure
+ * white, no gradient text, no mint. Clean reading column with a dark band. */
+.page {
+  background: var(--mist);
+  color: var(--ink);
+  min-height: 100vh;
+}
+
+.doc {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+/* Masthead */
+.masthead {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding-top: 40px;
+}
+.wordmark {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 18px;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+/* Hero */
+.hero {
+  padding: 40px 0 44px;
+}
+.eyebrow {
+  font-family: var(--font-data);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--iris);
+  margin: 0 0 16px;
+}
+.title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(34px, 6vw, 52px);
+  line-height: 1.08;
+  letter-spacing: -0.025em;
+  color: var(--ink);
+  margin: 0 0 18px;
+  max-width: 16ch;
+}
+.subhead {
+  font-size: clamp(16px, 2.2vw, 19px);
+  line-height: 1.55;
+  color: var(--mut);
+  max-width: 56ch;
+  margin: 0;
+}
+
+/* Meta row */
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 22px 44px;
+  margin: 34px 0 0;
+  padding: 24px 0 0;
+  border-top: 0.5px solid var(--brd);
+}
+.metaField {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.metaLabel {
+  font-family: var(--font-data);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mut);
+}
+.metaValue {
+  font-family: var(--font-body);
+  font-size: 15px;
+  color: var(--ink);
+  margin: 0;
+}
+
+/* Sections */
+.section {
+  padding: 40px 0;
+  border-top: 0.5px solid var(--brd);
+}
+.h2 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(22px, 3vw, 28px);
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin: 0 0 16px;
+}
+.p {
+  font-size: 17px;
+  line-height: 1.7;
+  color: var(--ink);
+  margin: 0 0 16px;
+  max-width: 68ch;
+}
+.p:last-child {
+  margin-bottom: 0;
+}
+
+/* Phase list */
+.list {
+  list-style: none;
+  padding: 0;
+  margin: 6px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.li {
+  position: relative;
+  padding-left: 22px;
+  font-size: 17px;
+  line-height: 1.7;
+  color: var(--ink);
+  max-width: 68ch;
+}
+.li::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 11px;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--iris);
+}
+.liLead {
+  font-weight: 500;
+  color: var(--ink);
+}
+.liSep {
+  color: var(--mut);
+}
+
+/* Dark band */
+.darkBand {
+  background: var(--ink-black);
+  color: var(--cloud);
+  margin-top: 24px;
+  padding: 92px 24px;
+}
+.darkInner {
+  max-width: 720px;
+  margin: 0 auto;
+}
+.darkEyebrow {
+  font-family: var(--font-data);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--lav);
+  margin: 0 0 18px;
+}
+.darkP {
+  font-size: clamp(18px, 2.4vw, 22px);
+  line-height: 1.6;
+  color: #d8d1f2;
+  max-width: 60ch;
+  margin: 0 0 30px;
+}
+.darkClose {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(28px, 5vw, 44px);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--cloud);
+  margin: 0;
+}
+
+/* Notes and footer */
+.note {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--mut);
+  margin: 0;
+  max-width: 64ch;
+}
+.docFooter {
+  font-family: var(--font-data);
+  font-size: 12px;
+  color: var(--mut);
+  margin: 0;
+  padding: 28px 0 96px;
+  border-top: 0.5px solid var(--brd);
+}

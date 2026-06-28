@@ -1,4 +1,5 @@
 import { useReveal } from "./useReveal.ts";
+import { scrollToId } from "./smoothScroll.ts";
 import styles from "./LandingFooter.module.css";
 
 // Section 7 of 8: footer. Dancers silhouette on top, four link columns, X and
@@ -12,22 +13,31 @@ const GITHUB_URL = "https://github.com/solutionkanu12/iwa";
 const STELLAR_URL = "https://stellar.org";
 const X_URL = "https://x.com/joinIwa";
 
-type FooterLink = { label: string; href: string; external?: boolean };
+// A footer link is one of: external (new tab), internal (same-site nav), a
+// smooth-scroll to a section on this page, or inert (looks like a link, does
+// nothing).
+type FooterLink = {
+  label: string;
+  href?: string;
+  external?: boolean;
+  scrollTo?: string;
+  inert?: boolean;
+};
 
 const COLUMNS: { heading: string; links: FooterLink[] }[] = [
   {
     heading: "product",
     links: [
-      { label: "How it works", href: "#" },
-      { label: "Roadmap", href: "#" },
-      { label: "Enter the circle", href: "#" },
+      { label: "How it works", scrollTo: "how" },
+      { label: "Roadmap", href: "/roadmap.html" }, // internal, same site
+      { label: "Enter the circle", inert: true },
     ],
   },
   {
     heading: "resources",
     links: [
-      { label: "Docs", href: "#" },
-      { label: "Guides", href: "#" },
+      { label: "Docs", inert: true },
+      { label: "Guides", inert: true },
       { label: "Litepaper", href: "/litepaper.html" }, // internal, same site
       { label: "GitHub", href: GITHUB_URL, external: true },
     ],
@@ -36,19 +46,57 @@ const COLUMNS: { heading: string; links: FooterLink[] }[] = [
     heading: "built on",
     links: [
       { label: "Stellar", href: STELLAR_URL, external: true },
-      { label: "Soroban", href: "#" },
-      { label: "Zero-knowledge proofs", href: "#" },
+      // No real destination yet, so inert rather than jumping to top.
+      { label: "Soroban", inert: true },
+      { label: "Zero-knowledge proofs", inert: true },
     ],
   },
   {
     heading: "company",
     links: [
-      { label: "About Iwa", href: "#" },
-      { label: "Privacy policy", href: "#" },
-      { label: "Terms of service", href: "#" },
+      { label: "About Iwa", inert: true },
+      { label: "Privacy policy", inert: true },
+      { label: "Terms of service", inert: true },
     ],
   },
 ];
+
+function FooterLinkA({ link }: { link: FooterLink }) {
+  if (link.inert) {
+    // Looks like a link, does nothing (no navigation, no scroll, no new tab).
+    return (
+      <a className={styles.link} onClick={(e) => e.preventDefault()}>
+        {link.label}
+      </a>
+    );
+  }
+  if (link.scrollTo) {
+    const id = link.scrollTo;
+    return (
+      <a
+        className={styles.link}
+        href={`#${id}`}
+        onClick={(e) => {
+          e.preventDefault();
+          scrollToId(id);
+        }}
+      >
+        {link.label}
+      </a>
+    );
+  }
+  return (
+    <a
+      className={styles.link}
+      href={link.href}
+      {...(link.external
+        ? { target: "_blank", rel: "noopener noreferrer" }
+        : {})}
+    >
+      {link.label}
+    </a>
+  );
+}
 
 export function LandingFooter() {
   // Footer columns reveal once on first entry and stay shown (no replay), still
@@ -82,16 +130,7 @@ export function LandingFooter() {
             >
               <h4 className={styles.colH}>{col.heading}</h4>
               {col.links.map((link) => (
-                <a
-                  key={link.label}
-                  className={styles.link}
-                  href={link.href}
-                  {...(link.external
-                    ? { target: "_blank", rel: "noopener noreferrer" }
-                    : {})}
-                >
-                  {link.label}
-                </a>
+                <FooterLinkA key={link.label} link={link} />
               ))}
             </div>
           ))}
