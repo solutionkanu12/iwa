@@ -72,6 +72,24 @@ export async function connectWallet(): Promise<string> {
   }
 }
 
+/**
+ * Sign a transaction XDR with the connected wallet via the Wallets Kit and
+ * return the signed XDR. The connected wallet is the transaction source: it
+ * signs and pays the network fee. Only the transaction is signed; no personal
+ * data is shared.
+ */
+export async function signTransaction(
+  xdr: string,
+  address: string,
+): Promise<string> {
+  ensureKit();
+  const { signedTxXdr } = await StellarWalletsKit.signTransaction(xdr, {
+    address,
+    networkPassphrase: NETWORK_PASSPHRASE,
+  });
+  return signedTxXdr;
+}
+
 // A fixed message the wallet signs to derive its secret. The signature is
 // deterministic for a Stellar Ed25519 key, so the same wallet always reproduces
 // the same secret and the same commitment, and nothing is stored on disk.

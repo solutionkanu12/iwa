@@ -32,6 +32,7 @@ import {
   signalsToBytes,
   type SnarkProof,
 } from "./convert";
+import { signTransaction } from "./wallet";
 import type { Circle, CircleConfig, CircleStatus, Reputation } from "./types";
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -89,6 +90,55 @@ async function simulateRead(
   return scValToNative(retval);
 }
 
+// Build, sign, submit, and confirm a contract write. The connected wallet is the
+// transaction source: it signs the envelope and pays the network fee (only the
+// commitment goes on chain, never an identity). Returns the confirmed tx hash
+// and the decoded return value. Throws if the submit fails, the transaction
+// reverts, or confirmation times out, so callers can show an honest error.
+async function signAndSubmit(
+  method: string,
+  args: xdr.ScVal[],
+  address: string,
+): Promise<{ txHash: string; returnValue: unknown }> {
+  const server = rpcServer();
+  const account = await server.getAccount(address);
+  const contract = new Contract(SAVINGS_CONTRACT_ID);
+  const built = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
+    .addOperation(contract.call(method, ...args))
+    .setTimeout(60)
+    .build();
+
+  // prepareTransaction simulates and fills in the Soroban footprint and fee.
+  const prepared = await server.prepareTransaction(built);
+  const signedXdr = await signTransaction(prepared.toXDR(), address);
+  const signedTx = TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE);
+
+  const sent = await server.sendTransaction(signedTx);
+  if (String(sent.status) === "ERROR") {
+    throw new Error(`submit failed: ${sent.status}`);
+  }
+
+  // Poll until the network confirms (or fails) the transaction.
+  let got = await server.getTransaction(sent.hash);
+  const startedAt = Date.now();
+  while (String(got.status) === "NOT_FOUND") {
+    if (Date.now() - startedAt > 30_000) {
+      throw new Error("timed out waiting for confirmation");
+    }
+    await delay(1500);
+    got = await server.getTransaction(sent.hash);
+  }
+  if (String(got.status) !== "SUCCESS") {
+    throw new Error(`transaction failed: ${got.status}`);
+  }
+
+  const rv = (got as { returnValue?: xdr.ScVal }).returnValue;
+  return { txHash: sent.hash, returnValue: rv ? scValToNative(rv) : undefined };
+}
+
 // The Circle struct as the contract returns it (thinner than the UI shape):
 // amount/frequency/round_start decode to BigInt, the unit enum status decodes
 // to a single-element array like ["Open"].
@@ -141,12 +191,24 @@ export async function create_circle(
   return { circleId: "circle_" + fakeHex(8) };
 }
 
-/** Join a circle (still mocked). Returns the anonymous slot you were given. */
+/**
+ * Join a circle for real: a signed join_circle submitted to the savings
+ * contract, with the connected wallet as source. Only the member commitment
+ * goes on chain, never an identity. Returns the assigned slot and the confirmed
+ * tx hash. Throws on failure so the UI can show an honest error.
+ */
 export async function join_circle(
-  _circleId: number,
-): Promise<{ ok: boolean; slot: number }> {
-  await delay(500);
-  return { ok: true, slot: 2 };
+  circleId: number,
+  memberCommitment: Uint8Array,
+  address: string,
+): Promise<{ ok: boolean; slot: number; txHash: string }> {
+  const { txHash, returnValue } = await signAndSubmit(
+    "join_circle",
+    [u32Arg(circleId), bytesArg(memberCommitment)],
+    address,
+  );
+  const res = returnValue as { ok?: boolean; slot?: number } | undefined;
+  return { ok: res?.ok ?? true, slot: Number(res?.slot ?? 0), txHash };
 }
 
 /**

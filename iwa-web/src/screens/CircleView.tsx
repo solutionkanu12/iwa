@@ -3,6 +3,7 @@ import {
   collect_pot,
   get_circle,
   get_reputation,
+  join_circle,
   pay_contribution,
 } from "../lib/iwaContract.ts";
 import {
@@ -261,6 +262,9 @@ export function CircleView() {
   const [contribTx, setContribTx] = useState<string | null>(null);
   const [collectStatus, setCollectStatus] = useState<Status>("idle");
   const [collectTx, setCollectTx] = useState<string | null>(null);
+  const [joinStatus, setJoinStatus] = useState<Status>("idle");
+  const [joinTx, setJoinTx] = useState<string | null>(null);
+  const [joinError, setJoinError] = useState(false);
   const [reputation, setReputation] = useState<Reputation | null>(null);
 
   const handleConnect = useCallback(async () => {
@@ -307,6 +311,24 @@ export function CircleView() {
   }, []);
 
   const backToCircle = useCallback(() => setScreen("circle"), []);
+
+  const join = useCallback(async () => {
+    if (!circle || !commitment || !address) return;
+    setJoinStatus("working");
+    setJoinError(false);
+    try {
+      const r = await join_circle(circle.id, commitment.commitmentBytes, address);
+      setJoinTx(r.txHash);
+      setJoinStatus("done");
+      // Refresh the circle so the newly filled slot (yours) shows.
+      const c = await get_circle(circle.id, commitment.commitmentBytes);
+      setCircle(c);
+    } catch (err) {
+      console.warn("join failed", err);
+      setJoinError(true);
+      setJoinStatus("idle");
+    }
+  }, [circle, commitment, address]);
 
   const goStanding = useCallback(async () => {
     setScreen("standing");
@@ -454,6 +476,9 @@ export function CircleView() {
       (m) => m.slot === collectorSlot && m.isYou,
     );
     const sym = tokenSymbol(circle.token);
+    const isMember = circle.members.some((m) => m.isYou);
+    const hasOpenSlot = circle.members.some((m) => !m.filled);
+    const canJoin = !isMember && hasOpenSlot;
     body = (
       <Island className={styles.card}>
         <h2 className={styles.h2}>Weekly circle</h2>
@@ -520,6 +545,22 @@ export function CircleView() {
         </div>
 
         <div className={styles.stack}>
+          {canJoin && joinStatus !== "done" ? (
+            <Button
+              onClick={join}
+              disabled={joinStatus === "working" || !commitment}
+            >
+              {joinStatus === "working" ? "Joining" : "Join the circle"}
+            </Button>
+          ) : null}
+          {joinStatus === "done" ? (
+            <div className={styles.collectConfirm}>
+              <span className={`${styles.vdot} ${styles.vdotSm}`}>
+                <CheckIcon size={13} />
+              </span>
+              Joined the circle
+            </div>
+          ) : null}
           <Button onClick={openContribute}>
             Contribute {circle.amount} {sym}
           </Button>
@@ -540,6 +581,22 @@ export function CircleView() {
             </Button>
           ) : null}
         </div>
+        {joinError ? (
+          <p
+            className={styles.meta}
+            style={{ textAlign: "center", marginTop: "8px" }}
+          >
+            Could not join the circle. Please try again.
+          </p>
+        ) : null}
+        {joinStatus === "done" && joinTx ? (
+          <p
+            className={`${styles.mono} ${styles.doneTx}`}
+            style={{ textAlign: "center", marginTop: "8px" }}
+          >
+            tx {short(joinTx)}
+          </p>
+        ) : null}
         {yourTurn && collectStatus === "done" && collectTx ? (
           <p
             className={`${styles.mono} ${styles.doneTx}`}
