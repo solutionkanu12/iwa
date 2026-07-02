@@ -5,7 +5,7 @@
 import type { SnarkProof } from "./convert";
 
 export interface CircleConfig {
-  amount: number; // contribution per round, USDC
+  amount: number; // contribution per round, in the circle's token
   frequency: number; // seconds per round
   size: number; // number of members
 }
@@ -23,6 +23,7 @@ export interface MemberSlot {
 // your streak). All identity stays as opaque slots, never names.
 export interface Circle {
   id: number; // circle id (u32 on chain)
+  token: string; // the circle's token (Soroban SAC address); resolves to a symbol
   amount: number;
   frequency: number;
   size: number;

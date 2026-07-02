@@ -95,6 +95,7 @@ async function simulateRead(
 interface RawCircle {
   id: number;
   amount: bigint;
+  token: string; // Soroban Address decodes to its "C..." string
   frequency: bigint;
   size: number;
   current_round: number;
@@ -120,6 +121,7 @@ function mapStatus(status: string[] | string): CircleStatus {
 function emptyCircle(circleId: number): Circle {
   return {
     id: circleId,
+    token: "",
     amount: 0,
     frequency: 0,
     size: 0,
@@ -210,6 +212,7 @@ export async function get_circle(
 
   return {
     id: raw.id,
+    token: raw.token,
     amount,
     frequency: Number(raw.frequency),
     size,

@@ -25,3 +25,10 @@ _run/
 # OS / editor cruft
 .DS_Store
 *.swp
+
+# Secrets / env / local wallet + deploy identities (never commit)
+.env
+.env.*
+!.env.example
+.stellar/
+.soroban/

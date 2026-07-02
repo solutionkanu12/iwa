@@ -15,7 +15,37 @@ export const NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
 
 /** Savings + reputation contract (Rust / Soroban), deployed on testnet. */
 export const SAVINGS_CONTRACT_ID =
-  "CCP7O24JQ6FUJP5BC6P22M35YXK2B3Q7IRL4VHQBBCB5VNC55L32GYNQ";
+  "CDTHKKLZZ7PYDKZ3GVEVGPLP4F5UTWKTDJQ3SMCE4EZ74JONFFTXMSOM";
+
+/**
+ * The token (Soroban SAC) the demo circle moves for contributions and payouts.
+ * This is native XLM on testnet. The savings contract stores the token per
+ * circle, so the write flows (pay_contribution, collect_pot) will pass this
+ * when they go real.
+ */
+export const NATIVE_XLM_TOKEN_ID =
+  "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+
+/**
+ * Known token (SAC) address to asset symbol. Add stablecoin SACs here as they
+ * are supported; an unknown address never resolves to a guessed symbol.
+ */
+export const TOKEN_SYMBOLS: Record<string, string> = {
+  [NATIVE_XLM_TOKEN_ID]: "XLM",
+  // e.g. [USDC_TOKEN_ID]: "USDC", [USDT_TOKEN_ID]: "USDT",
+};
+
+/**
+ * Resolve a token address to its display symbol. Falls back to a short
+ * truncated address (or "token" when unset) rather than guessing, so the UI
+ * never mislabels an unknown asset. Never defaults to a stablecoin.
+ */
+export function tokenSymbol(address: string): string {
+  const known = TOKEN_SYMBOLS[address];
+  if (known) return known;
+  if (!address) return "token";
+  return `${address.slice(0, 4)}…${address.slice(-4)}`;
+}
 
 /**
  * The circle the app reads by default. Circle ids are u32, assigned in creation

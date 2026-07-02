@@ -11,7 +11,7 @@ import {
   WalletCancelledError,
 } from "../lib/wallet.ts";
 import type { MemberCommitment } from "../lib/wallet.ts";
-import { DEMO_CIRCLE_ID } from "../lib/stellarConfig.ts";
+import { DEMO_CIRCLE_ID, tokenSymbol } from "../lib/stellarConfig.ts";
 import type { Circle, Reputation } from "../lib/types.ts";
 import { Island } from "../components/Island.tsx";
 import { Button } from "../components/Button.tsx";
@@ -369,6 +369,7 @@ export function CircleView() {
       </Island>
     );
   } else if (screen === "contribute") {
+    const sym = tokenSymbol(circle.token);
     body = (
       <Island className={styles.card}>
         <button type="button" className={styles.backBtn} onClick={backToCircle}>
@@ -383,7 +384,7 @@ export function CircleView() {
           <div className={styles.row}>
             <span className={styles.k}>Amount</span>
             <span className={`${styles.v} ${styles.vBig}`}>
-              {circle.amount} USDC
+              {circle.amount} {sym}
             </span>
           </div>
           <div className={styles.row}>
@@ -406,7 +407,7 @@ export function CircleView() {
             <Button onClick={pay} disabled={contribStatus === "working"}>
               {contribStatus === "working"
                 ? "Contributing"
-                : `Contribute ${circle.amount} USDC`}
+                : `Contribute ${circle.amount} ${sym}`}
             </Button>
           </div>
         ) : (
@@ -452,11 +453,12 @@ export function CircleView() {
     const yourTurn = circle.members.some(
       (m) => m.slot === collectorSlot && m.isYou,
     );
+    const sym = tokenSymbol(circle.token);
     body = (
       <Island className={styles.card}>
         <h2 className={styles.h2}>Weekly circle</h2>
         <p className={styles.meta}>
-          {circle.size} members · {circle.amount} USDC each round
+          {circle.size} members · {circle.amount} {sym} each round
         </p>
 
         <div className={styles.slots} aria-label="Circle members, anonymous">
@@ -498,11 +500,11 @@ export function CircleView() {
           </div>
           <div className={styles.row}>
             <span className={styles.k}>This round</span>
-            <span className={styles.v}>{circle.amount} USDC</span>
+            <span className={styles.v}>{circle.amount} {sym}</span>
           </div>
           <div className={styles.row}>
             <span className={styles.k}>Pot</span>
-            <span className={styles.v}>{circle.pot} USDC</span>
+            <span className={styles.v}>{circle.pot} {sym}</span>
           </div>
           <div className={styles.row}>
             <span className={styles.k}>Your streak</span>
@@ -519,7 +521,7 @@ export function CircleView() {
 
         <div className={styles.stack}>
           <Button onClick={openContribute}>
-            Contribute {circle.amount} USDC
+            Contribute {circle.amount} {sym}
           </Button>
           {yourTurn && collectStatus === "done" ? (
             <div className={styles.collectConfirm}>

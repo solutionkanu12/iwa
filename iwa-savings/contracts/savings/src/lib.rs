@@ -14,7 +14,8 @@
 //! from the submit response, not by this contract.
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, BytesN, Env, Vec,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, token, Address, BytesN,
+    Env, Vec,
 };
 
 #[contracterror]
@@ -31,6 +32,7 @@ pub enum Error {
     NotCollector = 8,
     AlreadyCollected = 9,
     NoMembers = 10,
+    RoundNotFunded = 11,
 }
 
 /// Lifecycle of a circle. `Open` while it is still filling, `Active` once full,
@@ -50,6 +52,9 @@ pub struct Circle {
     pub id: u32,
     /// Contribution amount due from each member per round.
     pub amount: i128,
+    /// The Soroban token (SAC address) this circle moves for contributions and
+    /// payouts. Token-agnostic: native XLM or any Stellar asset's SAC.
+    pub token: Address,
     /// Length of one round in seconds. Used to decide if a payment is on time.
     pub frequency: u64,
     /// Number of member slots in the circle.
@@ -167,7 +172,7 @@ pub struct SavingsContract;
 #[contractimpl]
 impl SavingsContract {
     /// Create a circle. Returns the new circle id.
-    pub fn create_circle(env: Env, amount: i128, frequency: u64, size: u32) -> u32 {
+    pub fn create_circle(env: Env, token: Address, amount: i128, frequency: u64, size: u32) -> u32 {
         if amount <= 0 || size < 2 || frequency == 0 {
             panic_with_error!(&env, Error::InvalidConfig);
         }
@@ -178,6 +183,7 @@ impl SavingsContract {
         let circle = Circle {
             id,
             amount,
+            token,
             frequency,
             size,
             current_round: 1,
@@ -235,6 +241,7 @@ impl SavingsContract {
         circle_id: u32,
         round: u32,
         member_commitment: BytesN<32>,
+        from: Address,
     ) -> PayResult {
         let circle = load_circle(&env, circle_id);
         let members = load_members(&env, circle_id);
@@ -250,6 +257,13 @@ impl SavingsContract {
         if env.storage().persistent().has(&key) {
             panic_with_error!(&env, Error::AlreadyPaid);
         }
+
+        // Move the real contribution before recording anything: the member
+        // authorises this call, and the token transfer into the contract must
+        // succeed first, so a failed transfer leaves no "paid" record behind.
+        from.require_auth();
+        let token_client = token::TokenClient::new(&env, &circle.token);
+        token_client.transfer(&from, &env.current_contract_address(), &circle.amount);
 
         let now = env.ledger().timestamp();
         let deadline = circle.round_start + circle.frequency;
@@ -304,7 +318,12 @@ impl SavingsContract {
 
     /// Collect the pot for the current round. Only the current round's collector
     /// may call this, and only once per circle (nullifier guard).
-    pub fn collect_pot(env: Env, circle_id: u32, member_commitment: BytesN<32>) -> CollectResult {
+    pub fn collect_pot(
+        env: Env,
+        circle_id: u32,
+        member_commitment: BytesN<32>,
+        to: Address,
+    ) -> CollectResult {
         let circle = load_circle(&env, circle_id);
         let members = load_members(&env, circle_id);
 
@@ -321,6 +340,22 @@ impl SavingsContract {
             panic_with_error!(&env, Error::NotCollector);
         }
 
+        // Full round funding: every member must have paid this round before the
+        // pot is released, so the contract actually holds the whole pot.
+        let round = circle.current_round;
+        let mut i = 0u32;
+        while i < members.len() {
+            let m = members.get(i).unwrap();
+            if !env
+                .storage()
+                .persistent()
+                .has(&DataKey::Contribution(circle_id, round, m))
+            {
+                panic_with_error!(&env, Error::RoundNotFunded);
+            }
+            i += 1;
+        }
+
         let nullifier = DataKey::Collected(circle_id, member_commitment);
         if env.storage().persistent().has(&nullifier) {
             panic_with_error!(&env, Error::AlreadyCollected);
@@ -329,6 +364,10 @@ impl SavingsContract {
 
         let amount = circle.amount * (circle.size as i128);
         let ledger = env.ledger().sequence();
+
+        // Release the pot from the contract to the collector.
+        let token_client = token::TokenClient::new(&env, &circle.token);
+        token_client.transfer(&env.current_contract_address(), &to, &amount);
 
         CollectResult {
             ok: true,
