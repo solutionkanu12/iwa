@@ -11,6 +11,7 @@ import {
   WalletCancelledError,
 } from "../lib/wallet.ts";
 import type { MemberCommitment } from "../lib/wallet.ts";
+import { DEMO_CIRCLE_ID } from "../lib/stellarConfig.ts";
 import type { Circle, Reputation } from "../lib/types.ts";
 import { Island } from "../components/Island.tsx";
 import { Button } from "../components/Button.tsx";
@@ -276,17 +277,26 @@ export function CircleView() {
       return;
     }
     setAddress(addr);
-    const c = await get_circle();
-    setCircle(c);
-    setConnecting(false);
-    // Derive the member commitment from the wallet. Later stages pass it to
-    // join, pay, collect, and the reputation proof. If the wallet cannot sign,
-    // the app still runs on the mocked seam; the commitment simply stays unset.
+
+    // Derive the member commitment first so the circle read can flag your slot
+    // and your streak. If the wallet cannot sign, the reads still run without
+    // it and the app stays usable.
+    let mc: MemberCommitment | null = null;
     try {
-      const mc = await deriveMemberCommitment(addr);
+      mc = await deriveMemberCommitment(addr);
       setCommitment(mc);
     } catch (err) {
       console.warn("member commitment unavailable", err);
+    }
+
+    // Real read: the circle state, composed from the deployed savings contract.
+    try {
+      const c = await get_circle(DEMO_CIRCLE_ID, mc?.commitmentBytes);
+      setCircle(c);
+    } catch (err) {
+      console.warn("circle read failed", err);
+    } finally {
+      setConnecting(false);
     }
   }, []);
 
@@ -300,11 +310,16 @@ export function CircleView() {
 
   const goStanding = useCallback(async () => {
     setScreen("standing");
-    if (!reputation) {
-      const r = await get_reputation(circle?.id);
-      setReputation(r);
+    if (reputation) return;
+    // Real read: your reputation for this circle. Needs your commitment; without
+    // it (wallet could not sign) show an all-zero standing rather than crash.
+    if (!circle || !commitment) {
+      setReputation({ completedCycles: 0, onTimeRate: 0, defaultCount: 0 });
+      return;
     }
-  }, [reputation, circle]);
+    const r = await get_reputation(circle.id, commitment.commitmentBytes);
+    setReputation(r);
+  }, [reputation, circle, commitment]);
 
   const goProve = useCallback(() => setScreen("prove"), []);
   const backToStanding = useCallback(() => setScreen("standing"), []);
@@ -543,7 +558,7 @@ export function CircleView() {
       />
       {body}
       <p className={`${styles.mono} ${styles.protoNote}`}>
-        Mocked contract seam · live contracts wire in behind it
+        Reads live on Stellar testnet · writes and proof still mocked
       </p>
       {commitment ? (
         <p className={`${styles.mono} ${styles.protoNote}`}>

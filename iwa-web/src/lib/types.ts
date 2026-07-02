@@ -20,7 +20,7 @@ export interface MemberSlot {
 // plus the derived fields the circle screen renders (pot, anonymous slots,
 // your streak). All identity stays as opaque slots, never names.
 export interface Circle {
-  id: string;
+  id: number; // circle id (u32 on chain)
   amount: number;
   frequency: number;
   size: number;

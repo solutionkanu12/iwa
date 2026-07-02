@@ -17,6 +17,13 @@ export const NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
 export const SAVINGS_CONTRACT_ID =
   "CCP7O24JQ6FUJP5BC6P22M35YXK2B3Q7IRL4VHQBBCB5VNC55L32GYNQ";
 
+/**
+ * The circle the app reads by default. Circle ids are u32, assigned in creation
+ * order; circle 0 is the first circle created on the deployed contract. If it
+ * does not exist yet the read seam falls back to an empty circle.
+ */
+export const DEMO_CIRCLE_ID = 0;
+
 /** Groth16 BN254 verifier contract, deployed on testnet. */
 export const VERIFIER_CONTRACT_ID =
   "CBEUUHRLMSBAOX2NTNZFKKP2FBN3XMNTY6JCIOGBKYHMC5AEQTI3ZKDS";

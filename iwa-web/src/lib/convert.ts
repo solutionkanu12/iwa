@@ -63,6 +63,13 @@ export function hexToBytes(hex: string): Uint8Array {
   return out;
 }
 
+/** Raw bytes -> lower-case hex string, no prefix. */
+export function bytesToHex(bytes: Uint8Array): string {
+  let s = "";
+  for (const b of bytes) s += b.toString(16).padStart(2, "0");
+  return s;
+}
+
 /** Proof -> raw 256 bytes (for the verifier's `proof: Bytes` argument). */
 export function proofToSorobanBytes(p: SnarkProof): Uint8Array {
   return hexToBytes(proofToSorobanHex(p));
