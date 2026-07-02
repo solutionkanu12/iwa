@@ -24,8 +24,14 @@ import {
   NETWORK_PASSPHRASE,
   SAVINGS_CONTRACT_ID,
   SOROBAN_RPC_URL,
+  VERIFIER_CONTRACT_ID,
 } from "./stellarConfig";
-import { bytesToHex } from "./convert";
+import {
+  bytesToHex,
+  proofToSorobanBytes,
+  signalsToBytes,
+  type SnarkProof,
+} from "./convert";
 import type { Circle, CircleConfig, CircleStatus, Reputation } from "./types";
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -60,10 +66,11 @@ const bytesArg = (b: Uint8Array): xdr.ScVal =>
 // throwaway source account (simulation needs no funded account and no
 // signature), simulate, and decode the ScVal return into a native JS value.
 async function simulateRead(
+  contractId: string,
   method: string,
   args: xdr.ScVal[],
 ): Promise<unknown> {
-  const contract = new Contract(SAVINGS_CONTRACT_ID);
+  const contract = new Contract(contractId);
   const source = new Account(Keypair.random().publicKey(), "0");
   const tx = new TransactionBuilder(source, {
     fee: BASE_FEE,
@@ -146,7 +153,7 @@ export async function join_circle(
  */
 export async function get_members(circleId: number): Promise<string[]> {
   try {
-    const raw = (await simulateRead("get_members", [
+    const raw = (await simulateRead(SAVINGS_CONTRACT_ID, "get_members", [
       u32Arg(circleId),
     ])) as Uint8Array[];
     return raw.map(bytesToHex);
@@ -170,7 +177,9 @@ export async function get_circle(
 ): Promise<Circle> {
   let raw: RawCircle;
   try {
-    raw = (await simulateRead("get_circle", [u32Arg(circleId)])) as RawCircle;
+    raw = (await simulateRead(SAVINGS_CONTRACT_ID, "get_circle", [
+      u32Arg(circleId),
+    ])) as RawCircle;
   } catch (e) {
     if (e instanceof ContractRevert) return emptyCircle(circleId);
     throw e;
@@ -224,7 +233,7 @@ export async function get_reputation(
 ): Promise<Reputation> {
   let raw: RawReputation;
   try {
-    raw = (await simulateRead("get_reputation", [
+    raw = (await simulateRead(SAVINGS_CONTRACT_ID, "get_reputation", [
       u32Arg(circleId),
       bytesArg(memberCommitment),
     ])) as RawReputation;
@@ -270,15 +279,39 @@ export async function collect_pot(
   return { ok: true, amount: 400, txHash: fakeTxHash() };
 }
 
-/** Verify a proof on Stellar. Output is valid or invalid, nothing personal. */
+/**
+ * Verify a proof on Stellar. Real, read-only: convert the snarkjs proof and
+ * public signals to the verifier's Soroban byte layout (via convert.ts), then
+ * simulate VerifierContract.verify_proof against the deployed verifier. The
+ * verifier is a pure pairing check, so simulation returns the real bool without
+ * signing or submitting a transaction. The reference returned is the verifier
+ * contract the proof was checked against. Output is valid or invalid, nothing
+ * personal. Returns verified: false (never throws) so the UI can show an honest
+ * failure state.
+ */
 export async function verify_proof(
-  _proof: string,
-  _publicSignals: string[],
-): Promise<{ verified: boolean; txHash: string; ledger: number }> {
-  await delay(900);
-  return {
-    verified: true,
-    txHash: fakeTxHash(),
-    ledger: 1_200_000 + Math.floor(Math.random() * 100_000),
-  };
+  proof: SnarkProof,
+  publicSignals: string[],
+): Promise<{ verified: boolean; reference: string }> {
+  const proofArg = nativeToScVal(Buffer.from(proofToSorobanBytes(proof)), {
+    type: "bytes",
+  });
+  const signalsArg = xdr.ScVal.scvVec(
+    signalsToBytes(publicSignals).map((s) =>
+      xdr.ScVal.scvBytes(Buffer.from(s)),
+    ),
+  );
+
+  let verified = false;
+  try {
+    verified = (await simulateRead(VERIFIER_CONTRACT_ID, "verify_proof", [
+      proofArg,
+      signalsArg,
+    ])) as boolean;
+  } catch (e) {
+    console.warn("verify_proof simulation failed", e);
+    verified = false;
+  }
+
+  return { verified, reference: VERIFIER_CONTRACT_ID };
 }

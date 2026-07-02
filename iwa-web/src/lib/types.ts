@@ -2,6 +2,8 @@
 // Return shapes here match PRD sections 11 and 13 so the real Soroban + ZK
 // backend drops in behind lib/iwaContract.ts and lib/zk.ts with no UI changes.
 
+import type { SnarkProof } from "./convert";
+
 export interface CircleConfig {
   amount: number; // contribution per round, USDC
   frequency: number; // seconds per round
@@ -38,8 +40,11 @@ export interface Claim {
   statement: string;
 }
 
+// A generated Groth16 proof. proof carries the curve points (decimal strings)
+// the on-chain verifier needs; publicSignals are [nullifier, threshold, root]
+// as decimal strings, in the order snarkjs emits them.
 export interface ProofResult {
-  proof: string;
+  proof: SnarkProof;
   publicSignals: string[];
   claim: Claim;
 }

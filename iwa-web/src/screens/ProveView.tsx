@@ -7,9 +7,11 @@ import { Button } from "../components/Button.tsx";
 import styles from "./ProveView.module.css";
 
 // Flow 3: Generate proof, then the Verified moment, then the lender view.
-// generateProof runs on this device (mocked), then verify_proof checks on
-// Stellar (mocked). The seam signatures are unchanged. This is the hero screen,
-// so the verified motion follows the prototype exactly.
+// generateProof builds a real Groth16 proof on this device from the member's
+// secret, then verify_proof checks it on Stellar (a real, read-only pairing
+// check on the deployed verifier). This is the hero screen, so the verified
+// motion follows the prototype exactly; only the data behind it is real now. If
+// the proof does not verify, an honest failure state shows instead of the mint.
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -30,7 +32,7 @@ const CLAIMS: Claim[] = [
   { statement: "Never defaulted across 2 cycles", threshold: 2 },
 ];
 
-type ProofData = { claim: Claim; proofId: string; txHash: string };
+type ProofData = { claim: Claim; proofId: string; reference: string };
 
 function CheckIcon({ size = 13 }: { size?: number }) {
   return (
@@ -135,32 +137,59 @@ function Cowrie() {
 function ClaimStep({
   onBack,
   onVerified,
+  secret,
 }: {
   onBack: () => void;
   onVerified: (data: ProofData) => void;
+  secret: bigint | null;
 }) {
   const [selected, setSelected] = useState(0);
   const [proving, setProving] = useState(false);
+  const [failed, setFailed] = useState(false);
   const [bar, setBar] = useState(0);
   const [label, setLabel] = useState("Building proof on this device");
 
   const run = useCallback(async () => {
+    if (secret === null) {
+      // No secret means the wallet could not sign; a real proof is impossible.
+      setFailed(true);
+      return;
+    }
     setProving(true);
-    // Verbatim progress copy, in sequence.
-    setBar(38);
-    setLabel("Building proof on this device");
-    const p = await generateProof(CLAIMS[selected]);
+    setFailed(false);
+    try {
+      // Verbatim progress copy, in sequence, now backed by the real prover.
+      setBar(38);
+      setLabel("Building proof on this device");
+      const p = await generateProof(CLAIMS[selected], secret);
 
-    setBar(72);
-    setLabel("Checking on Stellar");
-    const v = await verify_proof(p.proof, p.publicSignals);
+      setBar(72);
+      setLabel("Checking on Stellar");
+      const v = await verify_proof(p.proof, p.publicSignals);
 
-    setBar(100);
-    setLabel("Verified");
-    await sleep(350);
+      if (!v.verified) {
+        setProving(false);
+        setFailed(true);
+        return;
+      }
 
-    onVerified({ claim: p.claim, proofId: p.proof, txHash: v.txHash });
-  }, [selected, onVerified]);
+      setBar(100);
+      setLabel("Verified");
+      await sleep(350);
+
+      // The proof id is the nullifier (the proof's public identifier); the
+      // reference is the verifier the proof was checked against on Stellar.
+      onVerified({
+        claim: p.claim,
+        proofId: p.publicSignals[0],
+        reference: v.reference,
+      });
+    } catch (e) {
+      console.warn("proof flow failed", e);
+      setProving(false);
+      setFailed(true);
+    }
+  }, [selected, onVerified, secret]);
 
   return (
     <Island className={styles.card}>
@@ -194,16 +223,23 @@ function ClaimStep({
         ))}
       </div>
 
-      {!proving ? (
-        <div className={styles.stack}>
-          <Button onClick={run}>Generate proof</Button>
-        </div>
-      ) : (
+      {proving ? (
         <div className={styles.progressWrap}>
           <div className={styles.progress}>
             <div className={styles.bar} style={{ width: `${bar}%` }} />
           </div>
           <p className={styles.progLabel}>{label}</p>
+        </div>
+      ) : failed ? (
+        <div className={styles.stack}>
+          <p className={styles.progLabel}>
+            The proof could not be verified. Please try again.
+          </p>
+          <Button onClick={run}>Try again</Button>
+        </div>
+      ) : (
+        <div className={styles.stack}>
+          <Button onClick={run}>Generate proof</Button>
         </div>
       )}
     </Island>
@@ -266,10 +302,10 @@ function VerifiedCard({
           <span className={styles.v}>{short(data.proofId)}</span>
         </div>
         <div className={styles.kv}>
-          <span className={styles.k}>Stellar tx</span>
+          <span className={styles.k}>Stellar verifier</span>
           <span className={styles.v}>
             <a href="/" onClick={(e) => e.preventDefault()}>
-              {short(data.txHash)}
+              {short(data.reference)}
             </a>
           </span>
         </div>
@@ -318,10 +354,10 @@ function LenderCard({
           {data.claim.statement}
         </p>
         <div className={styles.kv}>
-          <span className={styles.k}>Stellar tx</span>
+          <span className={styles.k}>Stellar verifier</span>
           <span className={styles.v}>
             <a href="/" onClick={(e) => e.preventDefault()}>
-              {short(data.txHash)}
+              {short(data.reference)}
             </a>
           </span>
         </div>
@@ -341,8 +377,10 @@ function LenderCard({
 
 export function ProveView({
   onBackToStanding,
+  secret,
 }: {
   onBackToStanding: () => void;
+  secret: bigint | null;
 }) {
   const [step, setStep] = useState<"claim" | "verified" | "lender">("claim");
   const [data, setData] = useState<ProofData | null>(null);
@@ -356,6 +394,7 @@ export function ProveView({
   return (
     <ClaimStep
       onBack={onBackToStanding}
+      secret={secret}
       onVerified={(d) => {
         setData(d);
         setStep("verified");

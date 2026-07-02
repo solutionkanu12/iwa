@@ -441,7 +441,12 @@ export function CircleView() {
       <StandingCard reputation={reputation} onGenerate={goProve} />
     );
   } else if (screen === "prove") {
-    body = <ProveView onBackToStanding={backToStanding} />;
+    body = (
+      <ProveView
+        onBackToStanding={backToStanding}
+        secret={commitment?.secret ?? null}
+      />
+    );
   } else {
     const collectorSlot = collectorSlotOf(circle);
     const yourTurn = circle.members.some(
@@ -558,7 +563,7 @@ export function CircleView() {
       />
       {body}
       <p className={`${styles.mono} ${styles.protoNote}`}>
-        Reads live on Stellar testnet · writes and proof still mocked
+        Reads and proof live on Stellar testnet · writes still mocked
       </p>
       {commitment ? (
         <p className={`${styles.mono} ${styles.protoNote}`}>
