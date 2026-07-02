@@ -41,12 +41,6 @@ function mockCircle(id: string): Circle {
   };
 }
 
-/** Connect a Stellar wallet (mocked). Returns a fake testnet address. */
-export async function connectWallet(): Promise<string> {
-  await delay(420);
-  return "GA" + fakeHex(54).toUpperCase();
-}
-
 /** Create a savings circle. */
 export async function create_circle(
   _cfg: CircleConfig,

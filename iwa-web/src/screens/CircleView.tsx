@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   collect_pot,
-  connectWallet,
   get_circle,
   get_reputation,
   pay_contribution,
 } from "../lib/iwaContract.ts";
+import {
+  connectWallet,
+  deriveMemberCommitment,
+  WalletCancelledError,
+} from "../lib/wallet.ts";
+import type { MemberCommitment } from "../lib/wallet.ts";
 import type { Circle, Reputation } from "../lib/types.ts";
 import { Island } from "../components/Island.tsx";
 import { Button } from "../components/Button.tsx";
@@ -13,10 +18,11 @@ import { ProveView } from "./ProveView.tsx";
 import styles from "./CircleView.module.css";
 
 // Flow 1 (the circle view) and Flow 2 (contribute and collect), matched to
-// design/iwa-prototype.html. Connect gate first (mocked connectWallet), then the
-// circle screen from mocked get_circle. Contribute opens a confirm step that
-// calls pay_contribution; collect calls collect_pot. All chain access stays
-// behind the lib seam; the seam signatures are unchanged.
+// design/iwa-prototype.html. Connect gate first (real Stellar Wallets Kit
+// connect plus member commitment), then the circle screen from mocked
+// get_circle. Contribute opens a confirm step that calls pay_contribution;
+// collect calls collect_pot. Connect and the commitment are live; the rest of
+// the chain access still runs on the mocked lib seam this stage.
 
 const PRIVACY_LINE =
   "Your contributions are private. Only your good standing can be proven, and only by you.";
@@ -245,6 +251,7 @@ type Status = "idle" | "working" | "done";
 
 export function CircleView() {
   const [address, setAddress] = useState<string | null>(null);
+  const [commitment, setCommitment] = useState<MemberCommitment | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [circle, setCircle] = useState<Circle | null>(null);
 
@@ -257,13 +264,29 @@ export function CircleView() {
 
   const handleConnect = useCallback(async () => {
     setConnecting(true);
+    let addr: string;
     try {
-      const addr = await connectWallet();
-      setAddress(addr);
-      const c = await get_circle();
-      setCircle(c);
-    } finally {
+      addr = await connectWallet();
+    } catch (err) {
+      // A cancelled modal is expected: stay on the connect gate, no crash.
+      if (!(err instanceof WalletCancelledError)) {
+        console.warn("wallet connect failed", err);
+      }
       setConnecting(false);
+      return;
+    }
+    setAddress(addr);
+    const c = await get_circle();
+    setCircle(c);
+    setConnecting(false);
+    // Derive the member commitment from the wallet. Later stages pass it to
+    // join, pay, collect, and the reputation proof. If the wallet cannot sign,
+    // the app still runs on the mocked seam; the commitment simply stays unset.
+    try {
+      const mc = await deriveMemberCommitment(addr);
+      setCommitment(mc);
+    } catch (err) {
+      console.warn("member commitment unavailable", err);
     }
   }, []);
 
@@ -522,6 +545,11 @@ export function CircleView() {
       <p className={`${styles.mono} ${styles.protoNote}`}>
         Mocked contract seam · live contracts wire in behind it
       </p>
+      {commitment ? (
+        <p className={`${styles.mono} ${styles.protoNote}`}>
+          Member commitment ready · {short(commitment.commitmentHex)}
+        </p>
+      ) : null}
     </>
   );
 }
