@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   classifyContractError,
   collect_pot,
@@ -11,6 +11,7 @@ import {
 import {
   connectWallet,
   deriveMemberCommitment,
+  disconnectWallet,
   WalletCancelledError,
 } from "../lib/wallet.ts";
 import type { MemberCommitment } from "../lib/wallet.ts";
@@ -245,13 +246,30 @@ function AppNav({
   section,
   onCircle,
   onStanding,
+  onDisconnect,
 }: {
   address: string | null;
   section: "circle" | "standing";
   onCircle: () => void;
   onStanding: () => void;
+  onDisconnect: () => void;
 }) {
   const enabled = !!address;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close the wallet menu when clicking anywhere outside it.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [menuOpen]);
+
   return (
     <Island className={styles.appNav}>
       <div className={styles.navL}>
@@ -282,10 +300,33 @@ function AppNav({
       </div>
       <div className={styles.walletSlot}>
         {address ? (
-          <span className={styles.wallet}>
-            <span className={styles.walletDot} />
-            <span className={styles.walletAddr}>{short(address)}</span>
-          </span>
+          <div className={styles.walletMenu} ref={menuRef}>
+            <button
+              type="button"
+              className={styles.wallet}
+              onClick={() => setMenuOpen((v) => !v)}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+            >
+              <span className={styles.walletDot} />
+              <span className={styles.walletAddr}>{short(address)}</span>
+            </button>
+            {menuOpen ? (
+              <div className={styles.dropdown} role="menu">
+                <button
+                  type="button"
+                  className={styles.dropdownItem}
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onDisconnect();
+                  }}
+                >
+                  Disconnect
+                </button>
+              </div>
+            ) : null}
+          </div>
         ) : null}
       </div>
     </Island>
@@ -371,6 +412,30 @@ export function CircleView() {
       setConnecting(false);
     }
   }, [loadPaidStatus]);
+
+  const handleDisconnect = useCallback(async () => {
+    await disconnectWallet();
+    // Clear every piece of per-wallet state so a newly connected wallet is
+    // evaluated fresh, with no stale membership, commitment, or paid status.
+    setAddress(null);
+    setCommitment(null);
+    setCircle(null);
+    setConnecting(false);
+    setScreen("circle");
+    setContribStatus("idle");
+    setContribTx(null);
+    setContribError(null);
+    setContribOnTime(true);
+    setAlreadyPaid(false);
+    setCollectStatus("idle");
+    setCollectTx(null);
+    setCollectError(null);
+    setCollectAmount(0);
+    setJoinStatus("idle");
+    setJoinTx(null);
+    setJoinError(false);
+    setReputation(null);
+  }, []);
 
   const openContribute = useCallback(() => {
     setContribStatus("idle");
@@ -768,10 +833,11 @@ export function CircleView() {
         section={section}
         onCircle={backToCircle}
         onStanding={goStanding}
+        onDisconnect={handleDisconnect}
       />
       {body}
       <p className={`${styles.mono} ${styles.protoNote}`}>
-        Reads and proof live on Stellar testnet · writes still mocked
+        Reads, proof, and writes live on Stellar testnet
       </p>
       {commitment ? (
         <p className={`${styles.mono} ${styles.protoNote}`}>

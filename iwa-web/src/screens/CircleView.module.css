@@ -54,6 +54,11 @@
   justify-content: flex-end;
   min-width: 96px;
 }
+/* Relative anchor so the dropdown can sit directly below the pill. */
+.walletMenu {
+  position: relative;
+}
+/* The address pill, now a toggle button for the wallet menu. */
 .wallet {
   display: flex;
   align-items: center;
@@ -62,6 +67,19 @@
   background: var(--mist);
   border-radius: 10px;
   padding: 6px 10px;
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease;
+  transform: scale(1);
+}
+.wallet:hover,
+.wallet:focus-visible {
+  border-color: var(--ink); /* deepen toward ink on hover */
+  transform: scale(0.96); /* shrink, never grow */
+}
+.wallet:active {
+  transform: scale(0.96);
 }
 .walletDot {
   width: 7px;
@@ -73,6 +91,47 @@
   font-family: var(--font-data);
   font-size: 11px;
   color: var(--ink);
+}
+/* Wallet dropdown: a small raised surface (never pure white) with a hairline
+ * border, holding the Disconnect action. Room for more items later. */
+.dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 140px;
+  padding: 6px;
+  background: var(--cloud);
+  border: 0.5px solid var(--brd);
+  border-radius: 12px;
+  box-shadow: var(--shadow-soft);
+  z-index: 20;
+}
+.dropdownItem {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease;
+  transform: scale(1);
+}
+.dropdownItem:hover,
+.dropdownItem:focus-visible {
+  background: var(--ink-black); /* deepen to near-black ink */
+  color: var(--cloud);
+  transform: scale(0.96); /* shrink, never grow */
+}
+.dropdownItem:active {
+  transform: scale(0.96);
 }
 
 /* Cards */

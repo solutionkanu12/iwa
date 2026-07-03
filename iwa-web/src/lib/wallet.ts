@@ -73,6 +73,20 @@ export async function connectWallet(): Promise<string> {
 }
 
 /**
+ * Disconnect the current wallet from the Wallets Kit so a different wallet can
+ * be picked cleanly, with no leftover selection. Best-effort: some wallets do
+ * not implement disconnect, so failures are swallowed.
+ */
+export async function disconnectWallet(): Promise<void> {
+  ensureKit();
+  try {
+    await StellarWalletsKit.disconnect();
+  } catch (err) {
+    console.warn("wallet disconnect failed", err);
+  }
+}
+
+/**
  * Sign a transaction XDR with the connected wallet via the Wallets Kit and
  * return the signed XDR. The connected wallet is the transaction source: it
  * signs and pays the network fee. Only the transaction is signed; no personal
