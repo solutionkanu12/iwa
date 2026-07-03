@@ -2,8 +2,9 @@
 
 use super::*;
 use soroban_sdk::{
+    contract, contractimpl,
     testutils::{Address as _, Ledger},
-    token, Address, BytesN, Env,
+    token, Address, Bytes, BytesN, Env,
 };
 
 /// A member commitment is just a 32-byte value here. In the real flow it is a
@@ -31,6 +32,37 @@ fn balance(env: &Env, token_addr: &Address, who: &Address) -> i128 {
     token::TokenClient::new(env, token_addr).balance(who)
 }
 
+// --- Trust-gated join test fixtures ---------------------------------------
+
+/// A stub verifier: implements the same `verify_proof` seam as the real
+/// deployed verifier, but always accepts, so join tests stay fast (no real
+/// Groth16 crypto). Registered at the exact address join_circle cross-calls.
+#[contract]
+struct MockVerifier;
+
+#[contractimpl]
+impl MockVerifier {
+    pub fn verify_proof(_env: Env, _proof: Bytes, _public_signals: Vec<BytesN<32>>) -> bool {
+        true
+    }
+}
+
+/// Register the stub verifier at the hardcoded VERIFIER_CONTRACT_ID address so
+/// join_circle's cross-contract call resolves to it in tests.
+fn setup_mock_verifier(env: &Env) {
+    let verifier_id = Address::from_str(env, VERIFIER_CONTRACT_ID);
+    env.register_at(&verifier_id, MockVerifier, ());
+}
+
+/// A well-formed-shaped (but not cryptographically real) trust proof. Fine
+/// here because MockVerifier ignores its contents and always accepts.
+fn dummy_proof(env: &Env) -> TrustProof {
+    TrustProof {
+        proof: Bytes::from_array(env, &[0u8; 32]),
+        public_signals: Vec::new(env),
+    }
+}
+
 #[test]
 fn create_and_get_circle() {
     let env = Env::default();
@@ -38,12 +70,13 @@ fn create_and_get_circle() {
     let client = SavingsContractClient::new(&env, &id);
 
     let token_addr = setup_token(&env);
-    let cid = client.create_circle(&token_addr, &50i128, &604_800u64, &3u32);
+    let cid = client.create_circle(&token_addr, &50i128, &604_800u64, &3u32, &false);
     assert_eq!(cid, 0);
 
     let circle = client.get_circle(&cid);
     assert_eq!(circle.amount, 50);
     assert_eq!(circle.token, token_addr);
+    assert!(!circle.trust_required);
     assert_eq!(circle.frequency, 604_800);
     assert_eq!(circle.size, 3);
     assert_eq!(circle.current_round, 1);
@@ -51,7 +84,7 @@ fn create_and_get_circle() {
     assert_eq!(circle.status, CircleStatus::Open);
 
     // The next circle gets the next id.
-    let cid2 = client.create_circle(&token_addr, &10i128, &86_400u64, &2u32);
+    let cid2 = client.create_circle(&token_addr, &10i128, &86_400u64, &2u32, &false);
     assert_eq!(cid2, 1);
 }
 
@@ -62,11 +95,11 @@ fn create_circle_rejects_bad_config() {
     let client = SavingsContractClient::new(&env, &id);
 
     let token_addr = setup_token(&env);
-    match client.try_create_circle(&token_addr, &0i128, &100u64, &3u32) {
+    match client.try_create_circle(&token_addr, &0i128, &100u64, &3u32, &false) {
         Err(Ok(e)) => assert_eq!(e, Error::InvalidConfig.into()),
         _ => panic!("expected InvalidConfig for amount 0"),
     }
-    match client.try_create_circle(&token_addr, &50i128, &100u64, &1u32) {
+    match client.try_create_circle(&token_addr, &50i128, &100u64, &1u32, &false) {
         Err(Ok(e)) => assert_eq!(e, Error::InvalidConfig.into()),
         _ => panic!("expected InvalidConfig for size 1"),
     }
@@ -79,22 +112,22 @@ fn join_assigns_slots_prevents_dupes_and_full() {
     let client = SavingsContractClient::new(&env, &id);
 
     let token_addr = setup_token(&env);
-    let cid = client.create_circle(&token_addr, &50i128, &604_800u64, &3u32);
+    let cid = client.create_circle(&token_addr, &50i128, &604_800u64, &3u32, &false);
     let m1 = member(&env, 1);
     let m2 = member(&env, 2);
     let m3 = member(&env, 3);
     let m4 = member(&env, 4);
 
     assert_eq!(
-        client.join_circle(&cid, &m1),
+        client.join_circle(&cid, &m1, &None),
         JoinResult { ok: true, slot: 0 }
     );
     assert_eq!(
-        client.join_circle(&cid, &m2),
+        client.join_circle(&cid, &m2, &None),
         JoinResult { ok: true, slot: 1 }
     );
     assert_eq!(
-        client.join_circle(&cid, &m3),
+        client.join_circle(&cid, &m3, &None),
         JoinResult { ok: true, slot: 2 }
     );
 
@@ -103,14 +136,49 @@ fn join_assigns_slots_prevents_dupes_and_full() {
     assert_eq!(circle.status, CircleStatus::Active); // full circle is active
 
     // Duplicate member is rejected.
-    match client.try_join_circle(&cid, &m1) {
+    match client.try_join_circle(&cid, &m1, &None) {
         Err(Ok(e)) => assert_eq!(e, Error::AlreadyMember.into()),
         _ => panic!("expected AlreadyMember"),
     }
     // Joining a full circle is rejected.
-    match client.try_join_circle(&cid, &m4) {
+    match client.try_join_circle(&cid, &m4, &None) {
         Err(Ok(e)) => assert_eq!(e, Error::CircleFull.into()),
         _ => panic!("expected CircleFull"),
+    }
+}
+
+#[test]
+fn join_requires_trust_proof_when_required() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(SavingsContract, ());
+    let client = SavingsContractClient::new(&env, &id);
+    setup_mock_verifier(&env);
+
+    let token_addr = setup_token(&env);
+    let cid = client.create_circle(&token_addr, &50i128, &604_800u64, &3u32, &true);
+    assert!(client.get_circle(&cid).trust_required);
+
+    let m1 = member(&env, 1);
+    let m2 = member(&env, 2);
+
+    // No proof at all: rejected before any cross-call.
+    match client.try_join_circle(&cid, &m1, &None) {
+        Err(Ok(e)) => assert_eq!(e, Error::TrustProofRequired.into()),
+        _ => panic!("expected TrustProofRequired"),
+    }
+    assert_eq!(client.get_circle(&cid).members, 0); // nothing joined
+
+    // A valid proof (accepted by the stub verifier) lets the join succeed.
+    let proof = dummy_proof(&env);
+    let joined = client.join_circle(&cid, &m1, &Some(proof));
+    assert_eq!(joined, JoinResult { ok: true, slot: 0 });
+    assert_eq!(client.get_circle(&cid).members, 1);
+
+    // A trust-required circle with no proof still blocks a second member.
+    match client.try_join_circle(&cid, &m2, &None) {
+        Err(Ok(e)) => assert_eq!(e, Error::TrustProofRequired.into()),
+        _ => panic!("expected TrustProofRequired"),
     }
 }
 
@@ -129,11 +197,11 @@ fn pay_contribution_on_time_and_late() {
 
     // Round length 1000s. Circle is created at timestamp 0, so the round 1
     // deadline is 1000.
-    let cid = client.create_circle(&token_addr, &50i128, &1_000u64, &2u32);
+    let cid = client.create_circle(&token_addr, &50i128, &1_000u64, &2u32, &false);
     let m1 = member(&env, 1);
     let m2 = member(&env, 2);
-    client.join_circle(&cid, &m1);
-    client.join_circle(&cid, &m2);
+    client.join_circle(&cid, &m1, &None);
+    client.join_circle(&cid, &m2, &None);
 
     // On time: before the deadline. The payment moves the token into the pot.
     env.ledger().set_timestamp(500);
@@ -182,11 +250,11 @@ fn advance_collect_and_prevent_double_collect() {
     mint(&env, &token_addr, &p1, 1_000);
     mint(&env, &token_addr, &p2, 1_000);
 
-    let cid = client.create_circle(&token_addr, &50i128, &1_000u64, &2u32);
+    let cid = client.create_circle(&token_addr, &50i128, &1_000u64, &2u32, &false);
     let m1 = member(&env, 1);
     let m2 = member(&env, 2);
-    client.join_circle(&cid, &m1); // slot 0
-    client.join_circle(&cid, &m2); // slot 1
+    client.join_circle(&cid, &m1, &None); // slot 0
+    client.join_circle(&cid, &m2, &None); // slot 1
 
     // Round 1: every member must fund the round before the pot is collectable.
     client.pay_contribution(&cid, &1u32, &m1, &p1);
@@ -252,11 +320,11 @@ fn collect_requires_full_funding() {
     mint(&env, &token_addr, &p1, 1_000);
     mint(&env, &token_addr, &p2, 1_000);
 
-    let cid = client.create_circle(&token_addr, &50i128, &1_000u64, &2u32);
+    let cid = client.create_circle(&token_addr, &50i128, &1_000u64, &2u32, &false);
     let m1 = member(&env, 1);
     let m2 = member(&env, 2);
-    client.join_circle(&cid, &m1); // slot 0, round 1 collector
-    client.join_circle(&cid, &m2); // slot 1
+    client.join_circle(&cid, &m1, &None); // slot 0, round 1 collector
+    client.join_circle(&cid, &m2, &None); // slot 1
 
     // Only the collector has paid; m2 has not funded round 1.
     client.pay_contribution(&cid, &1u32, &m1, &p1);
@@ -286,11 +354,11 @@ fn seed_and_read_contribution_history() {
     let client = SavingsContractClient::new(&env, &id);
 
     let token_addr = setup_token(&env);
-    let cid = client.create_circle(&token_addr, &50i128, &1_000u64, &2u32);
+    let cid = client.create_circle(&token_addr, &50i128, &1_000u64, &2u32, &false);
     let m1 = member(&env, 1);
     let m2 = member(&env, 2);
-    client.join_circle(&cid, &m1);
-    client.join_circle(&cid, &m2);
+    client.join_circle(&cid, &m1, &None);
+    client.join_circle(&cid, &m2, &None);
 
     // Seed a history: m1 on time in rounds 1 and 2, m2 late in round 1. Seeding
     // bypasses the token movement on purpose (demo seam), so no funds needed.
@@ -328,7 +396,7 @@ fn reputation_perfect_member() {
     let client = SavingsContractClient::new(&env, &id);
 
     let token_addr = setup_token(&env);
-    let cid = client.create_circle(&token_addr, &50i128, &1_000u64, &3u32);
+    let cid = client.create_circle(&token_addr, &50i128, &1_000u64, &3u32, &false);
     let m = member(&env, 1);
     // Contributed in all three rounds, every one on time.
     client.seed_contribution(&cid, &1u32, &m, &true);
@@ -353,7 +421,7 @@ fn reputation_one_late_payment() {
     let client = SavingsContractClient::new(&env, &id);
 
     let token_addr = setup_token(&env);
-    let cid = client.create_circle(&token_addr, &50i128, &1_000u64, &3u32);
+    let cid = client.create_circle(&token_addr, &50i128, &1_000u64, &3u32, &false);
     let m = member(&env, 2);
     client.seed_contribution(&cid, &1u32, &m, &true);
     client.seed_contribution(&cid, &2u32, &m, &false); // late
@@ -373,7 +441,7 @@ fn reputation_missed_a_round() {
     let client = SavingsContractClient::new(&env, &id);
 
     let token_addr = setup_token(&env);
-    let cid = client.create_circle(&token_addr, &50i128, &1_000u64, &3u32);
+    let cid = client.create_circle(&token_addr, &50i128, &1_000u64, &3u32, &false);
     let m = member(&env, 3);
     // Paid rounds 1 and 3 on time, missed round 2 entirely (no record).
     client.seed_contribution(&cid, &1u32, &m, &true);
@@ -392,7 +460,7 @@ fn reputation_no_history_is_all_zeros() {
     let client = SavingsContractClient::new(&env, &id);
 
     let token_addr = setup_token(&env);
-    let cid = client.create_circle(&token_addr, &50i128, &1_000u64, &3u32);
+    let cid = client.create_circle(&token_addr, &50i128, &1_000u64, &3u32, &false);
     let m = member(&env, 7);
 
     let rep = client.get_reputation(&cid, &m);
@@ -419,11 +487,11 @@ fn reputation_derives_from_real_payments() {
 
     // Reputation reads the same records that pay_contribution writes, not only
     // seeded ones. Round length 1000, so the round 1 deadline is 1000.
-    let cid = client.create_circle(&token_addr, &50i128, &1_000u64, &2u32);
+    let cid = client.create_circle(&token_addr, &50i128, &1_000u64, &2u32, &false);
     let m1 = member(&env, 1);
     let m2 = member(&env, 2);
-    client.join_circle(&cid, &m1);
-    client.join_circle(&cid, &m2);
+    client.join_circle(&cid, &m1, &None);
+    client.join_circle(&cid, &m2, &None);
 
     env.ledger().set_timestamp(500);
     client.pay_contribution(&cid, &1u32, &m1, &p1); // on time

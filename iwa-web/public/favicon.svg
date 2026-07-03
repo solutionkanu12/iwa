@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Iwa">
+  <ellipse cx="16" cy="17" rx="10.5" ry="13" fill="#6D4DF2" />
+  <ellipse cx="12.8" cy="13" rx="5.4" ry="7" fill="#CECBF6" opacity="0.85" />
+  <path d="M16 6.2C18.3 14 18.3 20.5 16 28C13.7 20.5 13.7 14 16 6.2Z" fill="#F6F4FC" />
+</svg>

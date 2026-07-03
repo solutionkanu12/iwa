@@ -27,7 +27,9 @@ function short(s: string): string {
 }
 
 // The two claims a saver can prove (prototype wording). Demo threshold N = 2.
-const CLAIMS: Claim[] = [
+// Exported so other flows (trust-gated join) reuse the exact same claims
+// rather than defining their own.
+export const CLAIMS: Claim[] = [
   { statement: "Completed 2 full cycles, always on time", threshold: 2 },
   { statement: "Never defaulted across 2 cycles", threshold: 2 },
 ];

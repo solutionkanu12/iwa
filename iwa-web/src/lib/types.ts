@@ -24,6 +24,7 @@ export interface MemberSlot {
 export interface Circle {
   id: number; // circle id (u32 on chain)
   token: string; // the circle's token (Soroban SAC address); resolves to a symbol
+  trust_required: boolean; // join requires a verified reputation proof
   amount: number;
   frequency: number;
   size: number;

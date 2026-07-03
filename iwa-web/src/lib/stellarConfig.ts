@@ -15,7 +15,7 @@ export const NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
 
 /** Savings + reputation contract (Rust / Soroban), deployed on testnet. */
 export const SAVINGS_CONTRACT_ID =
-  "CDTHKKLZZ7PYDKZ3GVEVGPLP4F5UTWKTDJQ3SMCE4EZ74JONFFTXMSOM";
+  "CBLSFOP3YFRYR6MVZFVDHD6F7UBJKIMXPJKZAR2IYLHTX4NJUS4JKM6U";
 
 /**
  * The token (Soroban SAC) the demo circle moves for contributions and payouts.
@@ -83,12 +83,13 @@ export const TOKEN_OPTIONS: TokenOption[] = [
 
 /**
  * The circle the app reads by default. Circle ids are u32, assigned in creation
- * order. Circle 1 is the correctly denominated demo (amount in base units:
- * 500000000 stroops = 50 XLM); circle 0 was an early circle with amount in
- * stroops that read as a negligible 0.000005 XLM. If it does not exist yet the
- * read seam falls back to an empty circle.
+ * order per contract. On the trust-gated savings contract, circle 0 is the
+ * open demo (trust_required: false, 5 XLM/round, size 3); circle 1 is the
+ * trust-gated demo (trust_required: true, same terms) for testing the proof
+ * gate. If the default circle does not exist yet, the read seam falls back to
+ * an empty circle.
  */
-export const DEMO_CIRCLE_ID = 1;
+export const DEMO_CIRCLE_ID = 0;
 
 /** Groth16 BN254 verifier contract, deployed on testnet. */
 export const VERIFIER_CONTRACT_ID =

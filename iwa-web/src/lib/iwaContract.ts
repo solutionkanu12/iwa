@@ -63,12 +63,16 @@ export class ContractCallError extends Error {
 // without parsing host-error strings themselves.
 export type ContractErrorKind =
   | "InvalidConfig"
+  | "CircleFull"
+  | "AlreadyMember"
   | "AlreadyPaid"
   | "NotMember"
   | "WrongRound"
   | "NotCollector"
   | "AlreadyCollected"
   | "RoundNotFunded"
+  | "TrustProofRequired"
+  | "InvalidTrustProof"
   | "InsufficientBalance"
   | "Declined"
   | "Unknown";
@@ -100,6 +104,10 @@ export function classifyContractError(err: unknown): ContractErrorKind {
     switch (match[1]) {
       case "2":
         return "InvalidConfig";
+      case "3":
+        return "CircleFull";
+      case "4":
+        return "AlreadyMember";
       case "5":
         return "NotMember";
       case "6":
@@ -112,6 +120,10 @@ export function classifyContractError(err: unknown): ContractErrorKind {
         return "AlreadyCollected";
       case "11":
         return "RoundNotFunded";
+      case "12":
+        return "TrustProofRequired";
+      case "13":
+        return "InvalidTrustProof";
     }
   }
   return "Unknown";
@@ -124,6 +136,23 @@ const i128Arg = (n: bigint): xdr.ScVal => nativeToScVal(n, { type: "i128" });
 const bytesArg = (b: Uint8Array): xdr.ScVal =>
   nativeToScVal(Buffer.from(b), { type: "bytes" });
 const addressArg = (a: string): xdr.ScVal => nativeToScVal(a, { type: "address" });
+
+// The contract's `Option<TrustProof>` argument: None encodes as scvVoid; Some
+// encodes as the TrustProof struct's own map (Soroban Option is transparent,
+// no wrapper). Field keys are the contract's struct field names.
+function trustProofArg(proof: SnarkProof, publicSignals: string[]): xdr.ScVal {
+  const proofEntry = new xdr.ScMapEntry({
+    key: xdr.ScVal.scvSymbol("proof"),
+    val: bytesArg(proofToSorobanBytes(proof)),
+  });
+  const signalsEntry = new xdr.ScMapEntry({
+    key: xdr.ScVal.scvSymbol("public_signals"),
+    val: xdr.ScVal.scvVec(
+      signalsToBytes(publicSignals).map((s) => xdr.ScVal.scvBytes(Buffer.from(s))),
+    ),
+  });
+  return xdr.ScVal.scvMap([proofEntry, signalsEntry]);
+}
 
 // Invoke a contract getter through simulation only: build the call with a
 // throwaway source account (simulation needs no funded account and no
@@ -215,6 +244,7 @@ interface RawCircle {
   id: number;
   amount: bigint;
   token: string; // Soroban Address decodes to its "C..." string
+  trust_required: boolean;
   frequency: bigint;
   size: number;
   current_round: number;
@@ -241,6 +271,7 @@ function emptyCircle(circleId: number): Circle {
   return {
     id: circleId,
     token: "",
+    trust_required: false,
     amount: 0,
     frequency: 0,
     size: 0,
@@ -276,17 +307,26 @@ export async function create_circle(
 /**
  * Join a circle for real: a signed join_circle submitted to the savings
  * contract, with the connected wallet as source. Only the member commitment
- * goes on chain, never an identity. Returns the assigned slot and the confirmed
- * tx hash. Throws on failure so the UI can show an honest error.
+ * goes on chain, never an identity. When the circle requires trust,
+ * `trustProof` (the real Groth16 proof + public signals, generated exactly as
+ * the My standing / prove flow does) is sent along and verified on chain by
+ * the savings contract's own cross-call to the verifier; omit it for open
+ * circles. Returns the assigned slot and the confirmed tx hash. Throws on
+ * failure (including TrustProofRequired / InvalidTrustProof) so the UI can
+ * show an honest error.
  */
 export async function join_circle(
   circleId: number,
   memberCommitment: Uint8Array,
   address: string,
+  trustProof?: { proof: SnarkProof; publicSignals: string[] },
 ): Promise<{ ok: boolean; slot: number; txHash: string }> {
+  const proofArg = trustProof
+    ? trustProofArg(trustProof.proof, trustProof.publicSignals)
+    : xdr.ScVal.scvVoid();
   const { txHash, returnValue } = await signAndSubmit(
     "join_circle",
-    [u32Arg(circleId), bytesArg(memberCommitment)],
+    [u32Arg(circleId), bytesArg(memberCommitment), proofArg],
     address,
   );
   const res = returnValue as { ok?: boolean; slot?: number } | undefined;
@@ -307,6 +347,55 @@ export async function get_members(circleId: number): Promise<string[]> {
     if (e instanceof ContractRevert) return [];
     throw e;
   }
+}
+
+// A lightweight circle summary for the discovery list (no member slots or
+// streak, just what a browse row needs). amount is in the token's base units.
+export interface CircleSummary {
+  id: number;
+  amount: number;
+  token: string;
+  trust_required: boolean;
+  size: number;
+  current_round: number;
+  members: number; // how many have joined
+  status: CircleStatus;
+}
+
+/**
+ * Discover circles by scanning ids from 0 up. The contract has no list call, but
+ * ids are assigned sequentially with no gaps, so we read get_circle per id and
+ * stop at the first one that does not exist (a CircleNotFound revert). A per-id
+ * read failure that is not a revert is skipped so one bad read cannot abort the
+ * whole scan, and the scan is capped so it can never loop forever.
+ */
+export async function listCircles(max = 50): Promise<CircleSummary[]> {
+  const out: CircleSummary[] = [];
+  for (let id = 0; id < max; id++) {
+    let raw: RawCircle;
+    try {
+      raw = (await simulateRead(SAVINGS_CONTRACT_ID, "get_circle", [
+        u32Arg(id),
+      ])) as RawCircle;
+    } catch (e) {
+      // A revert means this id does not exist; since ids are sequential, the
+      // list ends here. Any other error is a transient read failure: skip it.
+      if (e instanceof ContractRevert) break;
+      console.warn(`listCircles: get_circle(${id}) failed`, e);
+      continue;
+    }
+    out.push({
+      id: raw.id,
+      amount: Number(raw.amount),
+      token: raw.token,
+      trust_required: raw.trust_required,
+      size: raw.size,
+      current_round: raw.current_round,
+      members: raw.members,
+      status: mapStatus(raw.status),
+    });
+  }
+  return out;
 }
 
 /**
@@ -357,6 +446,7 @@ export async function get_circle(
   return {
     id: raw.id,
     token: raw.token,
+    trust_required: raw.trust_required,
     amount,
     frequency: Number(raw.frequency),
     size,

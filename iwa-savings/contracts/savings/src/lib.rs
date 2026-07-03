@@ -1,11 +1,16 @@
 #![no_std]
 //! Iwa savings contract: the plain ajo (rotating savings circle) plumbing.
 //!
-//! No zero-knowledge here. This contract runs the circle: create, join,
-//! contribute, advance the round, and collect the pot. Members are represented
-//! only by a 32-byte commitment, never a real identity. Contribution history is
-//! seed-able so the demo has reputation history without living through real
-//! rounds before the deadline.
+//! No zero-knowledge here for the circle itself. This contract runs the
+//! circle: create, join, contribute, advance the round, and collect the pot.
+//! Members are represented only by a 32-byte commitment, never a real
+//! identity. Contribution history is seed-able so the demo has reputation
+//! history without living through real rounds before the deadline.
+//!
+//! Trust gating: a circle can require join_circle callers to submit a Groth16
+//! reputation proof (the same proof structure the standalone Iwa verifier
+//! checks) before they may join. When required, join_circle cross-calls the
+//! deployed verifier contract, exactly as the standalone verify flow does.
 //!
 //! Note on `tx` / transaction hashes: a Soroban contract cannot know its own
 //! transaction hash (the network assigns it after submission), so result types
@@ -14,8 +19,8 @@
 //! from the submit response, not by this contract.
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, token, Address, BytesN,
-    Env, Vec,
+    contract, contractclient, contracterror, contractimpl, contracttype, panic_with_error, token,
+    Address, Bytes, BytesN, Env, Vec,
 };
 
 #[contracterror]
@@ -33,6 +38,10 @@ pub enum Error {
     AlreadyCollected = 9,
     NoMembers = 10,
     RoundNotFunded = 11,
+    /// The circle requires a trust proof to join and none was supplied.
+    TrustProofRequired = 12,
+    /// A trust proof was supplied but the verifier rejected it.
+    InvalidTrustProof = 13,
 }
 
 /// Lifecycle of a circle. `Open` while it is still filling, `Active` once full,
@@ -55,6 +64,8 @@ pub struct Circle {
     /// The Soroban token (SAC address) this circle moves for contributions and
     /// payouts. Token-agnostic: native XLM or any Stellar asset's SAC.
     pub token: Address,
+    /// When true, join_circle requires a valid trust proof (see `TrustProof`).
+    pub trust_required: bool,
     /// Length of one round in seconds. Used to decide if a payment is on time.
     pub frequency: u64,
     /// Number of member slots in the circle.
@@ -123,6 +134,27 @@ pub struct Reputation {
     pub default_count: u32,
 }
 
+/// A Groth16 reputation proof, in the exact shape the standalone Iwa verifier
+/// checks: `proof` is the 256-byte serialized A||B||C (G2 in c1||c0 order), and
+/// `public_signals` is [nullifier, threshold, root] as 32-byte field elements.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TrustProof {
+    pub proof: Bytes,
+    pub public_signals: Vec<BytesN<32>>,
+}
+
+/// The deployed Iwa reputation Groth16 verifier on Stellar testnet. Trust-gated
+/// circles cross-call this contract; it is not deployed by this contract.
+const VERIFIER_CONTRACT_ID: &str = "CBEUUHRLMSBAOX2NTNZFKKP2FBN3XMNTY6JCIOGBKYHMC5AEQTI3ZKDS";
+
+/// Client interface for the deployed verifier, matching its public seam
+/// exactly: `verify_proof(proof, public_signals) -> bool`.
+#[contractclient(name = "VerifierClient")]
+pub trait VerifierInterface {
+    fn verify_proof(env: Env, proof: Bytes, public_signals: Vec<BytesN<32>>) -> bool;
+}
+
 /// On-chain storage keys. None of these reference a real identity.
 #[contracttype]
 #[derive(Clone)]
@@ -171,8 +203,16 @@ pub struct SavingsContract;
 
 #[contractimpl]
 impl SavingsContract {
-    /// Create a circle. Returns the new circle id.
-    pub fn create_circle(env: Env, token: Address, amount: i128, frequency: u64, size: u32) -> u32 {
+    /// Create a circle. Returns the new circle id. `trust_required` gates
+    /// join_circle behind a verified reputation proof when true.
+    pub fn create_circle(
+        env: Env,
+        token: Address,
+        amount: i128,
+        frequency: u64,
+        size: u32,
+        trust_required: bool,
+    ) -> u32 {
         if amount <= 0 || size < 2 || frequency == 0 {
             panic_with_error!(&env, Error::InvalidConfig);
         }
@@ -184,6 +224,7 @@ impl SavingsContract {
             id,
             amount,
             token,
+            trust_required,
             frequency,
             size,
             current_round: 1,
@@ -201,8 +242,15 @@ impl SavingsContract {
         id
     }
 
-    /// Join a circle. Assigns the next free slot to the member commitment.
-    pub fn join_circle(env: Env, circle_id: u32, member_commitment: BytesN<32>) -> JoinResult {
+    /// Join a circle. Assigns the next free slot to the member commitment. If
+    /// the circle requires trust, `trust_proof` must be `Some` and must verify
+    /// against the deployed verifier, or the join reverts.
+    pub fn join_circle(
+        env: Env,
+        circle_id: u32,
+        member_commitment: BytesN<32>,
+        trust_proof: Option<TrustProof>,
+    ) -> JoinResult {
         let mut circle = load_circle(&env, circle_id);
         let mut members = load_members(&env, circle_id);
 
@@ -215,6 +263,21 @@ impl SavingsContract {
         }
         if members.len() >= circle.size {
             panic_with_error!(&env, Error::CircleFull);
+        }
+
+        // Trust gate: cheap checks above run first; the cross-contract proof
+        // check only runs once we know the join would otherwise succeed.
+        if circle.trust_required {
+            let proof = match trust_proof {
+                Some(p) => p,
+                None => panic_with_error!(&env, Error::TrustProofRequired),
+            };
+            let verifier_id = Address::from_str(&env, VERIFIER_CONTRACT_ID);
+            let verifier = VerifierClient::new(&env, &verifier_id);
+            let verified = verifier.verify_proof(&proof.proof, &proof.public_signals);
+            if !verified {
+                panic_with_error!(&env, Error::InvalidTrustProof);
+            }
         }
 
         let slot = members.len();

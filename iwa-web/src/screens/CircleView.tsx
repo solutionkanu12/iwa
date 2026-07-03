@@ -21,11 +21,14 @@ import {
   tokenDecimals,
 } from "../lib/stellarConfig.ts";
 import { formatAmount } from "../lib/amount.ts";
+import { generateProof } from "../lib/zk.ts";
+import type { SnarkProof } from "../lib/convert.ts";
 import type { Circle, Reputation } from "../lib/types.ts";
 import { Island } from "../components/Island.tsx";
 import { Button } from "../components/Button.tsx";
-import { ProveView } from "./ProveView.tsx";
+import { ProveView, CLAIMS } from "./ProveView.tsx";
 import { CreateCircleView } from "./CreateCircleView.tsx";
+import { BrowseCirclesView } from "./BrowseCirclesView.tsx";
 import styles from "./CircleView.module.css";
 
 // Flow 1 (the circle view) and Flow 2 (contribute and collect), matched to
@@ -72,6 +75,26 @@ function collectErrorMessage(err: unknown): string {
       return "Signature was declined.";
     default:
       return "Could not collect the pot. Please try again.";
+  }
+}
+
+const REQUIRES_STANDING_PROOF =
+  "This circle requires proof of good standing to join.";
+
+// Map a failed join to an honest, specific message.
+function joinErrorMessage(err: unknown): string {
+  switch (classifyContractError(err)) {
+    case "AlreadyMember":
+      return "You have already joined this circle.";
+    case "CircleFull":
+      return "This circle is already full.";
+    case "TrustProofRequired":
+    case "InvalidTrustProof":
+      return REQUIRES_STANDING_PROOF;
+    case "Declined":
+      return "Signature was declined.";
+    default:
+      return "Could not join the circle. Please try again.";
   }
 }
 
@@ -246,13 +269,15 @@ function AppNav({
   address,
   section,
   onCircle,
+  onBrowse,
   onStanding,
   onCreate,
   onDisconnect,
 }: {
   address: string | null;
-  section: "circle" | "standing" | "create";
+  section: "circle" | "browse" | "standing" | "create";
   onCircle: () => void;
+  onBrowse: () => void;
   onStanding: () => void;
   onCreate: () => void;
   onDisconnect: () => void;
@@ -289,6 +314,16 @@ function AppNav({
           disabled={!enabled}
         >
           Circle
+        </button>
+        <button
+          type="button"
+          className={`${styles.tab} ${section === "browse" ? styles.tabActive : ""}`}
+          role="tab"
+          aria-selected={section === "browse"}
+          onClick={onBrowse}
+          disabled={!enabled}
+        >
+          Browse
         </button>
         <button
           type="button"
@@ -346,7 +381,13 @@ function AppNav({
   );
 }
 
-type Screen = "circle" | "contribute" | "standing" | "prove" | "create";
+type Screen =
+  | "circle"
+  | "contribute"
+  | "standing"
+  | "prove"
+  | "create"
+  | "browse";
 type Status = "idle" | "working" | "done";
 
 export function CircleView() {
@@ -367,7 +408,7 @@ export function CircleView() {
   const [collectAmount, setCollectAmount] = useState(0);
   const [joinStatus, setJoinStatus] = useState<Status>("idle");
   const [joinTx, setJoinTx] = useState<string | null>(null);
-  const [joinError, setJoinError] = useState(false);
+  const [joinError, setJoinError] = useState<string | null>(null);
   const [reputation, setReputation] = useState<Reputation | null>(null);
 
   // Whether the connected wallet has already contributed the circle's current
@@ -446,7 +487,7 @@ export function CircleView() {
     setCollectAmount(0);
     setJoinStatus("idle");
     setJoinTx(null);
-    setJoinError(false);
+    setJoinError(null);
     setReputation(null);
   }, []);
 
@@ -462,9 +503,31 @@ export function CircleView() {
   const join = useCallback(async () => {
     if (!circle || !commitment || !address) return;
     setJoinStatus("working");
-    setJoinError(false);
+    setJoinError(null);
+
+    // Trust-gated circles need a real proof of standing before the on-chain
+    // join is even attempted. Same circuit, same claim, same generateProof as
+    // My standing / prove: no new crypto, just reused here.
+    let trustProof: { proof: SnarkProof; publicSignals: string[] } | undefined;
+    if (circle.trust_required) {
+      try {
+        const p = await generateProof(CLAIMS[0], commitment.secret);
+        trustProof = { proof: p.proof, publicSignals: p.publicSignals };
+      } catch (err) {
+        console.warn("trust proof generation failed", err);
+        setJoinError(REQUIRES_STANDING_PROOF);
+        setJoinStatus("idle");
+        return;
+      }
+    }
+
     try {
-      const r = await join_circle(circle.id, commitment.commitmentBytes, address);
+      const r = await join_circle(
+        circle.id,
+        commitment.commitmentBytes,
+        address,
+        trustProof,
+      );
       setJoinTx(r.txHash);
       setJoinStatus("done");
       // Refresh the circle so the newly filled slot (yours) shows.
@@ -473,7 +536,7 @@ export function CircleView() {
       await loadPaidStatus(c, commitment.commitmentBytes);
     } catch (err) {
       console.warn("join failed", err);
-      setJoinError(true);
+      setJoinError(joinErrorMessage(err));
       setJoinStatus("idle");
     }
   }, [circle, commitment, address, loadPaidStatus]);
@@ -494,6 +557,7 @@ export function CircleView() {
   const goProve = useCallback(() => setScreen("prove"), []);
   const backToStanding = useCallback(() => setScreen("standing"), []);
   const goCreate = useCallback(() => setScreen("create"), []);
+  const goBrowse = useCallback(() => setScreen("browse"), []);
 
   // Load and switch to a circle by id (used after creating one). Resets the
   // transient per-circle state so nothing carries over from another circle.
@@ -502,7 +566,7 @@ export function CircleView() {
       setScreen("circle");
       setJoinStatus("idle");
       setJoinTx(null);
-      setJoinError(false);
+      setJoinError(null);
       setContribStatus("idle");
       setContribTx(null);
       setContribError(null);
@@ -590,6 +654,10 @@ export function CircleView() {
         </p>
       </Island>
     );
+  } else if (screen === "browse") {
+    // Discovery does not depend on the demo circle, so it renders before the
+    // circle-loading gate.
+    body = <BrowseCirclesView onView={goToCircle} />;
   } else if (!circle) {
     body = (
       <Island className={styles.card}>
@@ -718,6 +786,9 @@ export function CircleView() {
           {circle.size} members · {formatAmount(circle.amount, decimals)} {sym}{" "}
           each round
         </p>
+        {circle.trust_required ? (
+          <p className={styles.meta}>Requires proof of good standing to join</p>
+        ) : null}
 
         <div className={styles.slots} aria-label="Circle members, anonymous">
           {circle.members.map((m, i) => {
@@ -787,7 +858,11 @@ export function CircleView() {
               onClick={join}
               disabled={joinStatus === "working" || !commitment}
             >
-              {joinStatus === "working" ? "Joining" : "Join the circle"}
+              {joinStatus === "working"
+                ? circle.trust_required
+                  ? "Generating proof"
+                  : "Joining"
+                : "Join the circle"}
             </Button>
           ) : null}
           {joinStatus === "done" ? (
@@ -832,7 +907,7 @@ export function CircleView() {
             className={styles.meta}
             style={{ textAlign: "center", marginTop: "8px" }}
           >
-            Could not join the circle. Please try again.
+            {joinError}
           </p>
         ) : null}
         {joinStatus === "done" && joinTx ? (
@@ -871,12 +946,14 @@ export function CircleView() {
     );
   }
 
-  const section: "circle" | "standing" | "create" =
-    screen === "create"
-      ? "create"
-      : screen === "standing" || screen === "prove"
-        ? "standing"
-        : "circle";
+  const section: "circle" | "browse" | "standing" | "create" =
+    screen === "browse"
+      ? "browse"
+      : screen === "create"
+        ? "create"
+        : screen === "standing" || screen === "prove"
+          ? "standing"
+          : "circle";
 
   return (
     <>
@@ -884,6 +961,7 @@ export function CircleView() {
         address={address}
         section={section}
         onCircle={backToCircle}
+        onBrowse={goBrowse}
         onStanding={goStanding}
         onCreate={goCreate}
         onDisconnect={handleDisconnect}

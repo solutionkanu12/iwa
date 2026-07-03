@@ -27,6 +27,12 @@
   border: 0.5px solid var(--brd);
   border-radius: 11px;
   padding: 3px;
+  min-width: 0; /* allow the pill to shrink and scroll when tabs overflow */
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tabs::-webkit-scrollbar {
+  display: none;
 }
 .tab {
   font-family: var(--font-body);
@@ -36,6 +42,8 @@
   color: var(--mut);
   background: transparent;
   border: 0;
+  white-space: nowrap;
+  flex: none;
   transition:
     background 0.2s,
     color 0.2s;
@@ -421,6 +429,65 @@
 .choice:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* Browse circles (discovery list) */
+.browseList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.browseRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0.5px solid var(--brd);
+  background: var(--mist);
+  border-radius: var(--radius-control);
+  padding: 12px 14px;
+}
+.browseInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.browseAmount {
+  font-family: var(--font-data);
+  font-size: 16px;
+  color: var(--ink);
+}
+.browseSub {
+  font-size: 12px;
+  color: var(--mut);
+}
+.browseBtn {
+  flex: none;
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--ink);
+  background: transparent;
+  border: 0.5px solid var(--brd);
+  border-radius: var(--radius-control);
+  padding: 8px 16px;
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
+  transform: scale(1);
+}
+.browseBtn:hover,
+.browseBtn:focus-visible {
+  background: var(--ink-black); /* deepen to near-black ink */
+  color: var(--cloud);
+  border-color: var(--ink-black);
+  transform: scale(0.96); /* shrink, never grow */
+}
+.browseBtn:active {
+  transform: scale(0.96);
 }
 
 /* The mint confirmation check. Mint is used only here and on collect. */
