@@ -106,7 +106,7 @@ export function LandingHero() {
           private proof you are reliable. Show it to anyone, reveal nothing.
         </p>
         <div className={styles.ctaRow}>
-          <button type="button" className={styles.cta}>
+          <a className={styles.cta} href="/app">
             {/* Check-circle glyph, inline. Uses currentColor (the button's cloud
                 text), never mint. */}
             <svg
@@ -122,7 +122,7 @@ export function LandingHero() {
               <circle cx="12" cy="12" r="9" />
             </svg>
             Enter the circle
-          </button>
+          </a>
         </div>
     </section>
   );

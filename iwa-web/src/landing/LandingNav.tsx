@@ -39,9 +39,9 @@ export function LandingNav() {
 
       <div className={styles.right}>
         <span className={styles.login}>Log in</span>
-        <button type="button" className={styles.cta}>
+        <a className={styles.cta} href="/app">
           Enter the circle
-        </button>
+        </a>
         <span className={styles.gridBtn} aria-hidden="true">
           <span className={styles.gridDots} />
         </span>

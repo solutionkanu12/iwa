@@ -30,9 +30,9 @@ export function LandingDock() {
       </div>
       <div className={styles.r}>
         <span className={styles.net}>Stellar testnet</span>
-        <button type="button" className={styles.cta}>
+        <a className={styles.cta} href="/app">
           Enter the circle
-        </button>
+        </a>
       </div>
     </div>
   );
