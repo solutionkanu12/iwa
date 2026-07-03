@@ -61,6 +61,27 @@ export function tokenDecimals(address: string): number {
 }
 
 /**
+ * A token the circle-creation picker offers. Only enabled tokens can be
+ * selected; disabled ones are placeholders (their SAC address and trustline
+ * handling land later). Each carries its own decimals so amounts convert
+ * correctly per token.
+ */
+export interface TokenOption {
+  id: string; // Soroban SAC address; empty until the token is enabled
+  symbol: string;
+  decimals: number;
+  enabled: boolean;
+}
+
+export const TOKEN_OPTIONS: TokenOption[] = [
+  { id: NATIVE_XLM_TOKEN_ID, symbol: "XLM", decimals: 7, enabled: true },
+  // Placeholders: set the testnet SAC address and flip enabled to true to
+  // support these once trustline handling is in place.
+  { id: "", symbol: "USDC", decimals: 7, enabled: false },
+  { id: "", symbol: "USDT", decimals: 7, enabled: false },
+];
+
+/**
  * The circle the app reads by default. Circle ids are u32, assigned in creation
  * order. Circle 1 is the correctly denominated demo (amount in base units:
  * 500000000 stroops = 50 XLM); circle 0 was an early circle with amount in

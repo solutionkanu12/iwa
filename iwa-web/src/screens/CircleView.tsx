@@ -25,6 +25,7 @@ import type { Circle, Reputation } from "../lib/types.ts";
 import { Island } from "../components/Island.tsx";
 import { Button } from "../components/Button.tsx";
 import { ProveView } from "./ProveView.tsx";
+import { CreateCircleView } from "./CreateCircleView.tsx";
 import styles from "./CircleView.module.css";
 
 // Flow 1 (the circle view) and Flow 2 (contribute and collect), matched to
@@ -246,12 +247,14 @@ function AppNav({
   section,
   onCircle,
   onStanding,
+  onCreate,
   onDisconnect,
 }: {
   address: string | null;
-  section: "circle" | "standing";
+  section: "circle" | "standing" | "create";
   onCircle: () => void;
   onStanding: () => void;
+  onCreate: () => void;
   onDisconnect: () => void;
 }) {
   const enabled = !!address;
@@ -297,6 +300,16 @@ function AppNav({
         >
           My standing
         </button>
+        <button
+          type="button"
+          className={`${styles.tab} ${section === "create" ? styles.tabActive : ""}`}
+          role="tab"
+          aria-selected={section === "create"}
+          onClick={onCreate}
+          disabled={!enabled}
+        >
+          New circle
+        </button>
       </div>
       <div className={styles.walletSlot}>
         {address ? (
@@ -333,7 +346,7 @@ function AppNav({
   );
 }
 
-type Screen = "circle" | "contribute" | "standing" | "prove";
+type Screen = "circle" | "contribute" | "standing" | "prove" | "create";
 type Status = "idle" | "working" | "done";
 
 export function CircleView() {
@@ -480,6 +493,33 @@ export function CircleView() {
 
   const goProve = useCallback(() => setScreen("prove"), []);
   const backToStanding = useCallback(() => setScreen("standing"), []);
+  const goCreate = useCallback(() => setScreen("create"), []);
+
+  // Load and switch to a circle by id (used after creating one). Resets the
+  // transient per-circle state so nothing carries over from another circle.
+  const goToCircle = useCallback(
+    async (id: number) => {
+      setScreen("circle");
+      setJoinStatus("idle");
+      setJoinTx(null);
+      setJoinError(false);
+      setContribStatus("idle");
+      setContribTx(null);
+      setContribError(null);
+      setCollectStatus("idle");
+      setCollectTx(null);
+      setCollectError(null);
+      setReputation(null);
+      try {
+        const c = await get_circle(id, commitment?.commitmentBytes);
+        setCircle(c);
+        await loadPaidStatus(c, commitment?.commitmentBytes);
+      } catch (err) {
+        console.warn("circle read failed", err);
+      }
+    },
+    [commitment, loadPaidStatus],
+  );
 
   const pay = useCallback(async () => {
     if (!circle || !commitment || !address) return;
@@ -653,6 +693,14 @@ export function CircleView() {
         secret={commitment?.secret ?? null}
       />
     );
+  } else if (screen === "create") {
+    body = (
+      <CreateCircleView
+        address={address}
+        onBack={backToCircle}
+        onCreated={goToCircle}
+      />
+    );
   } else {
     const collectorSlot = collectorSlotOf(circle);
     const yourTurn = circle.members.some(
@@ -823,8 +871,12 @@ export function CircleView() {
     );
   }
 
-  const section: "circle" | "standing" =
-    screen === "standing" || screen === "prove" ? "standing" : "circle";
+  const section: "circle" | "standing" | "create" =
+    screen === "create"
+      ? "create"
+      : screen === "standing" || screen === "prove"
+        ? "standing"
+        : "circle";
 
   return (
     <>
@@ -833,6 +885,7 @@ export function CircleView() {
         section={section}
         onCircle={backToCircle}
         onStanding={goStanding}
+        onCreate={goCreate}
         onDisconnect={handleDisconnect}
       />
       {body}

@@ -338,6 +338,91 @@
   color: var(--mint-dk);
 }
 
+/* Create-circle form */
+.field {
+  margin-bottom: 14px;
+}
+.fieldLabel {
+  display: block;
+  font-size: 13px;
+  color: var(--mut);
+  margin-bottom: 7px;
+}
+.input {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--font-data);
+  font-size: 15px;
+  color: var(--ink);
+  background: var(--mist);
+  border: 0.5px solid var(--brd);
+  border-radius: var(--radius-control);
+  padding: 11px 12px;
+  outline: none;
+  transition: border-color 160ms ease;
+}
+.input:focus {
+  border-color: var(--iris);
+}
+.inputRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.inputRow .input {
+  flex: 1;
+}
+.inputSuffix {
+  font-family: var(--font-data);
+  font-size: 13px;
+  color: var(--mut);
+}
+.choiceRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.choice {
+  flex: 1;
+  min-width: 72px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--mist);
+  border: 0.5px solid var(--brd);
+  border-radius: var(--radius-control);
+  padding: 10px 12px;
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
+  transform: scale(1);
+}
+.choice:hover:not(:disabled),
+.choice:focus-visible:not(:disabled) {
+  border-color: var(--ink); /* deepen toward ink on hover */
+  transform: scale(0.96); /* shrink, never grow */
+}
+.choice:active:not(:disabled) {
+  transform: scale(0.96);
+}
+.choiceActive {
+  background: var(--iris);
+  color: var(--cloud);
+  border-color: var(--iris);
+}
+.choiceActive:hover:not(:disabled),
+.choiceActive:focus-visible:not(:disabled) {
+  background: var(--ink-black); /* deepen to near-black ink */
+  border-color: var(--ink-black);
+}
+.choice:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* The mint confirmation check. Mint is used only here and on collect. */
 .vdot {
   display: inline-flex;

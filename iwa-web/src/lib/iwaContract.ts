@@ -33,18 +33,9 @@ import {
   type SnarkProof,
 } from "./convert";
 import { signTransaction } from "./wallet";
-import type { Circle, CircleConfig, CircleStatus, Reputation } from "./types";
+import type { Circle, CircleStatus, Reputation } from "./types";
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-
-// Fake but well-formed identifier for the one remaining mock (create_circle),
-// so UI formatting (mono, truncation) is real.
-const fakeHex = (len: number): string => {
-  const chars = "0123456789abcdef";
-  let s = "";
-  for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * 16)];
-  return s;
-};
 
 // --- Soroban read-only plumbing -------------------------------------------
 
@@ -71,6 +62,7 @@ export class ContractCallError extends Error {
 // A classified reason for a failed write, so callers can pick a clear message
 // without parsing host-error strings themselves.
 export type ContractErrorKind =
+  | "InvalidConfig"
   | "AlreadyPaid"
   | "NotMember"
   | "WrongRound"
@@ -106,6 +98,8 @@ export function classifyContractError(err: unknown): ContractErrorKind {
   const match = text.match(/error\(contract,\s*#(\d+)\)/);
   if (match) {
     switch (match[1]) {
+      case "2":
+        return "InvalidConfig";
       case "5":
         return "NotMember";
       case "6":
@@ -124,6 +118,9 @@ export function classifyContractError(err: unknown): ContractErrorKind {
 }
 
 const u32Arg = (n: number): xdr.ScVal => nativeToScVal(n, { type: "u32" });
+const u64Arg = (n: number): xdr.ScVal =>
+  nativeToScVal(BigInt(n), { type: "u64" });
+const i128Arg = (n: bigint): xdr.ScVal => nativeToScVal(n, { type: "i128" });
 const bytesArg = (b: Uint8Array): xdr.ScVal =>
   nativeToScVal(Buffer.from(b), { type: "bytes" });
 const addressArg = (a: string): xdr.ScVal => nativeToScVal(a, { type: "address" });
@@ -255,12 +252,25 @@ function emptyCircle(circleId: number): Circle {
   };
 }
 
-/** Create a savings circle (still mocked; no create flow in the UI yet). */
+/**
+ * Create a circle for real: a signed create_circle submitted to the savings
+ * contract with the connected wallet as source. amount is in the token's base
+ * units, frequency in seconds. Returns the new circle id (a u32) and the
+ * confirmed tx hash. Throws on failure so the UI can show an honest error.
+ */
 export async function create_circle(
-  _cfg: CircleConfig,
-): Promise<{ circleId: string }> {
-  await delay(500);
-  return { circleId: "circle_" + fakeHex(8) };
+  token: string,
+  amount: bigint,
+  frequency: number,
+  size: number,
+  address: string,
+): Promise<{ circleId: number; txHash: string }> {
+  const { txHash, returnValue } = await signAndSubmit(
+    "create_circle",
+    [addressArg(token), i128Arg(amount), u64Arg(frequency), u32Arg(size)],
+    address,
+  );
+  return { circleId: Number(returnValue ?? 0), txHash };
 }
 
 /**
