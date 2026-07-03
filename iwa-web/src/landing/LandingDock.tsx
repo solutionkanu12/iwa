@@ -3,8 +3,9 @@ import styles from "./LandingDock.module.css";
 // Section 8 of 8: the dock (fixed glass). A slim frosted-glass island pinned to
 // the bottom of the viewport, floating over content, the bottom bookend to the
 // fixed top nav. Left: cowrie glyph, name, descriptor. Right: the network tag
-// and an iris CTA. Matched to design/iwa-prototype.html, with one copy change:
-// the network tag reads "Live on Stellar" (prototype said "Stellar testnet").
+// and an iris CTA. Matched to design/iwa-prototype.html. The network tag reads
+// "Stellar testnet", matching the FAQ and litepaper: the contracts are real
+// and live, but on testnet while they are finished.
 // Nav, hero, and earlier sections, the footer, app, app nav, and seams are
 // untouched.
 
@@ -28,7 +29,7 @@ export function LandingDock() {
         <span className={styles.tag}>savings circles, private proof</span>
       </div>
       <div className={styles.r}>
-        <span className={styles.net}>Live on Stellar</span>
+        <span className={styles.net}>Stellar testnet</span>
         <button type="button" className={styles.cta}>
           Enter the circle
         </button>
