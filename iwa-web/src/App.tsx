@@ -5,7 +5,11 @@ import styles from "./App.module.css";
 // 10), with soft lavender orbs drifting behind. `address` is set when the
 // visitor already connected a wallet on the landing page, so CircleView can
 // skip its own connect prompt.
-export function App({ address = null }: { address?: string | null } = {}) {
+export interface AppProps {
+  address?: string | null;
+}
+
+export function App({ address = null }: AppProps = {}) {
   return (
     <main className={styles.appShell}>
       <span className={`${styles.blob} ${styles.blob1}`} aria-hidden="true" />

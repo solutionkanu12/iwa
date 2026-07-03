@@ -11,13 +11,13 @@ import styles from "./LandingPage.module.css";
 // Public marketing landing page (PRD section 9). All 8 sections complete:
 // 1 glass nav, 2 hero, 3 community, 4 how it works, 5 see it in action, 6 FAQ,
 // 7 footer, 8 dock (fixed glass).
-export function LandingPage({
-  onEnterCircle,
-}: {
+export interface LandingPageProps {
   // Opens the same Stellar Wallets Kit connect flow the app uses (lib/wallet.ts
   // connectWallet). Wired to every live "Enter the circle" CTA (nav, hero, dock).
   onEnterCircle: () => void;
-}) {
+}
+
+export function LandingPage({ onEnterCircle }: LandingPageProps) {
   return (
     <div className={styles.page}>
       <LandingNav onEnterCircle={onEnterCircle} />
