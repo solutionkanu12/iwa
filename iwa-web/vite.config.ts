@@ -11,12 +11,12 @@ export default defineConfig({
   },
   build: {
     rollupOptions: {
-      // Four pages: the app (index.html), the marketing landing page
-      // (landing.html), the litepaper (litepaper.html), and the roadmap
-      // (roadmap.html). The app, landing, and litepaper entries are unchanged.
+      // Three pages: index.html (main.tsx) serves both the landing page and
+      // the app from one bundle, so a connected wallet carries straight
+      // through with no second connect step. litepaper.html and roadmap.html
+      // stay separate, untouched entries.
       input: {
         main: "index.html",
-        landing: "landing.html",
         litepaper: "litepaper.html",
         roadmap: "roadmap.html",
       },

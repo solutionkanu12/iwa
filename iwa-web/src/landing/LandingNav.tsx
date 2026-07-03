@@ -16,7 +16,11 @@ function CowrieGlyph() {
   );
 }
 
-export function LandingNav() {
+export function LandingNav({
+  onEnterCircle,
+}: {
+  onEnterCircle: () => void;
+}) {
   return (
     <nav className={styles.nav} aria-label="Main">
       <div className={styles.links}>
@@ -39,7 +43,14 @@ export function LandingNav() {
 
       <div className={styles.right}>
         <span className={styles.login}>Log in</span>
-        <a className={styles.cta} href="/app">
+        <a
+          className={styles.cta}
+          href="/app"
+          onClick={(e) => {
+            e.preventDefault();
+            onEnterCircle();
+          }}
+        >
           Enter the circle
         </a>
         <span className={styles.gridBtn} aria-hidden="true">

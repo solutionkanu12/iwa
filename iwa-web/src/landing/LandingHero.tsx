@@ -14,7 +14,11 @@ function prefersReducedMotion(): boolean {
   );
 }
 
-export function LandingHero() {
+export function LandingHero({
+  onEnterCircle,
+}: {
+  onEnterCircle: () => void;
+}) {
   const heroRef = useRef<HTMLElement>(null);
   const sealRef = useRef<SVGSVGElement>(null);
 
@@ -106,7 +110,14 @@ export function LandingHero() {
           private proof you are reliable. Show it to anyone, reveal nothing.
         </p>
         <div className={styles.ctaRow}>
-          <a className={styles.cta} href="/app">
+          <a
+            className={styles.cta}
+            href="/app"
+            onClick={(e) => {
+              e.preventDefault();
+              onEnterCircle();
+            }}
+          >
             {/* Check-circle glyph, inline. Uses currentColor (the button's cloud
                 text), never mint. */}
             <svg

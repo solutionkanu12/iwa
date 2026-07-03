@@ -390,7 +390,14 @@ type Screen =
   | "browse";
 type Status = "idle" | "working" | "done";
 
-export function CircleView() {
+export function CircleView({
+  initialAddress = null,
+}: {
+  // Set when the wallet was already connected before this screen mounted
+  // (the visitor connected from the landing page). Skips the connect gate
+  // and picks up exactly where handleConnect would have left off.
+  initialAddress?: string | null;
+} = {}) {
   const [address, setAddress] = useState<string | null>(null);
   const [commitment, setCommitment] = useState<MemberCommitment | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -429,6 +436,36 @@ export function CircleView() {
     [],
   );
 
+  // Everything that happens once we have an address, whether it came from a
+  // connect click here or was already connected before this screen mounted.
+  const finishConnect = useCallback(
+    async (addr: string) => {
+      // Derive the member commitment first so the circle read can flag your
+      // slot and your streak. If the wallet cannot sign, the reads still run
+      // without it and the app stays usable.
+      let mc: MemberCommitment | null = null;
+      try {
+        mc = await deriveMemberCommitment(addr);
+        setCommitment(mc);
+      } catch (err) {
+        console.warn("member commitment unavailable", err);
+      }
+
+      // Real read: the circle state, composed from the deployed savings
+      // contract.
+      try {
+        const c = await get_circle(DEMO_CIRCLE_ID, mc?.commitmentBytes);
+        setCircle(c);
+        await loadPaidStatus(c, mc?.commitmentBytes);
+      } catch (err) {
+        console.warn("circle read failed", err);
+      } finally {
+        setConnecting(false);
+      }
+    },
+    [loadPaidStatus],
+  );
+
   const handleConnect = useCallback(async () => {
     setConnecting(true);
     let addr: string;
@@ -443,29 +480,20 @@ export function CircleView() {
       return;
     }
     setAddress(addr);
+    await finishConnect(addr);
+  }, [finishConnect]);
 
-    // Derive the member commitment first so the circle read can flag your slot
-    // and your streak. If the wallet cannot sign, the reads still run without
-    // it and the app stays usable.
-    let mc: MemberCommitment | null = null;
-    try {
-      mc = await deriveMemberCommitment(addr);
-      setCommitment(mc);
-    } catch (err) {
-      console.warn("member commitment unavailable", err);
-    }
-
-    // Real read: the circle state, composed from the deployed savings contract.
-    try {
-      const c = await get_circle(DEMO_CIRCLE_ID, mc?.commitmentBytes);
-      setCircle(c);
-      await loadPaidStatus(c, mc?.commitmentBytes);
-    } catch (err) {
-      console.warn("circle read failed", err);
-    } finally {
-      setConnecting(false);
-    }
-  }, [loadPaidStatus]);
+  // Picked up an already-connected wallet from the landing page: same
+  // connectWallet() seam, already run there, so there is no second connect
+  // prompt here. Runs once.
+  const pickedUpInitialAddress = useRef(false);
+  useEffect(() => {
+    if (!initialAddress || pickedUpInitialAddress.current) return;
+    pickedUpInitialAddress.current = true;
+    setConnecting(true);
+    setAddress(initialAddress);
+    void finishConnect(initialAddress);
+  }, [initialAddress, finishConnect]);
 
   const handleDisconnect = useCallback(async () => {
     await disconnectWallet();

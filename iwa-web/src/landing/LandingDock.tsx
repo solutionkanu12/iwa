@@ -19,7 +19,11 @@ function CowrieGlyph() {
   );
 }
 
-export function LandingDock() {
+export function LandingDock({
+  onEnterCircle,
+}: {
+  onEnterCircle: () => void;
+}) {
   return (
     <div className={styles.dock}>
       <div className={styles.l}>
@@ -30,7 +34,14 @@ export function LandingDock() {
       </div>
       <div className={styles.r}>
         <span className={styles.net}>Stellar testnet</span>
-        <a className={styles.cta} href="/app">
+        <a
+          className={styles.cta}
+          href="/app"
+          onClick={(e) => {
+            e.preventDefault();
+            onEnterCircle();
+          }}
+        >
           Enter the circle
         </a>
       </div>
