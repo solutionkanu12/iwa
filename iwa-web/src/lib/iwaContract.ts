@@ -37,15 +37,14 @@ import type { Circle, CircleConfig, CircleStatus, Reputation } from "./types";
 
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-// Fake but well-formed identifiers so UI formatting (mono, truncation) is real.
-// Still used by the write/proof mocks below.
+// Fake but well-formed identifier for the one remaining mock (create_circle),
+// so UI formatting (mono, truncation) is real.
 const fakeHex = (len: number): string => {
   const chars = "0123456789abcdef";
   let s = "";
   for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * 16)];
   return s;
 };
-const fakeTxHash = () => fakeHex(64);
 
 // --- Soroban read-only plumbing -------------------------------------------
 
@@ -75,6 +74,8 @@ export type ContractErrorKind =
   | "AlreadyPaid"
   | "NotMember"
   | "WrongRound"
+  | "NotCollector"
+  | "AlreadyCollected"
   | "RoundNotFunded"
   | "InsufficientBalance"
   | "Declined"
@@ -111,6 +112,10 @@ export function classifyContractError(err: unknown): ContractErrorKind {
         return "AlreadyPaid";
       case "7":
         return "WrongRound";
+      case "8":
+        return "NotCollector";
+      case "9":
+        return "AlreadyCollected";
       case "11":
         return "RoundNotFunded";
     }
@@ -441,12 +446,28 @@ export async function advance_round(
   return { ok: true };
 }
 
-/** Collect the pot (still mocked; write, later stage). */
+/**
+ * Collect the pot for real: a signed collect_pot submitted to the savings
+ * contract with the connected wallet as the `to` payout address. The contract
+ * pays out amount * size of the circle's token (native XLM) to `to`, but only
+ * when every member has funded the round (else it reverts with RoundNotFunded)
+ * and this member is the round's collector and has not already collected. Only
+ * the member commitment identifies the collector on chain. Returns the payout
+ * amount (base units) and the confirmed tx hash. Throws on failure so the UI can
+ * show an honest error; success means the pot actually moved to the collector.
+ */
 export async function collect_pot(
-  _circleId: number,
+  circleId: number,
+  memberCommitment: Uint8Array,
+  address: string,
 ): Promise<{ ok: boolean; amount: number; txHash: string }> {
-  await delay(650);
-  return { ok: true, amount: 400, txHash: fakeTxHash() };
+  const { txHash, returnValue } = await signAndSubmit(
+    "collect_pot",
+    [u32Arg(circleId), bytesArg(memberCommitment), addressArg(address)],
+    address,
+  );
+  const res = returnValue as { ok?: boolean; amount?: bigint | number } | undefined;
+  return { ok: res?.ok ?? true, amount: Number(res?.amount ?? 0), txHash };
 }
 
 /**

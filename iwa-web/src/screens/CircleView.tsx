@@ -55,6 +55,24 @@ function payErrorMessage(err: unknown): string {
   }
 }
 
+// Map a failed collect to an honest, specific message.
+function collectErrorMessage(err: unknown): string {
+  switch (classifyContractError(err)) {
+    case "RoundNotFunded":
+      return "Everyone must contribute before the pot can be collected.";
+    case "AlreadyCollected":
+      return "This round's pot has already been collected.";
+    case "NotCollector":
+      return "It is not your turn to collect this round.";
+    case "InsufficientBalance":
+      return "Not enough balance to collect.";
+    case "Declined":
+      return "Signature was declined.";
+    default:
+      return "Could not collect the pot. Please try again.";
+  }
+}
+
 // Short middle-truncation for addresses and tx ids.
 function short(s: string): string {
   return `${s.slice(0, 4)}…${s.slice(-4)}`;
@@ -291,6 +309,8 @@ export function CircleView() {
   const [alreadyPaid, setAlreadyPaid] = useState(false);
   const [collectStatus, setCollectStatus] = useState<Status>("idle");
   const [collectTx, setCollectTx] = useState<string | null>(null);
+  const [collectError, setCollectError] = useState<string | null>(null);
+  const [collectAmount, setCollectAmount] = useState(0);
   const [joinStatus, setJoinStatus] = useState<Status>("idle");
   const [joinTx, setJoinTx] = useState<string | null>(null);
   const [joinError, setJoinError] = useState(false);
@@ -424,12 +444,25 @@ export function CircleView() {
   }, [circle, commitment, address]);
 
   const collect = useCallback(async () => {
-    if (!circle) return;
+    if (!circle || !commitment || !address) return;
     setCollectStatus("working");
-    const r = await collect_pot(circle.id);
-    setCollectTx(r.txHash);
-    setCollectStatus("done");
-  }, [circle]);
+    setCollectError(null);
+    try {
+      const r = await collect_pot(circle.id, commitment.commitmentBytes, address);
+      setCollectTx(r.txHash);
+      setCollectAmount(r.amount);
+      setCollectStatus("done");
+      // Re-read the circle so any state change shows.
+      const c = await get_circle(circle.id, commitment.commitmentBytes);
+      setCircle(c);
+    } catch (err) {
+      // Surface the real reason (RoundNotFunded, AlreadyCollected, not your
+      // turn, ...) instead of a fake success.
+      console.warn("collect failed", err);
+      setCollectError(collectErrorMessage(err));
+      setCollectStatus("idle");
+    }
+  }, [circle, commitment, address]);
 
   let body;
   if (!address) {
@@ -697,13 +730,29 @@ export function CircleView() {
             tx {short(joinTx)}
           </p>
         ) : null}
-        {yourTurn && collectStatus === "done" && collectTx ? (
+        {collectError ? (
           <p
-            className={`${styles.mono} ${styles.doneTx}`}
+            className={styles.meta}
             style={{ textAlign: "center", marginTop: "8px" }}
           >
-            tx {short(collectTx)}
+            {collectError}
           </p>
+        ) : null}
+        {yourTurn && collectStatus === "done" && collectTx ? (
+          <>
+            <p
+              className={`${styles.mono} ${styles.doneTx}`}
+              style={{ textAlign: "center", marginTop: "8px" }}
+            >
+              received {formatAmount(collectAmount, decimals)} {sym}
+            </p>
+            <p
+              className={`${styles.mono} ${styles.doneTx}`}
+              style={{ textAlign: "center", marginTop: "8px" }}
+            >
+              tx {short(collectTx)}
+            </p>
+          </>
         ) : null}
       </Island>
     );
