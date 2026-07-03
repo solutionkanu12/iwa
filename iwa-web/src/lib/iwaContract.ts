@@ -1,12 +1,13 @@
 // lib/iwaContract.ts — the single seam between the UI and Soroban.
 //
-// The read getters (get_circle, get_members, get_reputation) are now live:
-// read-only Soroban simulations against the deployed savings contract on Stellar
-// testnet, no signing and no transactions. The writes (pay_contribution,
-// collect_pot) and the proof verify (verify_proof) stay mocked until later
-// stages. The UI return shapes are unchanged, so screens keep rendering; where
-// the real Circle struct is thinner than the UI shape (no pot, member slots, or
-// streak) we compose those fields from get_members and get_reputation.
+// Everything here is real. The read getters (get_circle, get_members,
+// get_reputation) are read-only Soroban simulations against the deployed
+// savings contract on Stellar testnet. The writes (join_circle,
+// pay_contribution, collect_pot) are real signed transactions: built, signed by
+// the connected wallet, submitted, and polled to confirmation. verify_proof is
+// a real simulation against the deployed verifier contract. The real Circle
+// struct is thinner than the UI shape (no pot, member slots, or streak), so we
+// compose those fields from get_members and get_reputation.
 
 import {
   Account,
@@ -536,14 +537,6 @@ export async function pay_contribution(
   );
   const res = returnValue as { ok?: boolean; on_time?: boolean } | undefined;
   return { ok: res?.ok ?? true, onTime: res?.on_time ?? true, txHash };
-}
-
-/** Advance the circle to the next round (still mocked; write, later stage). */
-export async function advance_round(
-  _circleId: number,
-): Promise<{ ok: boolean }> {
-  await delay(500);
-  return { ok: true };
 }
 
 /**

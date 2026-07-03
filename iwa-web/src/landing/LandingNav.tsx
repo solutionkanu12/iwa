@@ -3,7 +3,8 @@ import styles from "./LandingNav.module.css";
 
 // Section 1 of 8: the fixed glass nav. Matched to the prototype's landing nav.
 // "How it works" smooth-scrolls to that section; "Roadmap" goes to the roadmap
-// page. The CTA and Log in stay inert for now. The app and its nav are untouched.
+// page. "Enter the circle" opens the real wallet connect flow (onEnterCircle).
+// "Log in" remains a placeholder. The app and its nav are untouched.
 
 // The cowrie glyph, the same lavender mark used elsewhere (inline SVG).
 function CowrieGlyph() {
