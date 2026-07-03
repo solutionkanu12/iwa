@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  classifyContractError,
   collect_pot,
   get_circle,
   get_reputation,
+  has_contributed,
   join_circle,
   pay_contribution,
 } from "../lib/iwaContract.ts";
@@ -12,7 +14,12 @@ import {
   WalletCancelledError,
 } from "../lib/wallet.ts";
 import type { MemberCommitment } from "../lib/wallet.ts";
-import { DEMO_CIRCLE_ID, tokenSymbol } from "../lib/stellarConfig.ts";
+import {
+  DEMO_CIRCLE_ID,
+  tokenSymbol,
+  tokenDecimals,
+} from "../lib/stellarConfig.ts";
+import { formatAmount } from "../lib/amount.ts";
 import type { Circle, Reputation } from "../lib/types.ts";
 import { Island } from "../components/Island.tsx";
 import { Button } from "../components/Button.tsx";
@@ -28,6 +35,25 @@ import styles from "./CircleView.module.css";
 
 const PRIVACY_LINE =
   "Your contributions are private. Only your good standing can be proven, and only by you.";
+
+// Map a failed contribution to an honest, specific message rather than a
+// catch-all. RoundNotFunded belongs to collect, so it falls through to retry.
+function payErrorMessage(err: unknown): string {
+  switch (classifyContractError(err)) {
+    case "AlreadyPaid":
+      return "You have already contributed this round.";
+    case "NotMember":
+      return "Join the circle before contributing.";
+    case "WrongRound":
+      return "This round is not open for contributions.";
+    case "InsufficientBalance":
+      return "Not enough balance to contribute.";
+    case "Declined":
+      return "Signature was declined.";
+    default:
+      return "Could not contribute. Please try again.";
+  }
+}
 
 // Short middle-truncation for addresses and tx ids.
 function short(s: string): string {
@@ -260,12 +286,33 @@ export function CircleView() {
   const [screen, setScreen] = useState<Screen>("circle");
   const [contribStatus, setContribStatus] = useState<Status>("idle");
   const [contribTx, setContribTx] = useState<string | null>(null);
+  const [contribError, setContribError] = useState<string | null>(null);
+  const [contribOnTime, setContribOnTime] = useState(true);
+  const [alreadyPaid, setAlreadyPaid] = useState(false);
   const [collectStatus, setCollectStatus] = useState<Status>("idle");
   const [collectTx, setCollectTx] = useState<string | null>(null);
   const [joinStatus, setJoinStatus] = useState<Status>("idle");
   const [joinTx, setJoinTx] = useState<string | null>(null);
   const [joinError, setJoinError] = useState(false);
   const [reputation, setReputation] = useState<Reputation | null>(null);
+
+  // Whether the connected wallet has already contributed the circle's current
+  // round, read from the contract, so we never offer a Contribute that will
+  // revert with AlreadyPaid.
+  const loadPaidStatus = useCallback(
+    async (c: Circle, bytes: Uint8Array | undefined) => {
+      if (!bytes || c.size === 0) {
+        setAlreadyPaid(false);
+        return;
+      }
+      try {
+        setAlreadyPaid(await has_contributed(c.id, c.current_round, bytes));
+      } catch {
+        setAlreadyPaid(false);
+      }
+    },
+    [],
+  );
 
   const handleConnect = useCallback(async () => {
     setConnecting(true);
@@ -297,16 +344,18 @@ export function CircleView() {
     try {
       const c = await get_circle(DEMO_CIRCLE_ID, mc?.commitmentBytes);
       setCircle(c);
+      await loadPaidStatus(c, mc?.commitmentBytes);
     } catch (err) {
       console.warn("circle read failed", err);
     } finally {
       setConnecting(false);
     }
-  }, []);
+  }, [loadPaidStatus]);
 
   const openContribute = useCallback(() => {
     setContribStatus("idle");
     setContribTx(null);
+    setContribError(null);
     setScreen("contribute");
   }, []);
 
@@ -323,12 +372,13 @@ export function CircleView() {
       // Refresh the circle so the newly filled slot (yours) shows.
       const c = await get_circle(circle.id, commitment.commitmentBytes);
       setCircle(c);
+      await loadPaidStatus(c, commitment.commitmentBytes);
     } catch (err) {
       console.warn("join failed", err);
       setJoinError(true);
       setJoinStatus("idle");
     }
-  }, [circle, commitment, address]);
+  }, [circle, commitment, address, loadPaidStatus]);
 
   const goStanding = useCallback(async () => {
     setScreen("standing");
@@ -347,12 +397,31 @@ export function CircleView() {
   const backToStanding = useCallback(() => setScreen("standing"), []);
 
   const pay = useCallback(async () => {
-    if (!circle) return;
+    if (!circle || !commitment || !address) return;
     setContribStatus("working");
-    const r = await pay_contribution(circle.id, circle.current_round);
-    setContribTx(r.txHash);
-    setContribStatus("done");
-  }, [circle]);
+    setContribError(null);
+    try {
+      const r = await pay_contribution(
+        circle.id,
+        circle.current_round,
+        commitment.commitmentBytes,
+        address,
+      );
+      setContribTx(r.txHash);
+      setContribOnTime(r.onTime);
+      setContribStatus("done");
+      setAlreadyPaid(true);
+      // Re-read the circle so any state change shows.
+      const c = await get_circle(circle.id, commitment.commitmentBytes);
+      setCircle(c);
+    } catch (err) {
+      // Surface the real reason (AlreadyPaid, NotMember, declined, ...) instead
+      // of a catch-all balance message.
+      console.warn("pay failed", err);
+      setContribError(payErrorMessage(err));
+      setContribStatus("idle");
+    }
+  }, [circle, commitment, address]);
 
   const collect = useCallback(async () => {
     if (!circle) return;
@@ -392,6 +461,7 @@ export function CircleView() {
     );
   } else if (screen === "contribute") {
     const sym = tokenSymbol(circle.token);
+    const decimals = tokenDecimals(circle.token);
     body = (
       <Island className={styles.card}>
         <button type="button" className={styles.backBtn} onClick={backToCircle}>
@@ -406,7 +476,7 @@ export function CircleView() {
           <div className={styles.row}>
             <span className={styles.k}>Amount</span>
             <span className={`${styles.v} ${styles.vBig}`}>
-              {circle.amount} {sym}
+              {formatAmount(circle.amount, decimals)} {sym}
             </span>
           </div>
           <div className={styles.row}>
@@ -425,19 +495,34 @@ export function CircleView() {
         </div>
 
         {contribStatus !== "done" ? (
-          <div className={styles.stack}>
-            <Button onClick={pay} disabled={contribStatus === "working"}>
-              {contribStatus === "working"
-                ? "Contributing"
-                : `Contribute ${circle.amount} ${sym}`}
-            </Button>
-          </div>
+          <>
+            <div className={styles.stack}>
+              <Button
+                onClick={pay}
+                disabled={contribStatus === "working" || !commitment}
+              >
+                {contribStatus === "working"
+                  ? "Contributing"
+                  : `Contribute ${formatAmount(circle.amount, decimals)} ${sym}`}
+              </Button>
+            </div>
+            {contribError ? (
+              <p
+                className={styles.meta}
+                style={{ textAlign: "center", marginTop: "8px" }}
+              >
+                {contribError}
+              </p>
+            ) : null}
+          </>
         ) : (
           <div className={styles.done}>
             <span className={`${styles.vdot} ${styles.vdotLg}`}>
               <CheckIcon size={20} />
             </span>
-            <p className={styles.doneMsg}>Recorded. On time, as always.</p>
+            <p className={styles.doneMsg}>
+              {contribOnTime ? "Recorded. On time." : "Recorded. Late this round."}
+            </p>
             <p className={`${styles.mono} ${styles.doneTx}`}>
               tx {contribTx ? short(contribTx) : ""}
             </p>
@@ -476,6 +561,7 @@ export function CircleView() {
       (m) => m.slot === collectorSlot && m.isYou,
     );
     const sym = tokenSymbol(circle.token);
+    const decimals = tokenDecimals(circle.token);
     const isMember = circle.members.some((m) => m.isYou);
     const hasOpenSlot = circle.members.some((m) => !m.filled);
     const canJoin = !isMember && hasOpenSlot;
@@ -483,7 +569,8 @@ export function CircleView() {
       <Island className={styles.card}>
         <h2 className={styles.h2}>Weekly circle</h2>
         <p className={styles.meta}>
-          {circle.size} members · {circle.amount} {sym} each round
+          {circle.size} members · {formatAmount(circle.amount, decimals)} {sym}{" "}
+          each round
         </p>
 
         <div className={styles.slots} aria-label="Circle members, anonymous">
@@ -525,11 +612,15 @@ export function CircleView() {
           </div>
           <div className={styles.row}>
             <span className={styles.k}>This round</span>
-            <span className={styles.v}>{circle.amount} {sym}</span>
+            <span className={styles.v}>
+              {formatAmount(circle.amount, decimals)} {sym}
+            </span>
           </div>
           <div className={styles.row}>
             <span className={styles.k}>Pot</span>
-            <span className={styles.v}>{circle.pot} {sym}</span>
+            <span className={styles.v}>
+              {formatAmount(circle.pot, decimals)} {sym}
+            </span>
           </div>
           <div className={styles.row}>
             <span className={styles.k}>Your streak</span>
@@ -561,9 +652,18 @@ export function CircleView() {
               Joined the circle
             </div>
           ) : null}
-          <Button onClick={openContribute}>
-            Contribute {circle.amount} {sym}
-          </Button>
+          {alreadyPaid ? (
+            <div className={styles.collectConfirm}>
+              <span className={`${styles.vdot} ${styles.vdotSm}`}>
+                <CheckIcon size={13} />
+              </span>
+              Contributed this round
+            </div>
+          ) : (
+            <Button onClick={openContribute}>
+              Contribute {formatAmount(circle.amount, decimals)} {sym}
+            </Button>
+          )}
           {yourTurn && collectStatus === "done" ? (
             <div className={styles.collectConfirm}>
               <span className={`${styles.vdot} ${styles.vdotSm}`}>

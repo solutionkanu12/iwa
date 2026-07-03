@@ -48,11 +48,26 @@ export function tokenSymbol(address: string): string {
 }
 
 /**
- * The circle the app reads by default. Circle ids are u32, assigned in creation
- * order; circle 0 is the first circle created on the deployed contract. If it
- * does not exist yet the read seam falls back to an empty circle.
+ * Known token (SAC) address to its decimals. Native XLM is 7; stablecoins may
+ * differ, so add them here. Unknown tokens default to 7 (the Stellar default).
  */
-export const DEMO_CIRCLE_ID = 0;
+export const TOKEN_DECIMALS: Record<string, number> = {
+  [NATIVE_XLM_TOKEN_ID]: 7,
+};
+
+/** Resolve a token address to its decimals, defaulting to 7. */
+export function tokenDecimals(address: string): number {
+  return TOKEN_DECIMALS[address] ?? 7;
+}
+
+/**
+ * The circle the app reads by default. Circle ids are u32, assigned in creation
+ * order. Circle 1 is the correctly denominated demo (amount in base units:
+ * 500000000 stroops = 50 XLM); circle 0 was an early circle with amount in
+ * stroops that read as a negligible 0.000005 XLM. If it does not exist yet the
+ * read seam falls back to an empty circle.
+ */
+export const DEMO_CIRCLE_ID = 1;
 
 /** Groth16 BN254 verifier contract, deployed on testnet. */
 export const VERIFIER_CONTRACT_ID =

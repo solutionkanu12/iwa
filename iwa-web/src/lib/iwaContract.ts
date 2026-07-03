@@ -59,9 +59,69 @@ function rpcServer(): rpc.Server {
 // back to an empty/zero state instead of surfacing a raw host error.
 class ContractRevert extends Error {}
 
+// Thrown by a write when simulation reverts or the submit fails. It carries the
+// raw host-error string (which includes the "Error(Contract, #N)" code) so the
+// UI can classify it into an honest, specific message.
+export class ContractCallError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ContractCallError";
+  }
+}
+
+// A classified reason for a failed write, so callers can pick a clear message
+// without parsing host-error strings themselves.
+export type ContractErrorKind =
+  | "AlreadyPaid"
+  | "NotMember"
+  | "WrongRound"
+  | "RoundNotFunded"
+  | "InsufficientBalance"
+  | "Declined"
+  | "Unknown";
+
+function describeError(err: unknown): string {
+  if (err instanceof Error) return `${err.name}: ${err.message}`;
+  if (typeof err === "string") return err;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
+/**
+ * Classify a failed write into a specific reason. Reads the wallet rejection
+ * text, then a token insufficient-balance signal, then the savings contract
+ * error code from an "Error(Contract, #N)" host error. Falls back to "Unknown"
+ * so the caller shows a plain retry message rather than guessing.
+ */
+export function classifyContractError(err: unknown): ContractErrorKind {
+  const text = describeError(err).toLowerCase();
+  if (/declin|reject|denied|cancel|did not consent/.test(text)) return "Declined";
+  if (/insufficient|balance is not sufficient|not enough balance/.test(text)) {
+    return "InsufficientBalance";
+  }
+  const match = text.match(/error\(contract,\s*#(\d+)\)/);
+  if (match) {
+    switch (match[1]) {
+      case "5":
+        return "NotMember";
+      case "6":
+        return "AlreadyPaid";
+      case "7":
+        return "WrongRound";
+      case "11":
+        return "RoundNotFunded";
+    }
+  }
+  return "Unknown";
+}
+
 const u32Arg = (n: number): xdr.ScVal => nativeToScVal(n, { type: "u32" });
 const bytesArg = (b: Uint8Array): xdr.ScVal =>
   nativeToScVal(Buffer.from(b), { type: "bytes" });
+const addressArg = (a: string): xdr.ScVal => nativeToScVal(a, { type: "address" });
 
 // Invoke a contract getter through simulation only: build the call with a
 // throwaway source account (simulation needs no funded account and no
@@ -111,14 +171,21 @@ async function signAndSubmit(
     .setTimeout(60)
     .build();
 
-  // prepareTransaction simulates and fills in the Soroban footprint and fee.
-  const prepared = await server.prepareTransaction(built);
+  // Simulate first so a contract revert surfaces as a classifiable error (the
+  // host-error string carries the "Error(Contract, #N)" code) rather than an
+  // opaque failure, then assemble the footprint, fee, and auth from the sim.
+  const sim = await server.simulateTransaction(built);
+  if (rpc.Api.isSimulationError(sim)) {
+    throw new ContractCallError(sim.error);
+  }
+  const prepared = rpc.assembleTransaction(built, sim).build();
+
   const signedXdr = await signTransaction(prepared.toXDR(), address);
   const signedTx = TransactionBuilder.fromXDR(signedXdr, NETWORK_PASSPHRASE);
 
   const sent = await server.sendTransaction(signedTx);
   if (String(sent.status) === "ERROR") {
-    throw new Error(`submit failed: ${sent.status}`);
+    throw new ContractCallError(`submit failed: ${JSON.stringify(sent)}`);
   }
 
   // Poll until the network confirms (or fails) the transaction.
@@ -126,13 +193,13 @@ async function signAndSubmit(
   const startedAt = Date.now();
   while (String(got.status) === "NOT_FOUND") {
     if (Date.now() - startedAt > 30_000) {
-      throw new Error("timed out waiting for confirmation");
+      throw new ContractCallError("timed out waiting for confirmation");
     }
     await delay(1500);
     got = await server.getTransaction(sent.hash);
   }
   if (String(got.status) !== "SUCCESS") {
-    throw new Error(`transaction failed: ${got.status}`);
+    throw new ContractCallError(`transaction failed: ${got.status}`);
   }
 
   const rv = (got as { returnValue?: xdr.ScVal }).returnValue;
@@ -319,13 +386,51 @@ export async function get_reputation(
   };
 }
 
-/** Pay this round's contribution (still mocked; write, later stage). */
+/**
+ * Has this member already contributed for the given round? Read-only. The
+ * contract returns Option<Contribution>: Some -> already paid, None -> not yet.
+ */
+export async function has_contributed(
+  circleId: number,
+  round: number,
+  memberCommitment: Uint8Array,
+): Promise<boolean> {
+  try {
+    const raw = await simulateRead(SAVINGS_CONTRACT_ID, "get_contribution", [
+      u32Arg(circleId),
+      u32Arg(round),
+      bytesArg(memberCommitment),
+    ]);
+    return raw != null; // None decodes to null; Some decodes to the record
+  } catch (e) {
+    if (e instanceof ContractRevert) return false;
+    throw e;
+  }
+}
+
+/**
+ * Pay this round's contribution for real: a signed pay_contribution submitted to
+ * the savings contract with the connected wallet as `from`. The wallet signs
+ * once, which both authorizes the contract call and the token transfer (native
+ * XLM) of circle.amount from the wallet into the contract, and pays the network
+ * fee. Only the member commitment identifies the payer on chain. Returns whether
+ * it was on time and the confirmed tx hash. Throws on failure (for example
+ * insufficient balance or declined authorization) so the UI can show an honest
+ * error instead of a fake success.
+ */
 export async function pay_contribution(
-  _circleId: number,
-  _round: number,
+  circleId: number,
+  round: number,
+  memberCommitment: Uint8Array,
+  address: string,
 ): Promise<{ ok: boolean; onTime: boolean; txHash: string }> {
-  await delay(650);
-  return { ok: true, onTime: true, txHash: fakeTxHash() };
+  const { txHash, returnValue } = await signAndSubmit(
+    "pay_contribution",
+    [u32Arg(circleId), u32Arg(round), bytesArg(memberCommitment), addressArg(address)],
+    address,
+  );
+  const res = returnValue as { ok?: boolean; on_time?: boolean } | undefined;
+  return { ok: res?.ok ?? true, onTime: res?.on_time ?? true, txHash };
 }
 
 /** Advance the circle to the next round (still mocked; write, later stage). */
