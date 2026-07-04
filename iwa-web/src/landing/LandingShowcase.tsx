@@ -2,15 +2,27 @@ import { useReveal } from "./useReveal.ts";
 import styles from "./LandingShowcase.module.css";
 
 // Section 5 of 8: see it in action. The circle-hands mark above the heading,
-// then three placeholder phone frames (real screenshots drop in later). Heading
-// and lead copy are exact from design/iwa-prototype.html; frame labels are from
-// the PRD. No mint here: the "Verified" caption follows the prototype's muted
-// label treatment. Nav, hero, community, how it works, app, and seams untouched.
+// then three phone frames with real app screenshots. Heading and lead copy
+// are exact from design/iwa-prototype.html; frame labels are from the PRD. No
+// mint here: the "Verified" caption follows the prototype's muted label
+// treatment. Nav, hero, community, how it works, app, and seams untouched.
 
 const FRAMES = [
-  { label: "Your circle" },
-  { label: "Generate proof" },
-  { label: "Verified" },
+  {
+    label: "Your circle",
+    src: "/assets/iwa-showcase-circle.jpg",
+    alt: "The circle screen, showing joining and contributing to a savings circle",
+  },
+  {
+    label: "Generate proof",
+    src: "/assets/iwa-showcase-proof.jpg",
+    alt: "The My standing screen, generating a proof of good standing",
+  },
+  {
+    label: "Verified",
+    src: "/assets/iwa-showcase-verified.jpg",
+    alt: "The verified proof screen",
+  },
 ];
 
 export function LandingShowcase() {
@@ -41,11 +53,15 @@ export function LandingShowcase() {
           >
             <div className={styles.phone}>
               <div className={styles.screen}>
-                <span className={styles.phNote}>
-                  {f.label}
-                  <br />
-                  screenshot goes here
-                </span>
+                {f.src ? (
+                  <img className={styles.screenImg} src={f.src} alt={f.alt} />
+                ) : (
+                  <span className={styles.phNote}>
+                    {f.label}
+                    <br />
+                    screenshot goes here
+                  </span>
+                )}
               </div>
             </div>
             <figcaption className={styles.caption}>{f.label}</figcaption>
