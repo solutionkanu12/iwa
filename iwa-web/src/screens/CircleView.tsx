@@ -299,15 +299,98 @@ function AppNav({
   }, [menuOpen]);
 
   return (
-    <Island className={styles.appNav}>
-      <div className={styles.navL}>
-        <NavGlyph />
-        <span className={styles.nm}>Iwa</span>
-      </div>
-      <div className={styles.tabs} role="tablist" aria-label="App sections">
+    <>
+      <Island className={styles.appNav}>
+        <div className={styles.navL}>
+          <NavGlyph />
+          <span className={styles.nm}>Iwa</span>
+        </div>
+        <div className={styles.tabs} role="tablist" aria-label="App sections">
+          <button
+            type="button"
+            className={`${styles.tab} ${section === "circle" ? styles.tabActive : ""}`}
+            role="tab"
+            aria-selected={section === "circle"}
+            onClick={onCircle}
+            disabled={!enabled}
+          >
+            Circle
+          </button>
+          <button
+            type="button"
+            className={`${styles.tab} ${section === "browse" ? styles.tabActive : ""}`}
+            role="tab"
+            aria-selected={section === "browse"}
+            onClick={onBrowse}
+            disabled={!enabled}
+          >
+            Browse
+          </button>
+          <button
+            type="button"
+            className={`${styles.tab} ${section === "standing" ? styles.tabActive : ""}`}
+            role="tab"
+            aria-selected={section === "standing"}
+            onClick={onStanding}
+            disabled={!enabled}
+          >
+            My standing
+          </button>
+          <button
+            type="button"
+            className={`${styles.tab} ${section === "create" ? styles.tabActive : ""}`}
+            role="tab"
+            aria-selected={section === "create"}
+            onClick={onCreate}
+            disabled={!enabled}
+          >
+            New circle
+          </button>
+        </div>
+        <div className={styles.walletSlot}>
+          {address ? (
+            <div className={styles.walletMenu} ref={menuRef}>
+              <button
+                type="button"
+                className={styles.wallet}
+                onClick={() => setMenuOpen((v) => !v)}
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+              >
+                <span className={styles.walletDot} />
+                <span className={styles.walletAddr}>{short(address)}</span>
+              </button>
+              {menuOpen ? (
+                <div className={styles.dropdown} role="menu">
+                  <button
+                    type="button"
+                    className={styles.dropdownItem}
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onDisconnect();
+                    }}
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      </Island>
+
+      {/* Mobile-only bottom tab bar (native-app style). Hidden on desktop via
+          CSS; a separate block from the top bar's tabs above, which are
+          untouched and still render (hidden on mobile by CSS instead). */}
+      <nav
+        className={styles.bottomNav}
+        role="tablist"
+        aria-label="App sections"
+      >
         <button
           type="button"
-          className={`${styles.tab} ${section === "circle" ? styles.tabActive : ""}`}
+          className={`${styles.bottomTab} ${section === "circle" ? styles.bottomTabActive : ""}`}
           role="tab"
           aria-selected={section === "circle"}
           onClick={onCircle}
@@ -317,7 +400,7 @@ function AppNav({
         </button>
         <button
           type="button"
-          className={`${styles.tab} ${section === "browse" ? styles.tabActive : ""}`}
+          className={`${styles.bottomTab} ${section === "browse" ? styles.bottomTabActive : ""}`}
           role="tab"
           aria-selected={section === "browse"}
           onClick={onBrowse}
@@ -327,7 +410,7 @@ function AppNav({
         </button>
         <button
           type="button"
-          className={`${styles.tab} ${section === "standing" ? styles.tabActive : ""}`}
+          className={`${styles.bottomTab} ${section === "standing" ? styles.bottomTabActive : ""}`}
           role="tab"
           aria-selected={section === "standing"}
           onClick={onStanding}
@@ -337,7 +420,7 @@ function AppNav({
         </button>
         <button
           type="button"
-          className={`${styles.tab} ${section === "create" ? styles.tabActive : ""}`}
+          className={`${styles.bottomTab} ${section === "create" ? styles.bottomTabActive : ""}`}
           role="tab"
           aria-selected={section === "create"}
           onClick={onCreate}
@@ -345,39 +428,8 @@ function AppNav({
         >
           New circle
         </button>
-      </div>
-      <div className={styles.walletSlot}>
-        {address ? (
-          <div className={styles.walletMenu} ref={menuRef}>
-            <button
-              type="button"
-              className={styles.wallet}
-              onClick={() => setMenuOpen((v) => !v)}
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-            >
-              <span className={styles.walletDot} />
-              <span className={styles.walletAddr}>{short(address)}</span>
-            </button>
-            {menuOpen ? (
-              <div className={styles.dropdown} role="menu">
-                <button
-                  type="button"
-                  className={styles.dropdownItem}
-                  role="menuitem"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    onDisconnect();
-                  }}
-                >
-                  Disconnect
-                </button>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
-    </Island>
+      </nav>
+    </>
   );
 }
 

@@ -596,3 +596,71 @@
 .standingSummary {
   margin: 16px 0 18px;
 }
+
+/* Mobile: slightly taller touch targets on the smaller interactive elements
+ * (wallet pill, dropdown items, browse "View"), and a 16px input to stop iOS
+ * Safari auto-zooming on focus. Layout is unchanged, only sizing. The top
+ * tab row moves out entirely (see .bottomNav below), so the top bar keeps
+ * just the logo and the wallet pill, no cramming or scrolling needed there. */
+@media (max-width: 480px) {
+  .tabs {
+    display: none;
+  }
+  .wallet {
+    padding: 8px 10px;
+  }
+  .dropdownItem {
+    padding: 10px 12px;
+  }
+  .browseBtn {
+    padding: 10px 16px;
+  }
+  .input {
+    font-size: 16px;
+  }
+}
+
+/* Mobile bottom tab bar: a native-app-style fixed bar, hidden on desktop.
+ * Fully separate from .tabs above (the desktop top bar's own tab logic is
+ * untouched); this only duplicates the same four destinations for a
+ * touch-friendly, always-in-place mobile nav. */
+.bottomNav {
+  display: none;
+}
+@media (max-width: 480px) {
+  .bottomNav {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    background: var(--cloud);
+    border-top: 0.5px solid var(--brd);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .bottomTab {
+    flex: 1;
+    min-height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-body);
+    font-size: 12px;
+    color: var(--mut);
+    background: transparent;
+    border: 0;
+    border-top: 2px solid transparent;
+    padding: 6px 4px;
+    text-align: center;
+  }
+  .bottomTab:disabled {
+    opacity: 0.55;
+  }
+  /* Active tab: iris label and top edge, mirroring the desktop tab's
+   * active-state intent without introducing any new color. */
+  .bottomTabActive {
+    color: var(--iris);
+    border-top-color: var(--iris);
+  }
+}

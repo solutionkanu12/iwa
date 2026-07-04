@@ -18,6 +18,14 @@
   padding: 14px 14px 40px;
 }
 
+/* Clears the fixed mobile bottom nav bar (CircleView.module.css .bottomNav)
+ * so it never covers the last bit of card content. */
+@media (max-width: 480px) {
+  .appWrap {
+    padding-bottom: calc(70px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
 /* Ambient orbs */
 .blob {
   position: absolute;

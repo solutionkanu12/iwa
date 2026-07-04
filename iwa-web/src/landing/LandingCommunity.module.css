@@ -77,3 +77,10 @@
     transition: none;
   }
 }
+
+/* Tighter card padding on phones, leaving more room for the body text. */
+@media (max-width: 480px) {
+  .communityCard {
+    padding: 26px 20px;
+  }
+}

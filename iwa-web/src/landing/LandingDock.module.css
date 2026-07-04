@@ -91,9 +91,21 @@
   transform: scale(0.92);
 }
 
-/* The descriptor hides on small screens, as in the prototype. */
+/* The descriptor hides on small screens, as in the prototype. Its separator
+ * hides alongside it so nothing dangles with no text to divide. */
 @media (max-width: 680px) {
   .tag {
+    display: none;
+  }
+  .sep {
+    display: none;
+  }
+}
+
+/* On the narrowest phones the network tag no longer fits next to the CTA, so
+ * it hides too, leaving the essentials: brand and "Enter the circle". */
+@media (max-width: 400px) {
+  .net {
     display: none;
   }
 }

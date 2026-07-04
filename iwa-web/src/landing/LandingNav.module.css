@@ -107,3 +107,18 @@
   background-image: radial-gradient(currentColor 1.4px, transparent 1.5px);
   background-size: 5px 5px;
 }
+
+/* Mobile: the secondary links, "Log in", and the decorative grid button don't
+ * fit alongside the brand and the primary CTA, so they hide. The essentials
+ * (glyph, brand, "Enter the circle") stay on one row, no wrap or overflow. */
+@media (max-width: 640px) {
+  .link {
+    display: none;
+  }
+  .login {
+    display: none;
+  }
+  .gridBtn {
+    display: none;
+  }
+}
