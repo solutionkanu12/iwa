@@ -348,6 +348,24 @@ MISSED_DEFAULT
 
 The exact timestamp/block semantics must be deterministic and tested.
 
+Locked decision (August 27, 2026):
+
+- Time source: Starknet block timestamp in seconds.
+- `due_at` and `grace_ends_at` are derived from one authoritative
+  contract-side timestamp source (the same read used to classify the
+  obligation); no component computes the deadline independently.
+- Classification for every contribution obligation:
+
+```text
+now <= due_at                          -> ON_TIME
+due_at < now <= grace_ends_at          -> LATE_WITHIN_GRACE
+now > grace_ends_at (no valid
+settlement)                            -> MISSED_DEFAULT
+```
+
+- Boundaries are inclusive as written above; the exact boundary behavior is
+  pinned by tests (slice 6E).
+
 ## Deficit handling
 
 If a scheduled payout recipient has an unresolved contribution deficit:
@@ -359,6 +377,21 @@ If a scheduled payout recipient has an unresolved contribution deficit:
 - admin cannot choose a different recipient manually
 
 The exact fallback state machine must be finalized before contract implementation.
+
+Locked decision (August 27, 2026):
+
+- If the scheduled payout recipient has an unresolved deficit, the payout is
+  **not redirected** and is marked `DEFERRED/LOCKED`.
+- The circle continues to later rounds; the locked payout does not stall
+  progression.
+- The member may cure the deficit under the predefined cure rules and then
+  claim their deferred payout.
+- Admin cannot select a replacement recipient and cannot release the payout
+  arbitrarily.
+- If the cycle reaches final settlement while the deficit remains uncured, a
+  deterministic recovery/refund state-machine path applies (no admin
+  discretion); the exact recovery amount derives from verified state and the
+  path is replay protected.
 
 ## Reliability model
 

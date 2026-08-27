@@ -405,6 +405,62 @@ But its technical architecture and hackathon context are obsolete.
 
 Do not use it as the current source of truth.
 
+## Legacy behavior extraction
+
+Extraction task complete (plan Task 3 first pass).
+
+Created:
+
+- `docs/domain/LEGACY_BEHAVIOR.md` — observed legacy business behavior with
+  per-behavior `KEEP` / `CHANGE` / `REMOVE` / `HOLD` decisions, edge cases,
+  and UNKNOWN items
+- `docs/domain/IWA_INVARIANTS.md` — chain-neutral invariants (INV-001 through
+  INV-019) with origins, enforcement points, and planned tests
+
+What passed:
+
+- every legacy behavior cited to exact source lines in
+  `iwa-savings/contracts/savings/src/lib.rs` and `test.rs`
+- reputation/credential semantics extracted from `iwa-circuit/`,
+  `iwa-prover/`, `iwa-verifier/`, and the frontend seams (read-only evidence)
+- legacy behaviors classified against the approved rules in `PROJECT.md` /
+  `ARCHITECTURE.md` / `SECURITY.md`
+- demo seam `seed_contribution` recorded for removal; no admin powers exist
+  in the legacy contract (recorded, replaced by the approved non-custodial
+  admin model)
+
+What failed / not done:
+
+- no implementation code modified
+- no Cairo written
+- no legacy files deleted
+- no frontend touched
+
+State-machine blockers — RESOLVED (locked August 27, 2026):
+
+- grace timing: Starknet block timestamp in seconds; one authoritative
+  contract-side timestamp source; `now <= due_at` → `ON_TIME`,
+  `due_at < now <= grace_ends_at` → `LATE_WITHIN_GRACE`,
+  `now > grace_ends_at` without valid settlement → `MISSED_DEFAULT`
+  (recorded in `ARCHITECTURE.md` "Grace periods", `IWA_INVARIANTS.md`
+  INV-018)
+- deficit payout fallback: no redirect; payout marked `DEFERRED/LOCKED`;
+  circle continues; member cures then claims; admin cannot replace or
+  release; uncured deficit at final settlement follows a deterministic
+  recovery/refund path with no admin discretion (recorded in
+  `ARCHITECTURE.md` "Deficit handling", `IWA_INVARIANTS.md` INV-009, INV-020)
+
+Remaining open items (not state-machine blockers):
+
+- legacy trust-gate proof binding gaps (root/nullifier/leaf) documented;
+  binding must be closed if a proof layer is rebuilt
+- exact cure-rule parameters (what constitutes a cure, window, accounting
+  effect) still to be specified before Cairo — the state machine is locked,
+  the parameter values are not
+
+Next: plan Task 4 — define chain-neutral IWA Core interfaces in the frontend
+(`iwa-web/src/core/`, `iwa-web/src/chains/types.ts`).
+
 ## Current control-doc setup
 
 Planned project-control files:
@@ -608,11 +664,17 @@ Deliver:
 
 1. Finish project-control docs.
 2. Do not delete legacy code.
-3. Read STRK20 skills and bundled references.
-4. Produce STRK20 integration findings.
-5. Decide the fate of the old Circom/prover stack.
-6. Write the implementation plan.
-7. Only then begin code migration.
+3. Define chain-neutral IWA Core interfaces (`iwa-web/src/core/`,
+   `iwa-web/src/chains/types.ts`) per plan Task 4, driven by
+   `docs/domain/IWA_INVARIANTS.md`.
+4. Create the Starknet Cairo workspace (plan Task 5) only after the core
+   interfaces are defined.
+5. State-machine blockers (grace timing, deficit fallback) are locked in
+   `ARCHITECTURE.md` / `docs/domain/IWA_INVARIANTS.md`; specify cure-rule
+   parameters before IwaCircle implementation (plan Task 6).
+6. Implement IwaCircle with TDD from the domain spec.
+7. STRK20 helper design must follow the verified integration research
+   (`docs/strk20/INTEGRATION_RESEARCH.md`) — never from memory.
 
 ## Working rules
 
