@@ -2,11 +2,13 @@
 
 ## Current phase
 
-**Phase 0 — Preservation and control**
+**Phase 2 — Chain-neutral IWA Core (Task 4 complete)**
 
-No destructive migration has started yet.
+Chain-neutral IWA Core types and the chain-adapter interface are defined in
+`iwa-web/src/core/` and `iwa-web/src/chains/types.ts`.
 
-The repository still contains the previous Stellar/Soroban implementation and related ZK components. These are being preserved until the new Starknet/STRK20 architecture is fully mapped and validated.
+No Cairo has been written. No Stellar/Soroban or ZK code has been deleted.
+The existing frontend UI has not been redesigned.
 
 ## STRK20 Private Sprint registration
 
@@ -458,38 +460,51 @@ Remaining open items (not state-machine blockers):
   effect) still to be specified before Cairo — the state machine is locked,
   the parameter values are not
 
-Next: plan Task 4 — define chain-neutral IWA Core interfaces in the frontend
-(`iwa-web/src/core/`, `iwa-web/src/chains/types.ts`).
+Next after extraction was plan Task 4 (complete — see below).
 
-## Current control-doc setup
+## Chain-neutral IWA Core (plan Task 4)
 
-Planned project-control files:
+Task 4 complete (reviewed and finished from the existing uncommitted tree).
 
-```text
-PROJECT.md
-STATUS.md
-ARCHITECTURE.md
-DESIGN.md
-SECURITY.md
-CLAUDE.md
-AGENTS.md
-```
+Created / kept:
 
-Current progress:
+- `iwa-web/src/core/domain/types.ts` — ContributionStatus, CircleStatus,
+  SupportedAsset, Circle, Member, ContributionObligation, PayoutState,
+  CredentialClaim
+- `iwa-web/src/core/domain/contributionStatus.ts` — INV-018 classifier
+- `iwa-web/src/chains/types.ts` — ChainAdapter interface
+- colocated Vitest tests for domain types, grace classification, and the
+  adapter contract
+- `iwa-web/vitest.config.ts` — node environment, core/chains test globs only
 
-- `PROJECT.md` — being created
-- `STATUS.md` — being created
-- `ARCHITECTURE.md` — legacy version still present, pending rewrite
-- `DESIGN.md` — pending
-- `SECURITY.md` — pending
-- `CLAUDE.md` — pending
-- `AGENTS.md` — pending
+What passed:
+
+- `iwa-web` `npm test` — 19 tests, 3 files, all passed
+- `iwa-web` `npx tsc -b` — exit 0
+- `iwa-web` `npm run build` — `tsc -b && vite build` exit 0
+- no CSS / layout / screen / asset files changed
+- no Starknet felt/address/RPC types in `iwa-web/src/core/`
+
+What was not done (out of Task 4 scope):
+
+- no Cairo workspace
+- no Stellar code deleted
+- no UI wired to the new core
+- not committed, not pushed
+
+Vitest was kept: Task 4 requires runtime tests of INV-018 classification and
+the adapter contract; the frontend had no test runner; Vitest matches the
+existing Vite toolchain. Removing it would drop those tests or add a
+different new runner.
+
+Next: plan Task 5 — create the Starknet Cairo workspace. Do not implement
+circle behavior in that task.
 
 ## Phase plan
 
 ### Phase 0 — Preservation and control
 
-Current phase.
+Complete (control docs, skills, strk20.json, legacy preserved).
 
 Goals:
 
@@ -518,6 +533,9 @@ Required outputs:
 No implementation from memory.
 
 ### Phase 2 — Chain-agnostic IWA Core
+
+Task 4 complete (interfaces defined). Remaining Phase 2 application
+services can wait until a Starknet adapter exists.
 
 Extract and define:
 
@@ -662,18 +680,14 @@ Deliver:
 
 ## Immediate next work
 
-1. Finish project-control docs.
-2. Do not delete legacy code.
-3. Define chain-neutral IWA Core interfaces (`iwa-web/src/core/`,
-   `iwa-web/src/chains/types.ts`) per plan Task 4, driven by
-   `docs/domain/IWA_INVARIANTS.md`.
-4. Create the Starknet Cairo workspace (plan Task 5) only after the core
-   interfaces are defined.
-5. State-machine blockers (grace timing, deficit fallback) are locked in
-   `ARCHITECTURE.md` / `docs/domain/IWA_INVARIANTS.md`; specify cure-rule
-   parameters before IwaCircle implementation (plan Task 6).
-6. Implement IwaCircle with TDD from the domain spec.
-7. STRK20 helper design must follow the verified integration research
+1. Do not delete legacy code.
+2. Create the Starknet Cairo workspace (plan Task 5). Do not implement
+   circle behavior in that task.
+3. Specify cure-rule parameters before IwaCircle implementation (plan Task 6).
+   State-machine blockers (grace timing, deficit fallback) are already locked
+   in `ARCHITECTURE.md` / `docs/domain/IWA_INVARIANTS.md`.
+4. Implement IwaCircle with TDD from the domain spec.
+5. STRK20 helper design must follow the verified integration research
    (`docs/strk20/INTEGRATION_RESEARCH.md`) — never from memory.
 
 ## Working rules
@@ -695,4 +709,5 @@ August 27, 2026
 
 Current state:
 
-**Phase 0 in progress. No Starknet feature implementation has started yet.**
+**Phase 2 Task 4 complete. Chain-neutral IWA Core interfaces defined.
+No Cairo written. Next: plan Task 5 — Starknet Cairo workspace.**
