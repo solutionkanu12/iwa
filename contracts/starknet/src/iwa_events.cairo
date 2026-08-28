@@ -28,7 +28,9 @@ pub struct CircleActivated {
 }
 
 #[derive(Drop, starknet::Event)]
-pub struct ContributionRecorded {
+/// An authenticated accounting transition only. This event does not assert
+/// ERC-20 or STRK20 settlement.
+pub struct ContributionStateUpdated {
     #[key]
     pub circle_id: u32,
     pub round: u32,

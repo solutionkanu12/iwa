@@ -41,6 +41,8 @@ fn domain_structs_use_commitments_not_addresses() {
         circle_id: 1,
         round: 1,
         member_ref: member.member_ref,
+        asset: config.asset,
+        required_amount: config.contribution_amount,
         due_at: 1_000,
         grace_ends_at: 2_000,
         status: ContributionStatus::Pending,
@@ -53,6 +55,8 @@ fn domain_structs_use_commitments_not_addresses() {
     };
 
     assert(config.member_limit == 3, 'limit');
+    assert(obligation.asset == config.asset, 'obligation asset');
+    assert(obligation.required_amount == config.contribution_amount, 'obligation amount');
     assert(obligation.status == ContributionStatus::Pending, 'pending');
     assert(payout.status == PayoutStatus::DeferredLocked, 'deferred');
 }

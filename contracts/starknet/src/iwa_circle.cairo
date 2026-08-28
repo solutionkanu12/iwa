@@ -1,8 +1,11 @@
-// IwaCircle — creation, invite membership, and member authorization registration.
-// No contribution, payout, pause, cure execution, or STRK20 helper.
+// IwaCircle — circle, membership, and authenticated contribution accounting.
+// Contribution state does not assert token settlement. No token calls,
+// payout, pause, cure execution, or STRK20 helper are implemented here.
 
 use starknet::ContractAddress;
-use super::iwa_types::{CircleStatus, CureConfig, SupportedAsset};
+use super::iwa_types::{
+    CircleStatus, ContributionObligation, ContributionStatus, CureConfig, SupportedAsset,
+};
 
 #[derive(Copy, Drop, Serde)]
 pub struct CircleView {
@@ -39,6 +42,24 @@ pub trait IIwaCircle<TContractState> {
     ) -> u8;
     fn is_member(self: @TContractState, circle_id: u32, member_ref: felt252) -> bool;
     fn get_member_auth_key(self: @TContractState, circle_id: u32, member_ref: felt252) -> felt252;
+    fn get_contribution_obligation(
+        self: @TContractState, circle_id: u32, round: u32, member_ref: felt252,
+    ) -> ContributionObligation;
+    fn is_contribution_nonce_consumed(
+        self: @TContractState, circle_id: u32, member_ref: felt252, nonce: felt252,
+    ) -> bool;
+    /// Records authenticated obligation satisfaction only. Token settlement
+    /// is deliberately absent until the verified STRK20 helper integration.
+    fn satisfy_contribution(
+        ref self: TContractState,
+        circle_id: u32,
+        round: u32,
+        member_ref: felt252,
+        amount: u128,
+        nonce: felt252,
+        signature_r: felt252,
+        signature_s: felt252,
+    ) -> ContributionStatus;
 }
 
 #[starknet::contract]
@@ -50,10 +71,13 @@ pub mod IwaCircle {
     };
     use starknet::{ContractAddress, get_block_timestamp, get_caller_address};
     use super::super::iwa_errors;
-    use super::super::iwa_events::{CircleActivated, CircleCreated, MemberJoined};
+    use super::super::iwa_events::{
+        CircleActivated, CircleCreated, ContributionStateUpdated, MemberJoined,
+    };
     use super::super::iwa_types::{
-        CircleStatus, CureConfig, SupportedAsset, invite_commitment, is_valid_auth_public_key,
-        locked_cure_config,
+        CircleStatus, ContributionObligation, ContributionStatus, CureConfig, SupportedAsset,
+        invite_commitment, is_valid_auth_public_key, locked_cure_config,
+        verify_contribution_authorization,
     };
     use super::{CircleView, IIwaCircle};
 
@@ -84,6 +108,9 @@ pub mod IwaCircle {
         payout_order_len: Map<u32, u8>,
         joined: Map<(u32, felt252), bool>,
         member_auth_keys: Map<(u32, felt252), felt252>,
+        obligation_exists: Map<(u32, u32, felt252), bool>,
+        obligations: Map<(u32, u32, felt252), ContributionObligation>,
+        contribution_nonces: Map<(u32, felt252, felt252), bool>,
     }
 
     #[event]
@@ -92,6 +119,7 @@ pub mod IwaCircle {
         CircleCreated: CircleCreated,
         MemberJoined: MemberJoined,
         CircleActivated: CircleActivated,
+        ContributionStateUpdated: ContributionStateUpdated,
     }
 
     #[constructor]
@@ -201,6 +229,7 @@ pub mod IwaCircle {
             let activating = record.joined_count == record.member_limit;
             if activating {
                 record.status = CircleStatus::Active;
+                self.create_round_obligations(circle_id, record, get_block_timestamp());
             }
             self.circles.write(circle_id, record);
 
@@ -222,6 +251,77 @@ pub mod IwaCircle {
             self.assert_exists(circle_id);
             assert(self.joined.read((circle_id, member_ref)), iwa_errors::NOT_MEMBER);
             self.member_auth_keys.read((circle_id, member_ref))
+        }
+
+        fn get_contribution_obligation(
+            self: @ContractState, circle_id: u32, round: u32, member_ref: felt252,
+        ) -> ContributionObligation {
+            self.assert_exists(circle_id);
+            let key = (circle_id, round, member_ref);
+            assert(self.obligation_exists.read(key), iwa_errors::OBLIGATION_NOT_FOUND);
+            self.obligations.read(key)
+        }
+
+        fn is_contribution_nonce_consumed(
+            self: @ContractState, circle_id: u32, member_ref: felt252, nonce: felt252,
+        ) -> bool {
+            self.assert_exists(circle_id);
+            self.contribution_nonces.read((circle_id, member_ref, nonce))
+        }
+
+        fn satisfy_contribution(
+            ref self: ContractState,
+            circle_id: u32,
+            round: u32,
+            member_ref: felt252,
+            amount: u128,
+            nonce: felt252,
+            signature_r: felt252,
+            signature_s: felt252,
+        ) -> ContributionStatus {
+            let record = self.read_record(circle_id);
+            assert(record.status == CircleStatus::Active, iwa_errors::WRONG_ROUND);
+            assert(round == record.current_round, iwa_errors::WRONG_ROUND);
+            assert(self.joined.read((circle_id, member_ref)), iwa_errors::NOT_MEMBER);
+            assert(amount == record.contribution_amount, iwa_errors::WRONG_AMOUNT);
+
+            let obligation_key = (circle_id, round, member_ref);
+            assert(self.obligation_exists.read(obligation_key), iwa_errors::OBLIGATION_NOT_FOUND);
+            let mut obligation = self.obligations.read(obligation_key);
+            let nonce_key = (circle_id, member_ref, nonce);
+            assert(!self.contribution_nonces.read(nonce_key), iwa_errors::NONCE_USED);
+            assert(obligation.status == ContributionStatus::Pending, iwa_errors::ALREADY_SATISFIED);
+
+            let auth_key = self.member_auth_keys.read((circle_id, member_ref));
+            assert(
+                verify_contribution_authorization(
+                    auth_key,
+                    circle_id,
+                    round,
+                    member_ref,
+                    record.contribution_amount,
+                    nonce,
+                    signature_r,
+                    signature_s,
+                ),
+                iwa_errors::INVALID_SIGNATURE,
+            );
+
+            let now = get_block_timestamp();
+            let status = if now <= obligation.due_at {
+                ContributionStatus::OnTime
+            } else {
+                assert(now <= obligation.grace_ends_at, iwa_errors::CONTRIBUTION_WINDOW_CLOSED);
+                ContributionStatus::LateWithinGrace
+            };
+
+            // Every check precedes both writes. Starknet revert atomicity also
+            // rolls both back together if a later operation fails.
+            obligation.status = status;
+            self.obligations.write(obligation_key, obligation);
+            self.contribution_nonces.write(nonce_key, true);
+            self.emit(ContributionStateUpdated { circle_id, round, member_ref, status });
+            status
         }
     }
 
@@ -269,6 +369,37 @@ pub mod IwaCircle {
                 i += 1;
             }
             self.payout_order_len.write(circle_id, member_limit);
+        }
+
+        fn create_round_obligations(
+            ref self: ContractState, circle_id: u32, record: CircleRecord, round_started_at: u64,
+        ) {
+            let due_at = round_started_at + record.cadence_seconds;
+            let grace_ends_at = due_at + record.grace_period_seconds;
+            let mut slot: u8 = 0;
+            while slot < record.member_limit {
+                let member_ref = self.payout_order.read((circle_id, slot));
+                assert(self.joined.read((circle_id, member_ref)), iwa_errors::NOT_MEMBER);
+                let key = (circle_id, record.current_round, member_ref);
+                assert(!self.obligation_exists.read(key), iwa_errors::ALREADY_SATISFIED);
+                self
+                    .obligations
+                    .write(
+                        key,
+                        ContributionObligation {
+                            circle_id,
+                            round: record.current_round,
+                            member_ref,
+                            asset: record.asset,
+                            required_amount: record.contribution_amount,
+                            due_at,
+                            grace_ends_at,
+                            status: ContributionStatus::Pending,
+                        },
+                    );
+                self.obligation_exists.write(key, true);
+                slot += 1;
+            }
         }
     }
 

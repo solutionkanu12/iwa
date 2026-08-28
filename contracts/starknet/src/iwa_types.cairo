@@ -184,6 +184,9 @@ pub struct ContributionObligation {
     pub circle_id: u32,
     pub round: u32,
     pub member_ref: felt252,
+    /// Locked accounting terms. These do not assert that tokens moved.
+    pub asset: SupportedAsset,
+    pub required_amount: u128,
     pub due_at: u64,
     pub grace_ends_at: u64,
     pub status: ContributionStatus,

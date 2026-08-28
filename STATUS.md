@@ -2,19 +2,25 @@
 
 ## Current phase
 
-**Phase 3 — member authorization foundation (Task 6D-A complete)**
+**Phase 3 — authenticated contribution accounting (Task 6D complete)**
 
 Circles can be created and joined by proving an off-chain invite secret
 against Poseidon commitments stored in the locked payout order.
 The payout order is written only during circle creation and has no callable
 mutation path after creation. Joins and activation leave it unchanged.
-Joined members now register an immutable IWA-specific Stark-curve public key
-for later obligation-scoped contribution authorization.
-Contributions, payout execution, pause, cure execution, and STRK20
-`privacy_invoke` are not implemented.
+Joined members register an immutable IWA-specific Stark-curve public key used
+to sign domain-separated, obligation-scoped contribution authorizations.
+Activation now creates exactly one contribution obligation per circle, round,
+and member, each carrying the circle's locked asset and required amount.
+Members satisfy the current round's obligation with a signed, nonce-bound
+authorization that is verified and consumed atomically, producing an ON_TIME
+or LATE_WITHIN_GRACE transition.
+Contribution state is accounting only: real ERC-20/STRK20 settlement is
+intentionally not implemented yet. Payout execution, pause, cure execution,
+and STRK20 `privacy_invoke` are not implemented.
 
 No Stellar/Soroban or ZK code has been deleted. `iwa-web/` was not modified
-in Task 6B.
+in Task 6D.
 
 ## STRK20 Private Sprint registration
 
@@ -561,8 +567,8 @@ No Starknet-specific types inside the core.
 
 Task 5 complete (workspace). Task 6A complete (creation). Task 6B complete
 (membership). Task 6C complete (fixed payout-order immutability). Task 6D-A
-complete (member authorization foundation). Next is Task 6D contribution
-obligations and atomic nonce consumption.
+complete (member authorization foundation). Task 6D complete (authenticated
+contribution obligations with atomic nonce consumption). Task 6E not started.
 
 Build and verify:
 
@@ -895,15 +901,76 @@ Still intentionally absent:
 - `privacy_invoke`, payouts, cure execution, and pause
 - not committed, not pushed
 
+## IwaCircle authenticated contributions (plan Task 6D)
+
+Task 6D complete (TDD) and fully verified.
+
+Created:
+
+- `contracts/starknet/tests/test_contributions.cairo`
+
+Updated:
+
+- `contracts/starknet/src/iwa_circle.cairo` — obligation creation at
+  activation, `satisfy_contribution`, and the obligation / nonce read views
+- `contracts/starknet/src/iwa_types.cairo` — `ContributionObligation` now
+  carries the locked `asset` and `required_amount`
+- `contracts/starknet/src/iwa_errors.cairo` — invalid-signature, wrong-amount,
+  nonce-used, already-satisfied, obligation-not-found, and closed-window errors
+- `contracts/starknet/src/iwa_events.cairo` — `ContributionRecorded` renamed to
+  `ContributionStateUpdated`, documented as an accounting transition that does
+  not assert settlement
+- `contracts/starknet/tests/test_smoke.cairo` — obligation fixture updated for
+  the extended struct
+
+Verified model:
+
+- authenticated contribution obligations are implemented
+- exactly one obligation exists per circle, round, and member; obligations are
+  created once at activation and re-creation is rejected
+- each obligation locks the circle's exact asset and required amount; any
+  amount that is not the locked amount is rejected, including zero
+- only the current round can be satisfied; past, non-current, and future rounds
+  are rejected, as is any call while the circle is not `Active`
+- satisfaction requires a valid Stark-curve signature from the member's
+  registered authorization key over the domain-separated hash binding circle,
+  round, member ref, exact amount, and nonce; wrong circle, round, amount, or
+  member signatures are all rejected
+- the signed nonce is consumed atomically with the obligation transition,
+  giving replay protection; a reused nonce is rejected even for an otherwise
+  valid authorization, a failed transaction consumes no nonce, and duplicate
+  satisfaction fails even with a fresh nonce
+- `now <= due_at` produces `ON_TIME`; `due_at < now <= grace_ends_at` produces
+  `LATE_WITHIN_GRACE` at the inclusive boundary; a closed window is rejected
+- contribution changes neither payout order nor membership, and the organizer
+  has no contribution bypass
+
+Intentionally not implemented:
+
+- real ERC-20 / STRK20 token settlement — contribution state is accounting
+  only and does not assert that any tokens moved
+- `MISSED_DEFAULT` transition, payouts, cure execution, pause, and
+  `privacy_invoke`
+
+What passed (WSL Ubuntu):
+
+- `scarb fmt` and `scarb fmt --check` — exit 0
+- `scarb build` — exit 0
+- `snforge test test_contributions` — 18 passed, 0 failed
+- `snforge test` — 76 passed, 0 failed
+- no `iwa-web/` changes
+- no legacy deletions
+- not committed, not pushed
+
+Task 6E not started.
+
 ## Immediate next work
 
 1. Do not delete legacy code.
-2. Resume Task 6D with failing tests for one contribution obligation per
-   required member/round, signature verification against the registered key,
-   atomic nonce consumption, wrong-round rejection, duplicate-satisfaction
-   rejection, unsupported-asset rejection, and the valid state transition.
-3. Do not implement grace/default behavior, payouts, or STRK20
-   `privacy_invoke` as part of 6D.
+2. Task 6D is complete and fully verified. Task 6E has not been started.
+3. Do not implement `MISSED_DEFAULT` behavior, payouts, cure execution, pause,
+   or STRK20 `privacy_invoke` outside their own tasks. Real ERC-20 / STRK20
+   settlement for contributions remains intentionally absent.
 4. STRK20 helper design must follow the verified integration research
    (`docs/strk20/INTEGRATION_RESEARCH.md`) — never from memory.
 
@@ -926,7 +993,9 @@ August 28, 2026
 
 Current state:
 
-**Phase 3 Task 6D-A complete. Members register immutable IWA-specific
-Stark-curve authentication keys and sign domain-separated, obligation-scoped
-authorizations. Next: Task 6D — contribution obligations with atomic signature
-verification and nonce consumption; no token movement yet.**
+**Phase 3 Task 6D complete and fully verified. Circle activation creates one
+locked-terms contribution obligation per circle, round, and member, and members
+satisfy the current round with a signed, nonce-bound authorization that is
+verified and consumed atomically, producing ON_TIME or LATE_WITHIN_GRACE. Real
+ERC-20 / STRK20 settlement is intentionally not implemented yet. Next: Task 6E,
+not started.**
