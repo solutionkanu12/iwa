@@ -2,10 +2,12 @@
 
 ## Current phase
 
-**Phase 3 — IwaCircle membership (Task 6B complete)**
+**Phase 3 — IwaCircle fixed payout order (Task 6C complete)**
 
 Circles can be created and joined by proving an off-chain invite secret
 against Poseidon commitments stored in the locked payout order.
+The payout order is written only during circle creation and has no callable
+mutation path after creation. Joins and activation leave it unchanged.
 Contributions, payout execution, pause, cure execution, and STRK20
 `privacy_invoke` are not implemented.
 
@@ -556,7 +558,7 @@ No Starknet-specific types inside the core.
 ### Phase 3 — Cairo IWA circle contracts
 
 Task 5 complete (workspace). Task 6A complete (creation). Task 6B complete
-(membership). Next is 6C.
+(membership). Task 6C complete (fixed payout-order immutability). Next is 6D.
 
 Build and verify:
 
@@ -797,16 +799,60 @@ What was not done (out of 6B scope):
 - no STRK20 helper
 - not committed, not pushed
 
-Next: plan Task 6C — fixed payout order (immutability after lock/activation;
-admin cannot reorder). Order is already stored and unchanged by joins; 6C
-should add explicit reorder-rejection tests/entrypoints if any write path
-exists.
+Task 6C complete (TDD/invariant verification).
+
+Created:
+
+- `contracts/starknet/tests/test_payout_order.cairo`
+
+Verified guarantees:
+
+- payout order exactly matches its creation-time input
+- payout order remains unchanged after one join and after activation
+- payout-order storage is isolated between circles
+- organizer and member callers cannot replace or reorder entries
+- no callable entrypoint can mutate payout-order storage after creation
+- duplicate and zero payout-order references remain rejected at creation
+
+Security review:
+
+- `payout_order` and `payout_order_len` have exactly one intended write path:
+  internal `store_payout_order`, called only by `create_circle`
+- `join_circle` writes membership state and the circle record only; it does
+  not write either payout-order storage map
+- the public ABI contains no payout-order setter, replacement, reorder, or
+  generic storage mutation entrypoint
+- absence of a mutating API is the enforcement mechanism; no rejection-only
+  reorder API was added
+- no organizer/admin bypass was found
+- no contract-code change was required for Task 6C
+
+What passed (WSL Ubuntu):
+
+- `scarb fmt --check` — exit 0
+- `scarb build` — exit 0
+- `snforge test test_payout_order` — 9 passed, 0 failed
+- `snforge test` — 42 passed, 0 failed
+- no `iwa-web/` changes
+- no legacy deletions
+
+What was not done (out of 6C scope):
+
+- no contributions or obligation execution
+- no grace/default execution
+- no payout or cure execution
+- no pause
+- no STRK20 helper or `privacy_invoke`
+- not committed, not pushed
 
 ## Immediate next work
 
 1. Do not delete legacy code.
-2. Implement payout-order immutability tests (plan Task 6C).
-3. Do not implement contributions, payouts, or STRK20 `privacy_invoke` yet.
+2. Start Task 6D with failing tests for one contribution obligation per
+   required member/round, wrong-round rejection, duplicate-satisfaction
+   rejection, unsupported-asset rejection, and the valid state transition.
+3. Do not implement grace/default behavior, payouts, or STRK20
+   `privacy_invoke` as part of 6D.
 4. STRK20 helper design must follow the verified integration research
    (`docs/strk20/INTEGRATION_RESEARCH.md`) — never from memory.
 
@@ -829,5 +875,7 @@ August 28, 2026
 
 Current state:
 
-**Phase 3 Task 6B complete. Invite-secret membership is hardened.
-Next: plan Task 6C — payout-order immutability.**
+**Phase 3 Task 6C complete. Payout-order immutability is verified without a
+contract change. Next: Task 6D — contribution obligations, beginning with
+failing tests for uniqueness, round and asset validation, and the valid state
+transition.**
