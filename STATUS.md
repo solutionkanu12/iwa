@@ -2,13 +2,14 @@
 
 ## Current phase
 
-**Phase 2 — Chain-neutral IWA Core (Task 4 complete)**
+**Phase 3 — Cairo workspace (Task 5 complete)**
 
-Chain-neutral IWA Core types and the chain-adapter interface are defined in
-`iwa-web/src/core/` and `iwa-web/src/chains/types.ts`.
+The Starknet Cairo/Scarb package exists at `contracts/starknet/`. Shared
+types, errors, and event payloads are defined. No circle state machine and
+no STRK20 helper have been implemented.
 
-No Cairo has been written. No Stellar/Soroban or ZK code has been deleted.
-The existing frontend UI has not been redesigned.
+No Stellar/Soroban or ZK code has been deleted. `iwa-web/` was not modified
+in Task 5.
 
 ## STRK20 Private Sprint registration
 
@@ -497,8 +498,7 @@ the adapter contract; the frontend had no test runner; Vitest matches the
 existing Vite toolchain. Removing it would drop those tests or add a
 different new runner.
 
-Next: plan Task 5 — create the Starknet Cairo workspace. Do not implement
-circle behavior in that task.
+Next after Task 4 was plan Task 5 (complete — see below).
 
 ## Phase plan
 
@@ -553,6 +553,8 @@ Extract and define:
 No Starknet-specific types inside the core.
 
 ### Phase 3 — Cairo IWA circle contracts
+
+Task 5 complete (workspace + shared types). IwaCircle is Task 6.
 
 Build and verify:
 
@@ -678,16 +680,57 @@ Deliver:
 - final audit summary
 - polished demo flow
 
+## Starknet Cairo workspace (plan Task 5)
+
+Task 5 complete.
+
+Created:
+
+- `contracts/starknet/Scarb.toml` — package `iwa`, edition `2024_07`
+- `contracts/starknet/.tool-versions` — scarb 2.18.0, starknet-foundry 0.63.0
+- `contracts/starknet/src/lib.cairo`
+- `contracts/starknet/src/iwa_types.cairo`
+- `contracts/starknet/src/iwa_errors.cairo`
+- `contracts/starknet/src/iwa_events.cairo`
+- `contracts/starknet/tests/test_smoke.cairo`
+- `contracts/starknet/Scarb.lock`
+
+Pinned from `starkware-libs/starknet-privacy` (verified, not memory):
+
+- scarb 2.18.0 / cairo 2.18.0
+- starknet 2.17.0
+- snforge_std 0.63.0 / snforge 0.63.0
+- assert_macros 2.17.0
+- edition 2024_07
+
+What passed (WSL Ubuntu, because snforge has no Windows binary):
+
+- `scarb fmt --check` — exit 0
+- `scarb build` — exit 0, no compiler warnings after Store-default allow
+- `snforge test` — 6 passed, 0 failed
+- no `iwa-web/` changes in this task
+- no legacy deletions
+
+Expected remaining snforge warning until Task 6 adds a contract:
+
+`external contracts not found for selectors: iwa::*`
+
+What was not done (out of Task 5 scope):
+
+- no `IwaCircle` state machine
+- no `privacy_invoke` helper
+- not committed, not pushed
+
+Next: plan Task 6 slice 6A — IwaCircle creation with TDD.
+
 ## Immediate next work
 
 1. Do not delete legacy code.
-2. Create the Starknet Cairo workspace (plan Task 5). Do not implement
-   circle behavior in that task.
-3. Specify cure-rule parameters before IwaCircle implementation (plan Task 6).
-   State-machine blockers (grace timing, deficit fallback) are already locked
-   in `ARCHITECTURE.md` / `docs/domain/IWA_INVARIANTS.md`.
-4. Implement IwaCircle with TDD from the domain spec.
-5. STRK20 helper design must follow the verified integration research
+2. Specify cure-rule parameters before later payout slices. State-machine
+   blockers (grace timing, deficit fallback) are already locked.
+3. Implement IwaCircle with TDD, starting at plan Task 6 slice 6A (circle
+   creation). Do not implement STRK20 `privacy_invoke` yet.
+4. STRK20 helper design must follow the verified integration research
    (`docs/strk20/INTEGRATION_RESEARCH.md`) — never from memory.
 
 ## Working rules
@@ -709,5 +752,5 @@ August 27, 2026
 
 Current state:
 
-**Phase 2 Task 4 complete. Chain-neutral IWA Core interfaces defined.
-No Cairo written. Next: plan Task 5 — Starknet Cairo workspace.**
+**Phase 3 Task 5 complete. Cairo/Scarb workspace exists at
+`contracts/starknet/`. No IwaCircle yet. Next: plan Task 6 slice 6A.**

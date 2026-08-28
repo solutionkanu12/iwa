@@ -1,0 +1,32 @@
+[package]
+name = "iwa"
+version = "0.1.0"
+edition = "2024_07"
+cairo-version = "2.18.0"
+
+# Toolchain pinned to the verified STRK20 protocol repo
+# (starkware-libs/starknet-privacy `.tool-versions` + workspace Scarb.toml):
+#   scarb 2.18.0
+#   starknet-foundry 0.63.0
+#   starknet = "2.17.0"
+#   snforge_std = "0.63.0"
+#   assert_macros = "2.17.0"
+# Do not bump these to "latest" without re-checking that repo.
+
+[dependencies]
+starknet = "2.17.0"
+
+[dev-dependencies]
+assert_macros = "2.17.0"
+snforge_std = "0.63.0"
+
+[lib]
+
+[scripts]
+test = "snforge test"
+
+[tool.scarb]
+allow-prebuilt-plugins = ["snforge_std"]
+
+[tool.fmt]
+sort-module-level-items = true
