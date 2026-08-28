@@ -11,6 +11,7 @@ use core::poseidon::poseidon_hash_span;
 pub const INVITE_DOMAIN_TAG: felt252 = 'IWA_INVITE_V1';
 pub const CONTRIBUTION_AUTH_DOMAIN_TAG: felt252 = 'IWA_CONTRIBUTION_V1';
 pub const CURE_AUTH_DOMAIN_TAG: felt252 = 'IWA_CURE_V1';
+pub const PAYOUT_AUTH_DOMAIN_TAG: felt252 = 'IWA_PAYOUT_V1';
 
 pub fn invite_commitment(secret: felt252) -> felt252 {
     poseidon_hash_span(array![INVITE_DOMAIN_TAG, secret].span())
@@ -116,6 +117,50 @@ pub fn verify_cure_authorization(
     )
 }
 
+/// Domain-separated authorization of one exact, already-accounted payout.
+/// This authorizes later settlement; it does not attest token movement.
+pub fn payout_authorization_hash(
+    circle_id: u32, round: u32, member_ref: felt252, amount: u128, nonce: felt252,
+) -> felt252 {
+    poseidon_hash_span(
+        array![
+            PAYOUT_AUTH_DOMAIN_TAG, circle_id.into(), round.into(), member_ref, amount.into(),
+            nonce,
+        ]
+            .span(),
+    )
+}
+
+pub fn verify_payout_authorization(
+    public_key: felt252,
+    circle_id: u32,
+    round: u32,
+    member_ref: felt252,
+    amount: u128,
+    nonce: felt252,
+    signature_r: felt252,
+    signature_s: felt252,
+) -> bool {
+    const ORDER_U256: u256 = stark_curve::ORDER.into();
+    let r: u256 = signature_r.into();
+    let s: u256 = signature_s.into();
+    if !is_valid_auth_public_key(public_key)
+        || signature_r == 0
+        || signature_s == 0
+        || r >= ORDER_U256
+        || s >= ORDER_U256
+        || s > ORDER_U256
+        / 2 {
+        return false;
+    }
+    check_ecdsa_signature(
+        payout_authorization_hash(circle_id, round, member_ref, amount, nonce),
+        public_key,
+        signature_r,
+        signature_s,
+    )
+}
+
 /// Reliability classification of a contribution obligation (INV-018).
 /// No default variant: uninitialized storage must not become a valid status.
 #[allow(starknet::store_no_default_variant)]
@@ -136,6 +181,9 @@ pub enum CircleStatus {
     OpenForMembers,
     Active,
     PausedForNewActions,
+    /// Terminal accounting requirements are fixed, but real value movement
+    /// remains outstanding. Only Task 8 may reach financial completion.
+    SettlementPending,
     Completed,
 }
 
@@ -158,6 +206,12 @@ pub enum PayoutStatus {
     Scheduled,
     /// Preserved for the scheduled member while their deficit is unresolved.
     DeferredLocked,
+    /// The scheduled member authorized exact settlement accounting. Tokens
+    /// have not moved.
+    SettlementAuthorized,
+    /// Final deterministic recovery accounting exists for the same rightful
+    /// member and amount. Tokens have not moved.
+    RecoveryPending,
     Paid,
     Recovered,
 }
@@ -262,6 +316,8 @@ pub struct PayoutState {
     pub circle_id: u32,
     pub round: u32,
     pub scheduled_member_ref: felt252,
+    /// Locked rotating-pot amount. This is accounting, not a transfer claim.
+    pub amount: u128,
     pub status: PayoutStatus,
 }
 

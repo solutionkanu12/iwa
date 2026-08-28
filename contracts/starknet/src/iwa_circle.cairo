@@ -1,6 +1,6 @@
 // IwaCircle — circle, contribution, cure, and payout accounting.
 // Accounting state does not assert token settlement. No token calls,
-// payout execution, pause, final recovery, or STRK20 helper are implemented.
+// financial completion, pause, or STRK20 helper are implemented.
 
 use starknet::ContractAddress;
 use super::iwa_types::{
@@ -91,6 +91,23 @@ pub trait IIwaCircle<TContractState> {
     fn finalize_round_payout_accounting(
         ref self: TContractState, circle_id: u32, round: u32,
     ) -> PayoutState;
+    fn is_payout_nonce_consumed(
+        self: @TContractState, circle_id: u32, member_ref: felt252, nonce: felt252,
+    ) -> bool;
+    /// Records the scheduled member's authorization of exact payout
+    /// settlement accounting. No token movement is asserted.
+    fn authorize_payout_settlement(
+        ref self: TContractState,
+        circle_id: u32,
+        round: u32,
+        nonce: felt252,
+        signature_r: felt252,
+        signature_s: felt252,
+    ) -> PayoutState;
+    fn is_final_settlement_prepared(self: @TContractState, circle_id: u32) -> bool;
+    /// Fixes terminal settlement/recovery accounting and closes cure windows.
+    /// The circle remains short of financial completion until Task 8.
+    fn prepare_final_settlement(ref self: TContractState, circle_id: u32);
 }
 
 #[starknet::contract]
@@ -104,12 +121,13 @@ pub mod IwaCircle {
     use super::super::iwa_errors;
     use super::super::iwa_events::{
         CircleActivated, CircleCreated, ContributionStateUpdated, CureAccountingSettled,
-        MemberJoined, PayoutAccountingPrepared,
+        FinalSettlementPrepared, MemberJoined, PayoutAccountingPrepared, PayoutSettlementAuthorized,
     };
     use super::super::iwa_types::{
         CircleStatus, ContributionObligation, ContributionStatus, CureConfig, CureState,
         PayoutState, PayoutStatus, SupportedAsset, invite_commitment, is_valid_auth_public_key,
         locked_cure_config, verify_contribution_authorization, verify_cure_authorization,
+        verify_payout_authorization,
     };
     use super::{CircleView, IIwaCircle};
 
@@ -148,6 +166,8 @@ pub mod IwaCircle {
         cure_windows_closed: Map<(u32, u32, felt252), bool>,
         payout_exists: Map<(u32, u32), bool>,
         payout_states: Map<(u32, u32), PayoutState>,
+        payout_nonces: Map<(u32, felt252, felt252), bool>,
+        final_settlement_prepared: Map<u32, bool>,
     }
 
     #[event]
@@ -159,6 +179,8 @@ pub mod IwaCircle {
         ContributionStateUpdated: ContributionStateUpdated,
         CureAccountingSettled: CureAccountingSettled,
         PayoutAccountingPrepared: PayoutAccountingPrepared,
+        PayoutSettlementAuthorized: PayoutSettlementAuthorized,
+        FinalSettlementPrepared: FinalSettlementPrepared,
     }
 
     #[constructor]
@@ -517,8 +539,13 @@ pub mod IwaCircle {
             } else {
                 PayoutStatus::Scheduled
             };
+            let member_count: u128 = record.member_limit.into();
             let payout = PayoutState {
-                circle_id, round, scheduled_member_ref, status: payout_status,
+                circle_id,
+                round,
+                scheduled_member_ref,
+                amount: record.contribution_amount * member_count,
+                status: payout_status,
             };
 
             // Persist the independent claim before advancing. Revert
@@ -538,6 +565,131 @@ pub mod IwaCircle {
                 self.circles.write(circle_id, record);
             }
             payout
+        }
+
+        fn is_payout_nonce_consumed(
+            self: @ContractState, circle_id: u32, member_ref: felt252, nonce: felt252,
+        ) -> bool {
+            self.assert_exists(circle_id);
+            self.payout_nonces.read((circle_id, member_ref, nonce))
+        }
+
+        fn authorize_payout_settlement(
+            ref self: ContractState,
+            circle_id: u32,
+            round: u32,
+            nonce: felt252,
+            signature_r: felt252,
+            signature_s: felt252,
+        ) -> PayoutState {
+            self.assert_exists(circle_id);
+            let payout_key = (circle_id, round);
+            assert(self.payout_exists.read(payout_key), iwa_errors::PAYOUT_LOCKED);
+            let mut payout = self.payout_states.read(payout_key);
+
+            let is_scheduled = payout.status == PayoutStatus::Scheduled;
+            let is_cured_deferred = payout.status == PayoutStatus::DeferredLocked
+                && self.cured_deficits.read((circle_id, round, payout.scheduled_member_ref));
+            assert(is_scheduled || is_cured_deferred, iwa_errors::PAYOUT_NOT_AUTHORIZABLE);
+
+            let nonce_key = (circle_id, payout.scheduled_member_ref, nonce);
+            assert(!self.payout_nonces.read(nonce_key), iwa_errors::PAYOUT_NONCE_USED);
+            let auth_key = self.member_auth_keys.read((circle_id, payout.scheduled_member_ref));
+            assert(
+                verify_payout_authorization(
+                    auth_key,
+                    circle_id,
+                    round,
+                    payout.scheduled_member_ref,
+                    payout.amount,
+                    nonce,
+                    signature_r,
+                    signature_s,
+                ),
+                iwa_errors::INVALID_SIGNATURE,
+            );
+
+            // Every eligibility and signature check precedes both writes.
+            // Starknet revert atomicity prevents partial nonce/state commits.
+            payout.status = PayoutStatus::SettlementAuthorized;
+            self.payout_states.write(payout_key, payout);
+            self.payout_nonces.write(nonce_key, true);
+            self
+                .emit(
+                    PayoutSettlementAuthorized {
+                        circle_id, round, scheduled_member_ref: payout.scheduled_member_ref,
+                    },
+                );
+            payout
+        }
+
+        fn is_final_settlement_prepared(self: @ContractState, circle_id: u32) -> bool {
+            self.assert_exists(circle_id);
+            self.final_settlement_prepared.read(circle_id)
+        }
+
+        fn prepare_final_settlement(ref self: ContractState, circle_id: u32) {
+            let mut record = self.read_record(circle_id);
+            assert(
+                !self.final_settlement_prepared.read(circle_id), iwa_errors::FINAL_ALREADY_PREPARED,
+            );
+            assert(record.status == CircleStatus::Active, iwa_errors::FINAL_NOT_READY);
+            let final_round: u32 = record.member_limit.into();
+            assert(self.payout_exists.read((circle_id, final_round)), iwa_errors::FINAL_NOT_READY);
+
+            // Preflight every payout before any write. Scheduled payouts and
+            // cured deferred payouts remain rightful authorization claims and
+            // cannot be silently converted to recovery or discarded.
+            let mut round: u32 = 1;
+            while round <= final_round {
+                let payout = self.payout_states.read((circle_id, round));
+                if payout.status == PayoutStatus::Scheduled {
+                    core::panic_with_felt252(iwa_errors::FINAL_NOT_READY);
+                }
+                if payout.status == PayoutStatus::DeferredLocked {
+                    assert(
+                        !self.cured_deficits.read((circle_id, round, payout.scheduled_member_ref)),
+                        iwa_errors::FINAL_NOT_READY,
+                    );
+                } else {
+                    assert(
+                        payout.status == PayoutStatus::SettlementAuthorized,
+                        iwa_errors::FINAL_NOT_READY,
+                    );
+                }
+                round += 1;
+            }
+
+            // All terminal requirements are now deterministic. Uncured
+            // deferred entitlements retain their original recipient/amount.
+            round = 1;
+            while round <= final_round {
+                let payout_key = (circle_id, round);
+                let mut payout = self.payout_states.read(payout_key);
+                if payout.status == PayoutStatus::DeferredLocked {
+                    payout.status = PayoutStatus::RecoveryPending;
+                    self.payout_states.write(payout_key, payout);
+                }
+
+                let mut slot: u8 = 0;
+                while slot < record.member_limit {
+                    let member_ref = self.payout_order.read((circle_id, slot));
+                    let obligation_key = (circle_id, round, member_ref);
+                    if self
+                        .obligations
+                        .read(obligation_key)
+                        .status == ContributionStatus::MissedDefault {
+                        self.cure_windows_closed.write(obligation_key, true);
+                    }
+                    slot += 1;
+                }
+                round += 1;
+            }
+
+            record.status = CircleStatus::SettlementPending;
+            self.circles.write(circle_id, record);
+            self.final_settlement_prepared.write(circle_id, true);
+            self.emit(FinalSettlementPrepared { circle_id });
         }
     }
 

@@ -73,6 +73,22 @@ pub struct PayoutAccountingPrepared {
     pub status: PayoutStatus,
 }
 
+/// Member-authorized settlement accounting only; no token settlement.
+#[derive(Drop, starknet::Event)]
+pub struct PayoutSettlementAuthorized {
+    #[key]
+    pub circle_id: u32,
+    pub round: u32,
+    pub scheduled_member_ref: felt252,
+}
+
+/// Terminal settlement/recovery requirements are fixed. Tokens have not moved.
+#[derive(Drop, starknet::Event)]
+pub struct FinalSettlementPrepared {
+    #[key]
+    pub circle_id: u32,
+}
+
 #[derive(Drop, starknet::Event)]
 pub struct CirclePaused {
     #[key]

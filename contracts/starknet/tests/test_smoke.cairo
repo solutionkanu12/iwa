@@ -51,6 +51,7 @@ fn domain_structs_use_commitments_not_addresses() {
         circle_id: 1,
         round: 1,
         scheduled_member_ref: member.member_ref,
+        amount: 30_000_000,
         status: PayoutStatus::DeferredLocked,
     };
 
@@ -76,4 +77,3 @@ fn circle_created_event_payload_compiles() {
     assert(event.circle_id == 0, 'id');
     assert(event.asset == SupportedAsset::Strk, 'asset');
 }
-

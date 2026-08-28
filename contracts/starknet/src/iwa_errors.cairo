@@ -30,3 +30,7 @@ pub const ALREADY_CURED: felt252 = 'IWA: already cured';
 pub const CURE_WINDOW_CLOSED: felt252 = 'IWA: cure window closed';
 pub const ROUND_NOT_READY: felt252 = 'IWA: round not ready';
 pub const PAYOUT_ALREADY_PREPARED: felt252 = 'IWA: payout already prepared';
+pub const PAYOUT_NONCE_USED: felt252 = 'IWA: payout nonce used';
+pub const PAYOUT_NOT_AUTHORIZABLE: felt252 = 'IWA: payout not ready';
+pub const FINAL_NOT_READY: felt252 = 'IWA: final not ready';
+pub const FINAL_ALREADY_PREPARED: felt252 = 'IWA: final already prepared';
