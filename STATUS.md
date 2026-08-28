@@ -2,12 +2,14 @@
 
 ## Current phase
 
-**Phase 3 — IwaCircle fixed payout order (Task 6C complete)**
+**Phase 3 — member authorization foundation (Task 6D-A complete)**
 
 Circles can be created and joined by proving an off-chain invite secret
 against Poseidon commitments stored in the locked payout order.
 The payout order is written only during circle creation and has no callable
 mutation path after creation. Joins and activation leave it unchanged.
+Joined members now register an immutable IWA-specific Stark-curve public key
+for later obligation-scoped contribution authorization.
 Contributions, payout execution, pause, cure execution, and STRK20
 `privacy_invoke` are not implemented.
 
@@ -558,7 +560,9 @@ No Starknet-specific types inside the core.
 ### Phase 3 — Cairo IWA circle contracts
 
 Task 5 complete (workspace). Task 6A complete (creation). Task 6B complete
-(membership). Task 6C complete (fixed payout-order immutability). Next is 6D.
+(membership). Task 6C complete (fixed payout-order immutability). Task 6D-A
+complete (member authorization foundation). Next is Task 6D contribution
+obligations and atomic nonce consumption.
 
 Build and verify:
 
@@ -845,11 +849,58 @@ What was not done (out of 6C scope):
 - no STRK20 helper or `privacy_invoke`
 - not committed, not pushed
 
+Task 6D-A complete (TDD): privacy-preserving member authorization foundation.
+
+Created:
+
+- `contracts/starknet/tests/test_member_authorization.cairo`
+
+Updated:
+
+- `contracts/starknet/src/iwa_circle.cairo` — join-time immutable auth-key
+  registration and read-only lookup
+- `contracts/starknet/src/iwa_types.cairo` — domain-separated contribution
+  authorization hash and canonical Stark-curve signature verification
+- `contracts/starknet/src/iwa_errors.cairo` — invalid auth-key error
+- membership and payout-order regression tests for the extended join ABI
+- `ARCHITECTURE.md`, `SECURITY.md`, and `docs/domain/IWA_INVARIANTS.md` — locked
+  member authorization and Task 6D/Task 8 binding rules
+
+Verified model:
+
+- join still requires the invite preimage and also registers a structurally
+  valid Stark-curve authentication public key
+- the auth key is independent of `get_caller_address()` and is immutable
+- no private auth key or invite secret is stored or emitted
+- contribution authorization hashes bind `IWA_CONTRIBUTION_V1`, circle, round,
+  member ref, exact amount, and nonce
+- verification uses Cairo 2.18.0 corelib `check_ecdsa_signature` with explicit
+  Stark-curve range and canonical low-`s` checks
+- Task 6D must atomically consume the signed nonce with the obligation
+  transition; Task 8 must bind that transition to the pool-only helper call
+
+What passed (WSL Ubuntu):
+
+- `scarb fmt --check` — exit 0
+- `scarb build` — exit 0
+- `snforge test test_member_authorization` — 16 passed, 0 failed
+- `snforge test` — 58 passed, 0 failed
+- no `iwa-web/` changes
+- no legacy deletions
+
+Still intentionally absent:
+
+- contribution obligations/state transitions and nonce consumption
+- ERC-20 or STRK20 token movement
+- `privacy_invoke`, payouts, cure execution, and pause
+- not committed, not pushed
+
 ## Immediate next work
 
 1. Do not delete legacy code.
-2. Start Task 6D with failing tests for one contribution obligation per
-   required member/round, wrong-round rejection, duplicate-satisfaction
+2. Resume Task 6D with failing tests for one contribution obligation per
+   required member/round, signature verification against the registered key,
+   atomic nonce consumption, wrong-round rejection, duplicate-satisfaction
    rejection, unsupported-asset rejection, and the valid state transition.
 3. Do not implement grace/default behavior, payouts, or STRK20
    `privacy_invoke` as part of 6D.
@@ -875,7 +926,7 @@ August 28, 2026
 
 Current state:
 
-**Phase 3 Task 6C complete. Payout-order immutability is verified without a
-contract change. Next: Task 6D — contribution obligations, beginning with
-failing tests for uniqueness, round and asset validation, and the valid state
-transition.**
+**Phase 3 Task 6D-A complete. Members register immutable IWA-specific
+Stark-curve authentication keys and sign domain-separated, obligation-scoped
+authorizations. Next: Task 6D — contribution obligations with atomic signature
+verification and nonce consumption; no token movement yet.**

@@ -2,6 +2,7 @@ use core::poseidon::poseidon_hash_span;
 use core::serde::Serde;
 use iwa::iwa_circle::{IIwaCircleDispatcher, IIwaCircleDispatcherTrait};
 use iwa::iwa_types::{CircleStatus, INVITE_DOMAIN_TAG, invite_commitment};
+use snforge_std::signature::stark_curve::StarkCurveKeyPairImpl;
 use snforge_std::{ContractClassTrait, DeclareResultTrait, declare, start_cheat_caller_address};
 use starknet::ContractAddress;
 
@@ -19,6 +20,10 @@ fn strk() -> ContractAddress {
 
 fn organizer() -> ContractAddress {
     0xabc.try_into().unwrap()
+}
+
+fn auth_key(secret_key: felt252) -> felt252 {
+    StarkCurveKeyPairImpl::from_secret_key(secret_key).public_key
 }
 
 fn deploy() -> IIwaCircleDispatcher {
@@ -40,9 +45,9 @@ fn open_circle(dispatcher: IIwaCircleDispatcher) -> u32 {
 }
 
 fn join_all(dispatcher: IIwaCircleDispatcher, id: u32) {
-    dispatcher.join_circle(id, SECRET_1);
-    dispatcher.join_circle(id, SECRET_2);
-    dispatcher.join_circle(id, SECRET_3);
+    dispatcher.join_circle(id, SECRET_1, auth_key(0x101));
+    dispatcher.join_circle(id, SECRET_2, auth_key(0x102));
+    dispatcher.join_circle(id, SECRET_3, auth_key(0x103));
 }
 
 #[test]
@@ -50,7 +55,7 @@ fn valid_invite_secret_joins() {
     let dispatcher = deploy();
     let id = open_circle(dispatcher);
     let commitment = invite_commitment(SECRET_2);
-    let slot = dispatcher.join_circle(id, SECRET_2);
+    let slot = dispatcher.join_circle(id, SECRET_2, auth_key(0x102));
     assert(slot == 1, 'slot is payout-order index');
     assert(dispatcher.is_member(id, commitment), 'joined as commitment');
     assert(!dispatcher.is_member(id, invite_commitment(SECRET_1)), 's1 not yet joined');
@@ -70,8 +75,8 @@ fn invite_commitment_is_domain_separated() {
 fn joined_count_increments_exactly_once_per_invite() {
     let dispatcher = deploy();
     let id = open_circle(dispatcher);
-    dispatcher.join_circle(id, SECRET_1);
-    dispatcher.join_circle(id, SECRET_3);
+    dispatcher.join_circle(id, SECRET_1, auth_key(0x101));
+    dispatcher.join_circle(id, SECRET_3, auth_key(0x103));
     assert(dispatcher.get_circle(id).joined_count == 2, 'count 2');
 }
 
@@ -80,7 +85,7 @@ fn payout_order_unchanged_after_join_and_never_stores_secret() {
     let dispatcher = deploy();
     let id = open_circle(dispatcher);
     let before: Array<felt252> = dispatcher.get_payout_order(id);
-    dispatcher.join_circle(id, SECRET_1);
+    dispatcher.join_circle(id, SECRET_1, auth_key(0x101));
     let after: Array<felt252> = dispatcher.get_payout_order(id);
     assert(*before.at(0) == invite_commitment(SECRET_1), 'stores commitment');
     assert(*before.at(0) != SECRET_1, 'secret not stored');
@@ -94,10 +99,10 @@ fn payout_order_unchanged_after_join_and_never_stores_secret() {
 fn all_required_valid_invite_claims_activate_the_circle() {
     let dispatcher = deploy();
     let id = open_circle(dispatcher);
-    dispatcher.join_circle(id, SECRET_1);
-    dispatcher.join_circle(id, SECRET_2);
+    dispatcher.join_circle(id, SECRET_1, auth_key(0x101));
+    dispatcher.join_circle(id, SECRET_2, auth_key(0x102));
     assert(dispatcher.get_circle(id).status == CircleStatus::OpenForMembers, 'not yet');
-    dispatcher.join_circle(id, SECRET_3);
+    dispatcher.join_circle(id, SECRET_3, auth_key(0x103));
     let circle = dispatcher.get_circle(id);
     assert(circle.status == CircleStatus::Active, 'active');
     assert(circle.joined_count == 3, 'full');
@@ -108,7 +113,7 @@ fn all_required_valid_invite_claims_activate_the_circle() {
 fn wrong_secret_fails() {
     let dispatcher = deploy();
     let id = open_circle(dispatcher);
-    dispatcher.join_circle(id, 'wrong-secret');
+    dispatcher.join_circle(id, 'wrong-secret', auth_key(0x104));
 }
 
 #[test]
@@ -117,7 +122,7 @@ fn stored_commitment_cannot_claim_the_slot() {
     let dispatcher = deploy();
     let id = open_circle(dispatcher);
     let commitment = invite_commitment(SECRET_1);
-    dispatcher.join_circle(id, commitment);
+    dispatcher.join_circle(id, commitment, auth_key(0x101));
 }
 
 #[test]
@@ -125,8 +130,8 @@ fn stored_commitment_cannot_claim_the_slot() {
 fn duplicate_secret_use_fails() {
     let dispatcher = deploy();
     let id = open_circle(dispatcher);
-    dispatcher.join_circle(id, SECRET_1);
-    dispatcher.join_circle(id, SECRET_1);
+    dispatcher.join_circle(id, SECRET_1, auth_key(0x101));
+    dispatcher.join_circle(id, SECRET_1, auth_key(0x102));
 }
 
 #[test]
@@ -135,7 +140,7 @@ fn join_after_active_fails() {
     let dispatcher = deploy();
     let id = open_circle(dispatcher);
     join_all(dispatcher, id);
-    dispatcher.join_circle(id, SECRET_1);
+    dispatcher.join_circle(id, SECRET_1, auth_key(0x101));
 }
 
 #[test]
@@ -144,7 +149,7 @@ fn member_limit_cannot_be_exceeded() {
     let dispatcher = deploy();
     let id = open_circle(dispatcher);
     join_all(dispatcher, id);
-    dispatcher.join_circle(id, 'secret-4');
+    dispatcher.join_circle(id, 'secret-4', auth_key(0x104));
 }
 
 #[test]
@@ -153,7 +158,7 @@ fn organizer_cannot_bypass_invite_proof() {
     let dispatcher = deploy();
     start_cheat_caller_address(dispatcher.contract_address, organizer());
     let id = open_circle(dispatcher);
-    dispatcher.join_circle(id, 'organizer-pick');
+    dispatcher.join_circle(id, 'organizer-pick', auth_key(0x104));
 }
 
 #[test]
@@ -161,7 +166,7 @@ fn organizer_valid_secret_does_not_reorder_or_bind_caller() {
     let dispatcher = deploy();
     start_cheat_caller_address(dispatcher.contract_address, organizer());
     let id = open_circle(dispatcher);
-    dispatcher.join_circle(id, SECRET_1);
+    dispatcher.join_circle(id, SECRET_1, auth_key(0x101));
     let order: Array<felt252> = dispatcher.get_payout_order(id);
     assert(*order.at(0) == invite_commitment(SECRET_1), 'order intact');
     assert(*order.at(1) == invite_commitment(SECRET_2), 'no replacement');

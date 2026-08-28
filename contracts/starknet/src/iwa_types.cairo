@@ -2,14 +2,71 @@
 // Identities are felt252 commitments (INV-013), never ContractAddress.
 // Token addresses stay in chain config; the domain allowlist is this enum.
 
+use core::ec::{EcPointTrait, stark_curve};
+use core::ecdsa::check_ecdsa_signature;
 use core::poseidon::poseidon_hash_span;
 
 /// Domain-separated invite commitment. Off-chain invite secrets never appear
 /// in storage or events. Join proves possession of the preimage.
 pub const INVITE_DOMAIN_TAG: felt252 = 'IWA_INVITE_V1';
+pub const CONTRIBUTION_AUTH_DOMAIN_TAG: felt252 = 'IWA_CONTRIBUTION_V1';
 
 pub fn invite_commitment(secret: felt252) -> felt252 {
     poseidon_hash_span(array![INVITE_DOMAIN_TAG, secret].span())
+}
+
+/// A member authentication key is an x-coordinate on the Stark curve. It is
+/// independent of any Starknet account and is registered once during join.
+pub fn is_valid_auth_public_key(public_key: felt252) -> bool {
+    public_key != 0 && EcPointTrait::new_nz_from_x(public_key).is_some()
+}
+
+/// Domain-separated authorization for one exact contribution obligation.
+/// The nonce is consumed by the contribution/helper state transition in 6D;
+/// this task only defines and verifies the signed message.
+pub fn contribution_authorization_hash(
+    circle_id: u32, round: u32, member_ref: felt252, amount: u128, nonce: felt252,
+) -> felt252 {
+    poseidon_hash_span(
+        array![
+            CONTRIBUTION_AUTH_DOMAIN_TAG, circle_id.into(), round.into(), member_ref, amount.into(),
+            nonce,
+        ]
+            .span(),
+    )
+}
+
+/// Verifies a canonical Stark-curve ECDSA signature using Cairo corelib.
+/// Explicit range and low-s checks close the malleability cases documented by
+/// `core::ecdsa::check_ecdsa_signature`.
+pub fn verify_contribution_authorization(
+    public_key: felt252,
+    circle_id: u32,
+    round: u32,
+    member_ref: felt252,
+    amount: u128,
+    nonce: felt252,
+    signature_r: felt252,
+    signature_s: felt252,
+) -> bool {
+    const ORDER_U256: u256 = stark_curve::ORDER.into();
+    let r: u256 = signature_r.into();
+    let s: u256 = signature_s.into();
+    if !is_valid_auth_public_key(public_key)
+        || signature_r == 0
+        || signature_s == 0
+        || r >= ORDER_U256
+        || s >= ORDER_U256
+        || s > ORDER_U256
+        / 2 {
+        return false;
+    }
+    check_ecdsa_signature(
+        contribution_authorization_hash(circle_id, round, member_ref, amount, nonce),
+        public_key,
+        signature_r,
+        signature_s,
+    )
 }
 
 /// Reliability classification of a contribution obligation (INV-018).

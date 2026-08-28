@@ -16,3 +16,4 @@ pub const PAUSED: felt252 = 'IWA: paused';
 pub const UNAUTHORIZED: felt252 = 'IWA: unauthorized';
 pub const JOIN_CLOSED: felt252 = 'IWA: join closed';
 pub const HISTORY_IMMUTABLE: felt252 = 'IWA: history immutable';
+pub const INVALID_AUTH_KEY: felt252 = 'IWA: invalid auth key';

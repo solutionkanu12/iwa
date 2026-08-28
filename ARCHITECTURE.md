@@ -308,6 +308,32 @@ Joining is controlled by:
 
 Membership rules must not allow arbitrary public users to join an existing trusted circle unless that circle explicitly supports such a future mode.
 
+### Member authorization
+
+Each joined member registers one IWA-specific Stark-curve authentication
+public key while proving possession of the invite secret. The corresponding
+private key stays with the member and is never submitted, stored, or emitted.
+The authentication key is not a Starknet account address and creates no
+required on-chain link to the member's public wallet.
+
+Contribution authorization is a canonical Stark-curve ECDSA signature over a
+Poseidon hash of:
+
+```text
+IWA_CONTRIBUTION_V1
+circle_id
+round
+member_ref
+amount
+nonce
+```
+
+The registered key is immutable. Task 6D must verify the signature against the
+member's registered key and atomically consume the nonce for the exact
+obligation tuple. Task 8 must bind that same verified transition to the
+pool-authorized STRK20 helper call; pool caller authorization alone is not
+member authorization.
+
 ## Payout rotation
 
 Payout order is determined before active contributions begin.

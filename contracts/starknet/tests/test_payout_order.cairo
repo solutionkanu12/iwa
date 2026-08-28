@@ -1,6 +1,7 @@
 use core::serde::Serde;
 use iwa::iwa_circle::{IIwaCircleDispatcher, IIwaCircleDispatcherTrait};
 use iwa::iwa_types::{CircleStatus, invite_commitment};
+use snforge_std::signature::stark_curve::StarkCurveKeyPairImpl;
 use snforge_std::{ContractClassTrait, DeclareResultTrait, declare, start_cheat_caller_address};
 use starknet::ContractAddress;
 use starknet::syscalls::call_contract_syscall;
@@ -23,6 +24,10 @@ fn organizer() -> ContractAddress {
 
 fn member_caller() -> ContractAddress {
     0xdef.try_into().unwrap()
+}
+
+fn auth_key(secret_key: felt252) -> felt252 {
+    StarkCurveKeyPairImpl::from_secret_key(secret_key).public_key
 }
 
 fn deploy() -> IIwaCircleDispatcher {
@@ -79,7 +84,7 @@ fn payout_order_unchanged_after_one_join() {
     let dispatcher = deploy();
     let expected = invite_order();
     let id = open_circle(dispatcher);
-    dispatcher.join_circle(id, SECRET_2);
+    dispatcher.join_circle(id, SECRET_2, auth_key(0x102));
     assert(dispatcher.get_circle(id).status == CircleStatus::OpenForMembers, 'still open');
     let stored: Array<felt252> = dispatcher.get_payout_order(id);
     assert_same_order(@stored, @expected);
@@ -90,9 +95,9 @@ fn payout_order_unchanged_after_activation() {
     let dispatcher = deploy();
     let expected = invite_order();
     let id = open_circle(dispatcher);
-    dispatcher.join_circle(id, SECRET_1);
-    dispatcher.join_circle(id, SECRET_2);
-    dispatcher.join_circle(id, SECRET_3);
+    dispatcher.join_circle(id, SECRET_1, auth_key(0x101));
+    dispatcher.join_circle(id, SECRET_2, auth_key(0x102));
+    dispatcher.join_circle(id, SECRET_3, auth_key(0x103));
     assert(dispatcher.get_circle(id).status == CircleStatus::Active, 'active');
     let stored: Array<felt252> = dispatcher.get_payout_order(id);
     assert_same_order(@stored, @expected);
@@ -163,7 +168,7 @@ fn no_callable_path_mutates_payout_order_after_creation() {
     let dispatcher = deploy();
     let expected = invite_order();
     let id = open_circle(dispatcher);
-    dispatcher.join_circle(id, SECRET_1);
+    dispatcher.join_circle(id, SECRET_1, auth_key(0x101));
 
     let mut calldata = array![];
     id.serialize(ref calldata);

@@ -308,6 +308,27 @@ Starknet implementation. The Starknet implementation does not exist yet.
   no-admin-release; final-settlement refund determinism and replay
   protection; `test_invariants.cairo`.
 
+## INV-021 — Contribution authorization is member-held and obligation-scoped
+
+- **Origin:** `NEW` (locked August 28, 2026 after the Task 6D authorization
+  security gate)
+- **Definition:** Every joined member has one immutable, IWA-specific
+  Stark-curve authentication public key that is not a Starknet account
+  address. A contribution authorization is valid only for the exact
+  domain-separated tuple `(IWA_CONTRIBUTION_V1, circle_id, round, member_ref,
+  amount, nonce)`. Changing any field invalidates it. The private key is never
+  submitted, stored, or emitted; the invite secret is never reused as a
+  contribution credential.
+- **Reason:** `member_ref` is public and invite secrets appear in public join
+  calldata, so neither proves member authorization for later obligations.
+- **Enforcement point:** join-time key registration in `IwaCircle`; signature
+  verification and atomic nonce consumption in Task 6D; pool-only helper
+  binding in Task 8.
+- **Verified test:** `test_member_authorization.cairo` covers key validity,
+  persistence, immutability, caller/admin non-replacement, payout-order
+  preservation, field/domain binding, valid signatures, and canonical
+  signature rejection. Nonce consumption remains Task 6D.
+
 ---
 
 ## Legacy invariants superseded or removed

@@ -158,6 +158,21 @@ must be enforced.
 
 Other privileged methods require similarly explicit role validation.
 
+### Member contribution authorization
+
+Public `member_ref` commitments and invite secrets observed in join calldata
+are not contribution credentials. Each member instead registers a separate
+IWA authentication public key during join and retains the private key.
+
+The key uses the Stark curve and Cairo corelib's established ECDSA verifier.
+IWA additionally enforces the verifier's documented `r`/`s` range requirements
+and canonical low-`s` form. No custom signature algorithm is implemented.
+
+The signed contribution authorization is domain-separated with
+`IWA_CONTRIBUTION_V1` and binds `circle_id`, `round`, `member_ref`, exact
+`amount`, and `nonce`. It is not bound to `get_caller_address()` and must not
+contain a wallet private key, viewing key, or invite secret.
+
 ## Asset allowlist
 
 First release:
@@ -278,6 +293,11 @@ nonce/nullifier/protocol identifier
 ```
 
 Exact mechanics must match STRK20's supported model.
+
+For IWA contributions, Task 6D must store nonce consumption atomically with
+the obligation transition. A valid signature without an unused, state-bound
+nonce is insufficient. Task 8 must call that transition only from the verified
+STRK20 helper route while preserving the same signature and nonce checks.
 
 ## External calls
 

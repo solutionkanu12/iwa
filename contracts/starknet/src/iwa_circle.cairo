@@ -1,4 +1,4 @@
-// IwaCircle — creation (6A) and invite-list membership (6B).
+// IwaCircle — creation, invite membership, and member authorization registration.
 // No contribution, payout, pause, cure execution, or STRK20 helper.
 
 use starknet::ContractAddress;
@@ -34,8 +34,11 @@ pub trait IIwaCircle<TContractState> {
     fn get_circle(self: @TContractState, circle_id: u32) -> CircleView;
     fn get_payout_order(self: @TContractState, circle_id: u32) -> Array<felt252>;
     fn get_cure_config(self: @TContractState, circle_id: u32) -> CureConfig;
-    fn join_circle(ref self: TContractState, circle_id: u32, invite_secret: felt252) -> u8;
+    fn join_circle(
+        ref self: TContractState, circle_id: u32, invite_secret: felt252, auth_public_key: felt252,
+    ) -> u8;
     fn is_member(self: @TContractState, circle_id: u32, member_ref: felt252) -> bool;
+    fn get_member_auth_key(self: @TContractState, circle_id: u32, member_ref: felt252) -> felt252;
 }
 
 #[starknet::contract]
@@ -49,7 +52,8 @@ pub mod IwaCircle {
     use super::super::iwa_errors;
     use super::super::iwa_events::{CircleActivated, CircleCreated, MemberJoined};
     use super::super::iwa_types::{
-        CircleStatus, CureConfig, SupportedAsset, invite_commitment, locked_cure_config,
+        CircleStatus, CureConfig, SupportedAsset, invite_commitment, is_valid_auth_public_key,
+        locked_cure_config,
     };
     use super::{CircleView, IIwaCircle};
 
@@ -79,6 +83,7 @@ pub mod IwaCircle {
         payout_order: Map<(u32, u8), felt252>,
         payout_order_len: Map<u32, u8>,
         joined: Map<(u32, felt252), bool>,
+        member_auth_keys: Map<(u32, felt252), felt252>,
     }
 
     #[event]
@@ -175,16 +180,23 @@ pub mod IwaCircle {
             self.read_record(circle_id).cure
         }
 
-        fn join_circle(ref self: ContractState, circle_id: u32, invite_secret: felt252) -> u8 {
+        fn join_circle(
+            ref self: ContractState,
+            circle_id: u32,
+            invite_secret: felt252,
+            auth_public_key: felt252,
+        ) -> u8 {
             let mut record = self.read_record(circle_id);
             assert(record.status == CircleStatus::OpenForMembers, iwa_errors::JOIN_CLOSED);
             assert(invite_secret != 0, iwa_errors::INVALID_CONFIG);
+            assert(is_valid_auth_public_key(auth_public_key), iwa_errors::INVALID_AUTH_KEY);
             let member_ref = invite_commitment(invite_secret);
             let slot = self.find_invite_slot(circle_id, member_ref);
             assert(!self.joined.read((circle_id, member_ref)), iwa_errors::ALREADY_MEMBER);
             assert(record.joined_count < record.member_limit, iwa_errors::CIRCLE_FULL);
 
             self.joined.write((circle_id, member_ref), true);
+            self.member_auth_keys.write((circle_id, member_ref), auth_public_key);
             record.joined_count += 1;
             let activating = record.joined_count == record.member_limit;
             if activating {
@@ -202,6 +214,14 @@ pub mod IwaCircle {
         fn is_member(self: @ContractState, circle_id: u32, member_ref: felt252) -> bool {
             self.assert_exists(circle_id);
             self.joined.read((circle_id, member_ref))
+        }
+
+        fn get_member_auth_key(
+            self: @ContractState, circle_id: u32, member_ref: felt252,
+        ) -> felt252 {
+            self.assert_exists(circle_id);
+            assert(self.joined.read((circle_id, member_ref)), iwa_errors::NOT_MEMBER);
+            self.member_auth_keys.read((circle_id, member_ref))
         }
     }
 
