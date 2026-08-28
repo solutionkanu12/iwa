@@ -153,7 +153,10 @@ pub enum SupportedAsset {
 #[allow(starknet::store_no_default_variant)]
 #[derive(Copy, Drop, Serde, PartialEq, starknet::Store)]
 pub enum PayoutStatus {
+    /// Accounting-ready for later authenticated token settlement. No funds
+    /// have moved merely because this state exists.
     Scheduled,
+    /// Preserved for the scheduled member while their deficit is unresolved.
     DeferredLocked,
     Paid,
     Recovered,

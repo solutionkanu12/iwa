@@ -63,6 +63,16 @@ pub struct PayoutUpdated {
     pub status: PayoutStatus,
 }
 
+/// Deterministic payout accounting only; no token settlement.
+#[derive(Drop, starknet::Event)]
+pub struct PayoutAccountingPrepared {
+    #[key]
+    pub circle_id: u32,
+    pub round: u32,
+    pub scheduled_member_ref: felt252,
+    pub status: PayoutStatus,
+}
+
 #[derive(Drop, starknet::Event)]
 pub struct CirclePaused {
     #[key]

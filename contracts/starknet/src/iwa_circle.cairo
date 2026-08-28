@@ -1,10 +1,11 @@
-// IwaCircle — circle, membership, and authenticated contribution accounting.
-// Contribution state does not assert token settlement. No token calls,
-// payout, pause, cure execution, or STRK20 helper are implemented here.
+// IwaCircle — circle, contribution, cure, and payout accounting.
+// Accounting state does not assert token settlement. No token calls,
+// payout execution, pause, final recovery, or STRK20 helper are implemented.
 
 use starknet::ContractAddress;
 use super::iwa_types::{
-    CircleStatus, ContributionObligation, ContributionStatus, CureConfig, CureState, SupportedAsset,
+    CircleStatus, ContributionObligation, ContributionStatus, CureConfig, CureState, PayoutState,
+    SupportedAsset,
 };
 
 #[derive(Copy, Drop, Serde)]
@@ -84,6 +85,12 @@ pub trait IIwaCircle<TContractState> {
         signature_r: felt252,
         signature_s: felt252,
     ) -> CureState;
+    fn get_payout_state(self: @TContractState, circle_id: u32, round: u32) -> PayoutState;
+    /// Stores one deterministic payout-accounting result for the current
+    /// ready round, then advances to the next round when one remains.
+    fn finalize_round_payout_accounting(
+        ref self: TContractState, circle_id: u32, round: u32,
+    ) -> PayoutState;
 }
 
 #[starknet::contract]
@@ -97,12 +104,12 @@ pub mod IwaCircle {
     use super::super::iwa_errors;
     use super::super::iwa_events::{
         CircleActivated, CircleCreated, ContributionStateUpdated, CureAccountingSettled,
-        MemberJoined,
+        MemberJoined, PayoutAccountingPrepared,
     };
     use super::super::iwa_types::{
         CircleStatus, ContributionObligation, ContributionStatus, CureConfig, CureState,
-        SupportedAsset, invite_commitment, is_valid_auth_public_key, locked_cure_config,
-        verify_contribution_authorization, verify_cure_authorization,
+        PayoutState, PayoutStatus, SupportedAsset, invite_commitment, is_valid_auth_public_key,
+        locked_cure_config, verify_contribution_authorization, verify_cure_authorization,
     };
     use super::{CircleView, IIwaCircle};
 
@@ -139,6 +146,8 @@ pub mod IwaCircle {
         cured_deficits: Map<(u32, u32, felt252), bool>,
         cure_nonces: Map<(u32, felt252, felt252), bool>,
         cure_windows_closed: Map<(u32, u32, felt252), bool>,
+        payout_exists: Map<(u32, u32), bool>,
+        payout_states: Map<(u32, u32), PayoutState>,
     }
 
     #[event]
@@ -149,6 +158,7 @@ pub mod IwaCircle {
         CircleActivated: CircleActivated,
         ContributionStateUpdated: ContributionStateUpdated,
         CureAccountingSettled: CureAccountingSettled,
+        PayoutAccountingPrepared: PayoutAccountingPrepared,
     }
 
     #[constructor]
@@ -460,6 +470,74 @@ pub mod IwaCircle {
                 deficit_settled: true,
                 window_open: true,
             }
+        }
+
+        fn get_payout_state(self: @ContractState, circle_id: u32, round: u32) -> PayoutState {
+            self.assert_exists(circle_id);
+            let key = (circle_id, round);
+            assert(self.payout_exists.read(key), iwa_errors::PAYOUT_LOCKED);
+            self.payout_states.read(key)
+        }
+
+        fn finalize_round_payout_accounting(
+            ref self: ContractState, circle_id: u32, round: u32,
+        ) -> PayoutState {
+            let mut record = self.read_record(circle_id);
+            let payout_key = (circle_id, round);
+            assert(!self.payout_exists.read(payout_key), iwa_errors::PAYOUT_ALREADY_PREPARED);
+            assert(record.status == CircleStatus::Active, iwa_errors::WRONG_ROUND);
+            assert(round == record.current_round, iwa_errors::WRONG_ROUND);
+
+            // The immutable payout order is both the required-member set and
+            // the sole recipient schedule. Every obligation must be final.
+            let mut slot: u8 = 0;
+            while slot < record.member_limit {
+                let member_ref = self.payout_order.read((circle_id, slot));
+                let obligation_key = (circle_id, round, member_ref);
+                assert(
+                    self.obligation_exists.read(obligation_key), iwa_errors::OBLIGATION_NOT_FOUND,
+                );
+                assert(
+                    self.obligations.read(obligation_key).status != ContributionStatus::Pending,
+                    iwa_errors::ROUND_NOT_READY,
+                );
+                slot += 1;
+            }
+
+            let recipient_slot: u8 = (round - 1).try_into().unwrap();
+            assert(recipient_slot < record.member_limit, iwa_errors::WRONG_ROUND);
+            let scheduled_member_ref = self.payout_order.read((circle_id, recipient_slot));
+            let recipient_key = (circle_id, round, scheduled_member_ref);
+            let recipient_obligation = self.obligations.read(recipient_key);
+            let unresolved_deficit = recipient_obligation
+                .status == ContributionStatus::MissedDefault
+                && !self.cured_deficits.read(recipient_key);
+            let payout_status = if unresolved_deficit {
+                PayoutStatus::DeferredLocked
+            } else {
+                PayoutStatus::Scheduled
+            };
+            let payout = PayoutState {
+                circle_id, round, scheduled_member_ref, status: payout_status,
+            };
+
+            // Persist the independent claim before advancing. Revert
+            // atomicity prevents either state from being committed alone.
+            self.payout_states.write(payout_key, payout);
+            self.payout_exists.write(payout_key, true);
+            self
+                .emit(
+                    PayoutAccountingPrepared {
+                        circle_id, round, scheduled_member_ref, status: payout_status,
+                    },
+                );
+
+            if round < record.member_limit.into() {
+                record.current_round += 1;
+                self.create_round_obligations(circle_id, record, get_block_timestamp());
+                self.circles.write(circle_id, record);
+            }
+            payout
         }
     }
 
