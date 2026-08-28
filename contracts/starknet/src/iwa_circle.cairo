@@ -4,7 +4,7 @@
 
 use starknet::ContractAddress;
 use super::iwa_types::{
-    CircleStatus, ContributionObligation, ContributionStatus, CureConfig, SupportedAsset,
+    CircleStatus, ContributionObligation, ContributionStatus, CureConfig, CureState, SupportedAsset,
 };
 
 #[derive(Copy, Drop, Serde)]
@@ -67,6 +67,23 @@ pub trait IIwaCircle<TContractState> {
     fn finalize_contribution_default(
         ref self: TContractState, circle_id: u32, round: u32, member_ref: felt252,
     ) -> ContributionStatus;
+    fn get_cure_state(
+        self: @TContractState, circle_id: u32, round: u32, member_ref: felt252,
+    ) -> CureState;
+    fn is_cure_nonce_consumed(
+        self: @TContractState, circle_id: u32, member_ref: felt252, nonce: felt252,
+    ) -> bool;
+    /// Records authenticated deficit settlement accounting only. No token
+    /// movement is asserted until Task 8 binds this transition to STRK20.
+    fn cure_default(
+        ref self: TContractState,
+        circle_id: u32,
+        round: u32,
+        member_ref: felt252,
+        nonce: felt252,
+        signature_r: felt252,
+        signature_s: felt252,
+    ) -> CureState;
 }
 
 #[starknet::contract]
@@ -79,12 +96,13 @@ pub mod IwaCircle {
     use starknet::{ContractAddress, get_block_timestamp, get_caller_address};
     use super::super::iwa_errors;
     use super::super::iwa_events::{
-        CircleActivated, CircleCreated, ContributionStateUpdated, MemberJoined,
+        CircleActivated, CircleCreated, ContributionStateUpdated, CureAccountingSettled,
+        MemberJoined,
     };
     use super::super::iwa_types::{
-        CircleStatus, ContributionObligation, ContributionStatus, CureConfig, SupportedAsset,
-        invite_commitment, is_valid_auth_public_key, locked_cure_config,
-        verify_contribution_authorization,
+        CircleStatus, ContributionObligation, ContributionStatus, CureConfig, CureState,
+        SupportedAsset, invite_commitment, is_valid_auth_public_key, locked_cure_config,
+        verify_contribution_authorization, verify_cure_authorization,
     };
     use super::{CircleView, IIwaCircle};
 
@@ -118,6 +136,9 @@ pub mod IwaCircle {
         obligation_exists: Map<(u32, u32, felt252), bool>,
         obligations: Map<(u32, u32, felt252), ContributionObligation>,
         contribution_nonces: Map<(u32, felt252, felt252), bool>,
+        cured_deficits: Map<(u32, u32, felt252), bool>,
+        cure_nonces: Map<(u32, felt252, felt252), bool>,
+        cure_windows_closed: Map<(u32, u32, felt252), bool>,
     }
 
     #[event]
@@ -127,6 +148,7 @@ pub mod IwaCircle {
         MemberJoined: MemberJoined,
         CircleActivated: CircleActivated,
         ContributionStateUpdated: ContributionStateUpdated,
+        CureAccountingSettled: CureAccountingSettled,
     }
 
     #[constructor]
@@ -359,6 +381,85 @@ pub mod IwaCircle {
                     },
                 );
             ContributionStatus::MissedDefault
+        }
+
+        fn get_cure_state(
+            self: @ContractState, circle_id: u32, round: u32, member_ref: felt252,
+        ) -> CureState {
+            self.assert_exists(circle_id);
+            let obligation_key = (circle_id, round, member_ref);
+            assert(self.obligation_exists.read(obligation_key), iwa_errors::OBLIGATION_NOT_FOUND);
+            let obligation = self.obligations.read(obligation_key);
+            CureState {
+                circle_id,
+                round,
+                member_ref,
+                deficit_amount: obligation.required_amount,
+                deficit_settled: self.cured_deficits.read(obligation_key),
+                window_open: !self.cure_windows_closed.read(obligation_key),
+            }
+        }
+
+        fn is_cure_nonce_consumed(
+            self: @ContractState, circle_id: u32, member_ref: felt252, nonce: felt252,
+        ) -> bool {
+            self.assert_exists(circle_id);
+            self.cure_nonces.read((circle_id, member_ref, nonce))
+        }
+
+        fn cure_default(
+            ref self: ContractState,
+            circle_id: u32,
+            round: u32,
+            member_ref: felt252,
+            nonce: felt252,
+            signature_r: felt252,
+            signature_s: felt252,
+        ) -> CureState {
+            self.assert_exists(circle_id);
+            let obligation_key = (circle_id, round, member_ref);
+            assert(self.obligation_exists.read(obligation_key), iwa_errors::OBLIGATION_NOT_FOUND);
+            let obligation = self.obligations.read(obligation_key);
+            assert(
+                obligation.status == ContributionStatus::MissedDefault,
+                iwa_errors::CURE_NOT_ELIGIBLE,
+            );
+            assert(self.joined.read((circle_id, member_ref)), iwa_errors::NOT_MEMBER);
+
+            let nonce_key = (circle_id, member_ref, nonce);
+            assert(!self.cure_nonces.read(nonce_key), iwa_errors::CURE_NONCE_USED);
+            assert(!self.cured_deficits.read(obligation_key), iwa_errors::ALREADY_CURED);
+            assert(!self.cure_windows_closed.read(obligation_key), iwa_errors::CURE_WINDOW_CLOSED);
+
+            let auth_key = self.member_auth_keys.read((circle_id, member_ref));
+            assert(
+                verify_cure_authorization(
+                    auth_key,
+                    circle_id,
+                    round,
+                    member_ref,
+                    obligation.required_amount,
+                    nonce,
+                    signature_r,
+                    signature_s,
+                ),
+                iwa_errors::INVALID_SIGNATURE,
+            );
+
+            // All eligibility, amount, window, replay, and signature checks
+            // precede both accounting writes. Reverts roll both back atomically.
+            self.cured_deficits.write(obligation_key, true);
+            self.cure_nonces.write(nonce_key, true);
+            self.emit(CureAccountingSettled { circle_id, round, member_ref });
+
+            CureState {
+                circle_id,
+                round,
+                member_ref,
+                deficit_amount: obligation.required_amount,
+                deficit_settled: true,
+                window_open: true,
+            }
         }
     }
 

@@ -10,6 +10,7 @@ use core::poseidon::poseidon_hash_span;
 /// in storage or events. Join proves possession of the preimage.
 pub const INVITE_DOMAIN_TAG: felt252 = 'IWA_INVITE_V1';
 pub const CONTRIBUTION_AUTH_DOMAIN_TAG: felt252 = 'IWA_CONTRIBUTION_V1';
+pub const CURE_AUTH_DOMAIN_TAG: felt252 = 'IWA_CURE_V1';
 
 pub fn invite_commitment(secret: felt252) -> felt252 {
     poseidon_hash_span(array![INVITE_DOMAIN_TAG, secret].span())
@@ -63,6 +64,52 @@ pub fn verify_contribution_authorization(
     }
     check_ecdsa_signature(
         contribution_authorization_hash(circle_id, round, member_ref, amount, nonce),
+        public_key,
+        signature_r,
+        signature_s,
+    )
+}
+
+/// Domain-separated authorization for settling the exact stored deficit of
+/// one historical MISSED_DEFAULT obligation. This does not attest token
+/// movement; Task 8 must bind it to verified STRK20 settlement.
+pub fn cure_authorization_hash(
+    circle_id: u32, round: u32, member_ref: felt252, amount: u128, nonce: felt252,
+) -> felt252 {
+    poseidon_hash_span(
+        array![
+            CURE_AUTH_DOMAIN_TAG, circle_id.into(), round.into(), member_ref, amount.into(), nonce,
+        ]
+            .span(),
+    )
+}
+
+/// Uses the same established Stark-curve verifier and canonical signature
+/// constraints as contribution authorization, under the distinct cure tag.
+pub fn verify_cure_authorization(
+    public_key: felt252,
+    circle_id: u32,
+    round: u32,
+    member_ref: felt252,
+    amount: u128,
+    nonce: felt252,
+    signature_r: felt252,
+    signature_s: felt252,
+) -> bool {
+    const ORDER_U256: u256 = stark_curve::ORDER.into();
+    let r: u256 = signature_r.into();
+    let s: u256 = signature_s.into();
+    if !is_valid_auth_public_key(public_key)
+        || signature_r == 0
+        || signature_s == 0
+        || r >= ORDER_U256
+        || s >= ORDER_U256
+        || s > ORDER_U256
+        / 2 {
+        return false;
+    }
+    check_ecdsa_signature(
+        cure_authorization_hash(circle_id, round, member_ref, amount, nonce),
         public_key,
         signature_r,
         signature_s,
@@ -190,6 +237,20 @@ pub struct ContributionObligation {
     pub due_at: u64,
     pub grace_ends_at: u64,
     pub status: ContributionStatus,
+}
+
+/// Financial-deficit accounting is separate from immutable contribution
+/// history. `deficit_settled` does not assert that tokens moved.
+#[derive(Copy, Drop, Serde, PartialEq)]
+pub struct CureState {
+    pub circle_id: u32,
+    pub round: u32,
+    pub member_ref: felt252,
+    pub deficit_amount: u128,
+    pub deficit_settled: bool,
+    /// Task 6F only observes this deterministic boundary. A later payout /
+    /// final-settlement slice may close it; no admin setter exists.
+    pub window_open: bool,
 }
 
 /// Deterministic payout state for a round.

@@ -38,6 +38,15 @@ pub struct ContributionStateUpdated {
     pub status: ContributionStatus,
 }
 
+/// Authenticated deficit-accounting transition only; no token settlement.
+#[derive(Drop, starknet::Event)]
+pub struct CureAccountingSettled {
+    #[key]
+    pub circle_id: u32,
+    pub round: u32,
+    pub member_ref: felt252,
+}
+
 #[derive(Drop, starknet::Event)]
 pub struct RoundFinalized {
     #[key]
