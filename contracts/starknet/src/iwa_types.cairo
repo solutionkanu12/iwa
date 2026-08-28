@@ -45,6 +45,53 @@ pub enum PayoutStatus {
     Recovered,
 }
 
+/// How a MISSED_DEFAULT obligation may be cured (locked August 28, 2026).
+/// Not caller-configurable; persisted on each circle so Task 6F does not
+/// change the domain model. Cure *execution* is not implemented in 6A.
+#[allow(starknet::store_no_default_variant)]
+#[derive(Copy, Drop, Serde, PartialEq, starknet::Store)]
+pub enum CureEligibility {
+    /// Only an unresolved contribution deficit for one circle + round +
+    /// obligation that is already MISSED_DEFAULT.
+    MissedDefaultObligation,
+}
+
+#[allow(starknet::store_no_default_variant)]
+#[derive(Copy, Drop, Serde, PartialEq, starknet::Store)]
+pub enum CureWindow {
+    /// Open until that member's deferred payout reaches final
+    /// settlement/recovery. No admin extension.
+    UntilFinalSettlement,
+}
+
+#[allow(starknet::store_no_default_variant)]
+#[derive(Copy, Drop, Serde, PartialEq, starknet::Store)]
+pub enum CureAmount {
+    /// Exact unresolved contribution deficit. No partial cure in MVP.
+    ExactDeficit,
+}
+
+#[derive(Copy, Drop, Serde, PartialEq, starknet::Store)]
+pub struct CureConfig {
+    pub eligibility: CureEligibility,
+    pub window: CureWindow,
+    pub amount: CureAmount,
+    /// Always false: a cure must not rewrite MISSED_DEFAULT (INV-004).
+    pub rewrite_history: bool,
+    /// Always false: admin cannot waive, resize, extend, erase, or release.
+    pub admin_discretion: bool,
+}
+
+pub fn locked_cure_config() -> CureConfig {
+    CureConfig {
+        eligibility: CureEligibility::MissedDefaultObligation,
+        window: CureWindow::UntilFinalSettlement,
+        amount: CureAmount::ExactDeficit,
+        rewrite_history: false,
+        admin_discretion: false,
+    }
+}
+
 /// Circle configuration agreed at creation. Payout order is stored separately
 /// as a locked sequence of member refs (Task 6).
 #[derive(Copy, Drop, Serde, PartialEq, starknet::Store)]

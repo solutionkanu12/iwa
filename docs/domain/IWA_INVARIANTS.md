@@ -356,14 +356,13 @@ Remaining:
 2. Whether `INV-015`'s recipient must be bound to a user-controlled
    destination or a deterministic internal state (legacy Option A binding is
    not inherited; see `LEGACY_BEHAVIOR.md` 2.4, U-04/U-08).
-3. Exact cure-rule parameters (what constitutes a cure for a
-   `MISSED_DEFAULT`, in what window, with what accounting effect) must be
-   specified before Cairo implementation; the lock defines the state machine,
-   not yet the cure parameter values.
+
+Resolved (August 28, 2026): cure-rule parameters are locked — see
+`ARCHITECTURE.md` "Deficit handling" and `CureConfig` in
+`contracts/starknet/src/iwa_types.cairo`. Execution remains Task 6F.
 
 ## Last updated
 
-August 27, 2026 — extraction task (plan Task 3, first pass), plus
-state-machine blocker lock (grace timing, deficit payout fallback). Status:
-defined from repository evidence; not yet verified against any Starknet
-implementation.
+August 28, 2026 — Task 6A locked cure-rule parameters on the circle
+configuration (`CureConfig`). Status: defined; cure *execution* is not yet
+implemented.

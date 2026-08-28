@@ -393,6 +393,25 @@ Locked decision (August 27, 2026):
   discretion); the exact recovery amount derives from verified state and the
   path is replay protected.
 
+Locked cure-rule parameters (August 28, 2026). Stored on each circle at
+creation as `CureConfig`; not caller-configurable; execution is Task 6F.
+
+1. Eligibility: a member in `MISSED_DEFAULT` may cure only the unresolved
+   contribution deficit for that specific circle + round + obligation.
+2. Window: a cure is allowed until that member's deferred payout reaches
+   final settlement/recovery. No admin extension. Contract timestamps/state
+   decide whether the window is still open.
+3. Amount: exactly the unresolved contribution deficit. No partial cure in
+   MVP. No admin-selected amount.
+4. Accounting: a successful cure settles that deficit, does **not** rewrite
+   `MISSED_DEFAULT` into `ON_TIME` or `LATE_WITHIN_GRACE`, preserves the
+   historical default for credentials, may unlock that member's previously
+   deferred payout if all required conditions are met, must not create or
+   destroy value, and must be replay protected.
+5. Admin cannot waive the deficit, change the cure amount, extend the window,
+   erase the default, or release a deferred payout without the deterministic
+   cure conditions.
+
 ## Reliability model
 
 IWA intentionally avoids one opaque universal score.

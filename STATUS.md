@@ -2,14 +2,14 @@
 
 ## Current phase
 
-**Phase 3 — Cairo workspace (Task 5 complete)**
+**Phase 3 — IwaCircle creation (Task 6A complete)**
 
-The Starknet Cairo/Scarb package exists at `contracts/starknet/`. Shared
-types, errors, and event payloads are defined. No circle state machine and
-no STRK20 helper have been implemented.
+`IwaCircle` can create configured private circles. Membership joins,
+contributions, payout execution, and STRK20 `privacy_invoke` are not
+implemented.
 
 No Stellar/Soroban or ZK code has been deleted. `iwa-web/` was not modified
-in Task 5.
+in Task 6A.
 
 ## STRK20 Private Sprint registration
 
@@ -554,7 +554,7 @@ No Starknet-specific types inside the core.
 
 ### Phase 3 — Cairo IWA circle contracts
 
-Task 5 complete (workspace + shared types). IwaCircle is Task 6.
+Task 5 complete (workspace). Task 6A complete (creation). Next is 6B.
 
 Build and verify:
 
@@ -721,15 +721,49 @@ What was not done (out of Task 5 scope):
 - no `privacy_invoke` helper
 - not committed, not pushed
 
-Next: plan Task 6 slice 6A — IwaCircle creation with TDD.
+Next after Task 5 was plan Task 6A (complete — see below).
+
+## IwaCircle creation (plan Task 6A)
+
+Task 6A complete (TDD).
+
+Created:
+
+- `contracts/starknet/src/iwa_circle.cairo` — create + views only
+- `contracts/starknet/tests/test_circle_creation.cairo`
+
+Updated:
+
+- `contracts/starknet/src/iwa_types.cairo` — `CureConfig` / eligibility /
+  window / amount (locked MVP rules, no cure execution)
+- `contracts/starknet/src/lib.cairo` — exports `iwa_circle`
+- `contracts/starknet/Scarb.toml` — `[[target.starknet-contract]]`
+- `ARCHITECTURE.md` / `docs/domain/IWA_INVARIANTS.md` — cure-rule lock
+
+What passed (WSL Ubuntu):
+
+- `scarb fmt --check` — exit 0
+- `scarb build` — exit 0
+- `snforge test` — 21 passed, 0 failed
+- no `iwa-web/` changes
+- no legacy deletions
+
+What was not done (out of 6A scope):
+
+- no join / invite acceptance
+- no contributions
+- no payout execution or cure execution
+- no STRK20 helper
+- not committed, not pushed
+
+Next: plan Task 6B — membership (invite/capacity/duplicate/cannot join after
+activation; pause-blocks-joins can wait for 6G if pause is not present yet).
 
 ## Immediate next work
 
 1. Do not delete legacy code.
-2. Specify cure-rule parameters before later payout slices. State-machine
-   blockers (grace timing, deficit fallback) are already locked.
-3. Implement IwaCircle with TDD, starting at plan Task 6 slice 6A (circle
-   creation). Do not implement STRK20 `privacy_invoke` yet.
+2. Implement IwaCircle membership with TDD (plan Task 6B).
+3. Do not implement contributions, payouts, or STRK20 `privacy_invoke` yet.
 4. STRK20 helper design must follow the verified integration research
    (`docs/strk20/INTEGRATION_RESEARCH.md`) — never from memory.
 
@@ -748,9 +782,9 @@ Next: plan Task 6 slice 6A — IwaCircle creation with TDD.
 
 ## Last updated
 
-August 27, 2026
+August 28, 2026
 
 Current state:
 
-**Phase 3 Task 5 complete. Cairo/Scarb workspace exists at
-`contracts/starknet/`. No IwaCircle yet. Next: plan Task 6 slice 6A.**
+**Phase 3 Task 6A complete. IwaCircle creation is implemented.
+Next: plan Task 6B — membership.**
