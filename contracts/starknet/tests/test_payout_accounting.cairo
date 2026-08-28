@@ -4,8 +4,8 @@ use core::ec::stark_curve;
 use core::serde::Serde;
 use iwa::iwa_circle::{IIwaCircleDispatcher, IIwaCircleDispatcherTrait};
 use iwa::iwa_types::{
-    ContributionStatus, PayoutStatus, contribution_authorization_hash, cure_authorization_hash,
-    invite_commitment,
+    ContributionStatus, PayoutStatus, contribution_settlement_authorization_hash,
+    cure_settlement_authorization_hash, invite_commitment,
 };
 use snforge_std::signature::stark_curve::{
     StarkCurveKeyPair, StarkCurveKeyPairImpl, StarkCurveSignerImpl,
@@ -33,6 +33,12 @@ fn usdc() -> ContractAddress {
 fn strk() -> ContractAddress {
     0x222.try_into().unwrap()
 }
+fn settlement_helper() -> ContractAddress {
+    0x444.try_into().unwrap()
+}
+fn privacy_pool() -> ContractAddress {
+    0x555.try_into().unwrap()
+}
 fn organizer() -> ContractAddress {
     0xabc.try_into().unwrap()
 }
@@ -59,6 +65,8 @@ fn deploy() -> IIwaCircleDispatcher {
     let mut calldata = array![];
     usdc().serialize(ref calldata);
     strk().serialize(ref calldata);
+    settlement_helper().serialize(ref calldata);
+    privacy_pool().serialize(ref calldata);
     let (address, _) = contract.deploy(@calldata).unwrap();
     IIwaCircleDispatcher { contract_address: address }
 }
@@ -82,9 +90,15 @@ fn satisfy(
     member_key: StarkCurveKeyPair,
     nonce: felt252,
 ) {
-    let hash = contribution_authorization_hash(id, round, member_ref, AMOUNT, nonce);
+    let hash = contribution_settlement_authorization_hash(
+        id, round, member_ref, settlement_helper(), privacy_pool(), usdc(), AMOUNT, nonce,
+    );
     let (r, raw_s) = StarkCurveSignerImpl::sign(member_key, hash).unwrap();
-    dispatcher.satisfy_contribution(id, round, member_ref, AMOUNT, nonce, r, canonical_s(raw_s));
+    start_cheat_caller_address(dispatcher.contract_address, settlement_helper());
+    dispatcher
+        .settle_contribution_from_helper(
+            id, round, member_ref, usdc(), AMOUNT, nonce, r, canonical_s(raw_s),
+        );
 }
 fn satisfy_round_one(dispatcher: IIwaCircleDispatcher, id: u32) {
     start_cheat_block_timestamp(dispatcher.contract_address, DUE_AT);
@@ -106,9 +120,13 @@ fn default_scheduled_recipient(dispatcher: IIwaCircleDispatcher, id: u32) {
 }
 fn cure_scheduled_recipient(dispatcher: IIwaCircleDispatcher, id: u32) {
     let member_ref = invite_commitment(SECRET_1);
-    let hash = cure_authorization_hash(id, 1, member_ref, AMOUNT, 76);
+    let hash = cure_settlement_authorization_hash(
+        id, 1, member_ref, settlement_helper(), privacy_pool(), usdc(), AMOUNT, 76,
+    );
     let (r, raw_s) = StarkCurveSignerImpl::sign(key(0x101), hash).unwrap();
-    dispatcher.cure_default(id, 1, member_ref, 76, r, canonical_s(raw_s));
+    start_cheat_caller_address(dispatcher.contract_address, settlement_helper());
+    dispatcher
+        .settle_cure_from_helper(id, 1, member_ref, usdc(), AMOUNT, 76, r, canonical_s(raw_s));
 }
 fn missing_entrypoint(address: ContractAddress, selector: felt252, calldata: Span<felt252>) {
     match call_contract_syscall(address, selector, calldata) {

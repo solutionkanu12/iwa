@@ -5,7 +5,8 @@ use core::serde::Serde;
 use iwa::iwa_circle::{IIwaCircleDispatcher, IIwaCircleDispatcherTrait};
 use iwa::iwa_types::{
     CircleStatus, ContributionStatus, PayoutStatus, contribution_authorization_hash,
-    cure_authorization_hash, invite_commitment, payout_authorization_hash,
+    contribution_settlement_authorization_hash, cure_authorization_hash,
+    cure_settlement_authorization_hash, invite_commitment, payout_authorization_hash,
 };
 use snforge_std::signature::stark_curve::{
     StarkCurveKeyPair, StarkCurveKeyPairImpl, StarkCurveSignerImpl,
@@ -32,6 +33,12 @@ fn usdc() -> ContractAddress {
 }
 fn strk() -> ContractAddress {
     0x222.try_into().unwrap()
+}
+fn settlement_helper() -> ContractAddress {
+    0x444.try_into().unwrap()
+}
+fn privacy_pool() -> ContractAddress {
+    0x555.try_into().unwrap()
 }
 fn organizer() -> ContractAddress {
     0xabc.try_into().unwrap()
@@ -64,6 +71,8 @@ fn deploy() -> IIwaCircleDispatcher {
     let mut calldata = array![];
     usdc().serialize(ref calldata);
     strk().serialize(ref calldata);
+    settlement_helper().serialize(ref calldata);
+    privacy_pool().serialize(ref calldata);
     let (address, _) = contract.deploy(@calldata).unwrap();
     IIwaCircleDispatcher { contract_address: address }
 }
@@ -86,9 +95,15 @@ fn satisfy(
     signer: StarkCurveKeyPair,
     nonce: felt252,
 ) {
-    let hash = contribution_authorization_hash(id, round, member_ref, AMOUNT, nonce);
+    let hash = contribution_settlement_authorization_hash(
+        id, round, member_ref, settlement_helper(), privacy_pool(), usdc(), AMOUNT, nonce,
+    );
     let (r, raw_s) = StarkCurveSignerImpl::sign(signer, hash).unwrap();
-    dispatcher.satisfy_contribution(id, round, member_ref, AMOUNT, nonce, r, canonical_s(raw_s));
+    start_cheat_caller_address(dispatcher.contract_address, settlement_helper());
+    dispatcher
+        .settle_contribution_from_helper(
+            id, round, member_ref, usdc(), AMOUNT, nonce, r, canonical_s(raw_s),
+        );
 }
 
 fn ready_round(dispatcher: IIwaCircleDispatcher, id: u32, round: u32, nonce: felt252) {
@@ -157,10 +172,14 @@ fn try_cure(
     id.serialize(ref calldata);
     round.serialize(ref calldata);
     member_2().serialize(ref calldata);
+    usdc().serialize(ref calldata);
+    AMOUNT.serialize(ref calldata);
     nonce.serialize(ref calldata);
     r.serialize(ref calldata);
     s.serialize(ref calldata);
-    call_contract_syscall(dispatcher.contract_address, selector!("cure_default"), calldata.span())
+    call_contract_syscall(
+        dispatcher.contract_address, selector!("settle_cure_from_helper"), calldata.span(),
+    )
         .is_err()
 }
 
@@ -301,9 +320,13 @@ fn cured_deferred_entitlement_becomes_authorizable_without_history_rewrite() {
     start_cheat_block_timestamp(dispatcher.contract_address, ROUND_1_GRACE_END + 1);
     dispatcher.finalize_contribution_default(id, 1, member_1());
     dispatcher.finalize_round_payout_accounting(id, 1);
-    let cure_hash = cure_authorization_hash(id, 1, member_1(), AMOUNT, 20);
+    let cure_hash = cure_settlement_authorization_hash(
+        id, 1, member_1(), settlement_helper(), privacy_pool(), usdc(), AMOUNT, 20,
+    );
     let (r, raw_s) = StarkCurveSignerImpl::sign(key(0x101), cure_hash).unwrap();
-    dispatcher.cure_default(id, 1, member_1(), 20, r, canonical_s(raw_s));
+    start_cheat_caller_address(dispatcher.contract_address, settlement_helper());
+    dispatcher
+        .settle_cure_from_helper(id, 1, member_1(), usdc(), AMOUNT, 20, r, canonical_s(raw_s));
     authorize(dispatcher, id, 1, key(0x101), 21);
     assert(dispatcher.get_payout_state(id, 1).status == PayoutStatus::SettlementAuthorized, 'ok');
     assert(
@@ -401,9 +424,13 @@ fn cured_deferred_entitlement_must_be_authorized_before_final_preparation() {
     ready_round(dispatcher, id, 1, 1);
     authorize(dispatcher, id, 1, key(0x101), 21);
     default_round_two_recipient(dispatcher, id);
-    let cure_hash = cure_authorization_hash(id, 2, member_2(), AMOUNT, 51);
+    let cure_hash = cure_settlement_authorization_hash(
+        id, 2, member_2(), settlement_helper(), privacy_pool(), usdc(), AMOUNT, 51,
+    );
     let (r, raw_s) = StarkCurveSignerImpl::sign(key(0x102), cure_hash).unwrap();
-    dispatcher.cure_default(id, 2, member_2(), 51, r, canonical_s(raw_s));
+    start_cheat_caller_address(dispatcher.contract_address, settlement_helper());
+    dispatcher
+        .settle_cure_from_helper(id, 2, member_2(), usdc(), AMOUNT, 51, r, canonical_s(raw_s));
     assert(try_prepare(dispatcher, id), 'claim preserved');
     assert(dispatcher.get_payout_state(id, 2).status == PayoutStatus::DeferredLocked, 'locked');
     assert(dispatcher.get_circle(id).status == CircleStatus::Active, 'unchanged');

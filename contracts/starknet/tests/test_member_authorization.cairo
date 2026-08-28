@@ -26,6 +26,12 @@ fn usdc() -> ContractAddress {
 fn strk() -> ContractAddress {
     0x222.try_into().unwrap()
 }
+fn settlement_helper() -> ContractAddress {
+    0x444.try_into().unwrap()
+}
+fn privacy_pool() -> ContractAddress {
+    0x555.try_into().unwrap()
+}
 
 fn organizer() -> ContractAddress {
     0xabc.try_into().unwrap()
@@ -58,6 +64,8 @@ fn deploy() -> IIwaCircleDispatcher {
     let mut calldata = array![];
     usdc().serialize(ref calldata);
     strk().serialize(ref calldata);
+    settlement_helper().serialize(ref calldata);
+    privacy_pool().serialize(ref calldata);
     let (address, _) = contract.deploy(@calldata).unwrap();
     IIwaCircleDispatcher { contract_address: address }
 }

@@ -288,7 +288,9 @@ user shielded balance
 → valid contribution state is recorded
 → funds remain governed by deterministic IWA circle rules
 
-The exact fund-holding/settlement structure still requires final state-machine design before Cairo implementation.
+Task 8A-S locks the fund-holding boundary: helper-confirmed contribution and
+cure inflows are attributed to one exact circle/round/token liability. Public
+callers cannot consume their financial settlement state.
 
 The helper must not publicly expose the member identity unnecessarily.
 
@@ -303,7 +305,9 @@ eligible IWA payout
 
 Admin must not choose or redirect the recipient.
 
-Exact payout note construction and recipient-binding behavior requires implementation-level validation.
+Payout and recovery settlement signatures bind the rightful member's open-note
+id, configured helper, configured pool, locked token, stored amount, circle,
+round, member, and nonce under separate domains.
 
 ## What remains public
 
@@ -393,6 +397,33 @@ Each transaction must be verified for:
 - success
 - STRK20 pool interaction
 - expected IWA behavior
+
+## Locked Task 8A-S core settlement design
+
+`IwaCircle` constructor configuration pins one reviewed settlement helper and
+one privacy pool. Contribution and cure are inbound parked-value legs and bind
+no output note. Payout and recovery are outbound legs and require a
+member-signed open-note id before `Paid` or `Recovered`.
+
+For every round:
+
+```text
+scheduled_payout_amount = contribution_amount * member_limit
+round_unresolved_deficit = sum(all exact uncured default deficits)
+round_funded_liability = scheduled_payout_amount - round_unresolved_deficit
+```
+
+Full payout requires zero unresolved deficit. Final recovery uses the
+separately stored round-funded amount while preserving nominal payout and
+recipient. There is no external subsidy or cross-round/cross-token borrowing.
+Task 8A must reconcile actual helper balances with these core liabilities
+atomically.
+
+The zero-funded edge does not enter STRK20. Final preparation records
+`NoFundedRecovery` when the derived recovery amount is zero. No
+`privacy_invoke`, zero-value `OpenNoteDeposit`, signature, or nonce is used.
+Only positive `RecoveryPending` amounts may reach the later helper recovery
+operation; `Recovered` remains reserved for confirmed funded token movement.
 
 ## Open risks
 

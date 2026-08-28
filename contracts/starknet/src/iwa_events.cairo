@@ -28,8 +28,8 @@ pub struct CircleActivated {
 }
 
 #[derive(Drop, starknet::Event)]
-/// An authenticated accounting transition only. This event does not assert
-/// ERC-20 or STRK20 settlement.
+/// A helper-only financial-state transition. Task 8 must emit it in the same
+/// transaction as the corresponding STRK20 value movement.
 pub struct ContributionStateUpdated {
     #[key]
     pub circle_id: u32,
@@ -38,7 +38,8 @@ pub struct ContributionStateUpdated {
     pub status: ContributionStatus,
 }
 
-/// Authenticated deficit-accounting transition only; no token settlement.
+/// A helper-only cured-deficit transition. Task 8 must bind it atomically to
+/// the corresponding STRK20 value movement.
 #[derive(Drop, starknet::Event)]
 pub struct CureAccountingSettled {
     #[key]

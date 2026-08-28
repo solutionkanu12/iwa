@@ -5,7 +5,7 @@
 use starknet::ContractAddress;
 use super::iwa_types::{
     CircleStatus, ContributionObligation, ContributionStatus, CureConfig, CureState, PayoutState,
-    SupportedAsset,
+    RoundLiability, SettlementConfig, SupportedAsset,
 };
 
 #[derive(Copy, Drop, Serde)]
@@ -49,13 +49,17 @@ pub trait IIwaCircle<TContractState> {
     fn is_contribution_nonce_consumed(
         self: @TContractState, circle_id: u32, member_ref: felt252, nonce: felt252,
     ) -> bool;
-    /// Records authenticated obligation satisfaction only. Token settlement
-    /// is deliberately absent until the verified STRK20 helper integration.
-    fn satisfy_contribution(
+    fn get_settlement_config(self: @TContractState) -> SettlementConfig;
+    fn get_round_liability(self: @TContractState, circle_id: u32, round: u32) -> RoundLiability;
+    fn get_round_unresolved_deficit(self: @TContractState, circle_id: u32, round: u32) -> u128;
+    fn get_token_outstanding_liability(self: @TContractState, token: ContractAddress) -> u256;
+    /// Financial contribution transition reserved for the immutable helper.
+    fn settle_contribution_from_helper(
         ref self: TContractState,
         circle_id: u32,
         round: u32,
         member_ref: felt252,
+        token: ContractAddress,
         amount: u128,
         nonce: felt252,
         signature_r: felt252,
@@ -74,13 +78,14 @@ pub trait IIwaCircle<TContractState> {
     fn is_cure_nonce_consumed(
         self: @TContractState, circle_id: u32, member_ref: felt252, nonce: felt252,
     ) -> bool;
-    /// Records authenticated deficit settlement accounting only. No token
-    /// movement is asserted until Task 8 binds this transition to STRK20.
-    fn cure_default(
+    /// Financial cure transition reserved for the immutable helper.
+    fn settle_cure_from_helper(
         ref self: TContractState,
         circle_id: u32,
         round: u32,
         member_ref: felt252,
+        token: ContractAddress,
+        amount: u128,
         nonce: felt252,
         signature_r: felt252,
         signature_s: felt252,
@@ -100,6 +105,33 @@ pub trait IIwaCircle<TContractState> {
         ref self: TContractState,
         circle_id: u32,
         round: u32,
+        nonce: felt252,
+        signature_r: felt252,
+        signature_s: felt252,
+    ) -> PayoutState;
+    fn is_payout_settlement_nonce_consumed(
+        self: @TContractState, circle_id: u32, member_ref: felt252, nonce: felt252,
+    ) -> bool;
+    fn settle_payout_from_helper(
+        ref self: TContractState,
+        circle_id: u32,
+        round: u32,
+        token: ContractAddress,
+        open_note_id: felt252,
+        nonce: felt252,
+        signature_r: felt252,
+        signature_s: felt252,
+    ) -> PayoutState;
+    fn get_recovery_amount(self: @TContractState, circle_id: u32, round: u32) -> u128;
+    fn is_recovery_settlement_nonce_consumed(
+        self: @TContractState, circle_id: u32, member_ref: felt252, nonce: felt252,
+    ) -> bool;
+    fn settle_recovery_from_helper(
+        ref self: TContractState,
+        circle_id: u32,
+        round: u32,
+        token: ContractAddress,
+        open_note_id: felt252,
         nonce: felt252,
         signature_r: felt252,
         signature_s: felt252,
@@ -125,9 +157,11 @@ pub mod IwaCircle {
     };
     use super::super::iwa_types::{
         CircleStatus, ContributionObligation, ContributionStatus, CureConfig, CureState,
-        PayoutState, PayoutStatus, SupportedAsset, invite_commitment, is_valid_auth_public_key,
-        locked_cure_config, verify_contribution_authorization, verify_cure_authorization,
-        verify_payout_authorization,
+        PayoutState, PayoutStatus, RoundLiability, SettlementConfig, SupportedAsset,
+        invite_commitment, is_valid_auth_public_key, locked_cure_config,
+        verify_contribution_settlement_authorization, verify_cure_settlement_authorization,
+        verify_payout_authorization, verify_payout_settlement_authorization,
+        verify_recovery_settlement_authorization,
     };
     use super::{CircleView, IIwaCircle};
 
@@ -151,6 +185,8 @@ pub mod IwaCircle {
     struct Storage {
         usdc: ContractAddress,
         strk: ContractAddress,
+        settlement_helper: ContractAddress,
+        privacy_pool: ContractAddress,
         next_circle_id: u32,
         exists: Map<u32, bool>,
         circles: Map<u32, CircleRecord>,
@@ -168,6 +204,14 @@ pub mod IwaCircle {
         payout_states: Map<(u32, u32), PayoutState>,
         payout_nonces: Map<(u32, felt252, felt252), bool>,
         final_settlement_prepared: Map<u32, bool>,
+        round_settled_inflows: Map<(u32, u32), u256>,
+        round_settled_outflows: Map<(u32, u32), u256>,
+        round_outstanding_liability: Map<(u32, u32), u256>,
+        payout_settlement_nonces: Map<(u32, felt252, felt252), bool>,
+        recovery_amounts: Map<(u32, u32), u128>,
+        recovery_amount_exists: Map<(u32, u32), bool>,
+        recovery_settlement_nonces: Map<(u32, felt252, felt252), bool>,
+        token_outstanding_liability: Map<ContractAddress, u256>,
     }
 
     #[event]
@@ -184,12 +228,23 @@ pub mod IwaCircle {
     }
 
     #[constructor]
-    fn constructor(ref self: ContractState, usdc: ContractAddress, strk: ContractAddress) {
+    fn constructor(
+        ref self: ContractState,
+        usdc: ContractAddress,
+        strk: ContractAddress,
+        settlement_helper: ContractAddress,
+        privacy_pool: ContractAddress,
+    ) {
         assert(!usdc.is_zero(), iwa_errors::INVALID_CONFIG);
         assert(!strk.is_zero(), iwa_errors::INVALID_CONFIG);
+        assert(!settlement_helper.is_zero(), iwa_errors::INVALID_CONFIG);
+        assert(!privacy_pool.is_zero(), iwa_errors::INVALID_CONFIG);
         assert(usdc != strk, iwa_errors::INVALID_CONFIG);
+        assert(settlement_helper != privacy_pool, iwa_errors::INVALID_CONFIG);
         self.usdc.write(usdc);
         self.strk.write(strk);
+        self.settlement_helper.write(settlement_helper);
+        self.privacy_pool.write(privacy_pool);
     }
 
     #[abi(embed_v0)]
@@ -209,6 +264,8 @@ pub mod IwaCircle {
             assert(cadence_seconds > 0, iwa_errors::INVALID_CONFIG);
             assert(grace_period_seconds > 0, iwa_errors::INVALID_CONFIG);
             validate_payout_order(payout_order, member_limit);
+            let member_count: u128 = member_limit.into();
+            let _scheduled_payout_amount = contribution_amount * member_count;
 
             let id = self.next_circle_id.read() + 1;
             self.next_circle_id.write(id);
@@ -330,20 +387,56 @@ pub mod IwaCircle {
             self.contribution_nonces.read((circle_id, member_ref, nonce))
         }
 
-        fn satisfy_contribution(
+        fn get_settlement_config(self: @ContractState) -> SettlementConfig {
+            SettlementConfig {
+                settlement_helper: self.settlement_helper.read(),
+                privacy_pool: self.privacy_pool.read(),
+            }
+        }
+
+        fn get_round_liability(self: @ContractState, circle_id: u32, round: u32) -> RoundLiability {
+            let record = self.read_record(circle_id);
+            let final_round: u32 = record.member_limit.into();
+            assert(round > 0 && round <= final_round, iwa_errors::WRONG_ROUND);
+            RoundLiability {
+                circle_id,
+                round,
+                token: self.token_for_asset(record.asset),
+                settled_inflows: self.round_settled_inflows.read((circle_id, round)),
+                settled_outflows: self.round_settled_outflows.read((circle_id, round)),
+                outstanding: self.round_outstanding_liability.read((circle_id, round)),
+            }
+        }
+
+        fn get_round_unresolved_deficit(self: @ContractState, circle_id: u32, round: u32) -> u128 {
+            let record = self.read_record(circle_id);
+            let final_round: u32 = record.member_limit.into();
+            assert(round > 0 && round <= final_round, iwa_errors::WRONG_ROUND);
+            self.calculate_round_unresolved_deficit(circle_id, round, record.member_limit)
+        }
+
+        fn get_token_outstanding_liability(self: @ContractState, token: ContractAddress) -> u256 {
+            let _asset = self.resolve_asset(token);
+            self.token_outstanding_liability.read(token)
+        }
+
+        fn settle_contribution_from_helper(
             ref self: ContractState,
             circle_id: u32,
             round: u32,
             member_ref: felt252,
+            token: ContractAddress,
             amount: u128,
             nonce: felt252,
             signature_r: felt252,
             signature_s: felt252,
         ) -> ContributionStatus {
+            self.assert_settlement_helper();
             let record = self.read_record(circle_id);
             assert(record.status == CircleStatus::Active, iwa_errors::WRONG_ROUND);
             assert(round == record.current_round, iwa_errors::WRONG_ROUND);
             assert(self.joined.read((circle_id, member_ref)), iwa_errors::NOT_MEMBER);
+            assert(token == self.token_for_asset(record.asset), iwa_errors::UNSUPPORTED_ASSET);
             assert(amount == record.contribution_amount, iwa_errors::WRONG_AMOUNT);
 
             let obligation_key = (circle_id, round, member_ref);
@@ -355,11 +448,14 @@ pub mod IwaCircle {
 
             let auth_key = self.member_auth_keys.read((circle_id, member_ref));
             assert(
-                verify_contribution_authorization(
+                verify_contribution_settlement_authorization(
                     auth_key,
                     circle_id,
                     round,
                     member_ref,
+                    self.settlement_helper.read(),
+                    self.privacy_pool.read(),
+                    token,
                     record.contribution_amount,
                     nonce,
                     signature_r,
@@ -381,6 +477,7 @@ pub mod IwaCircle {
             obligation.status = status;
             self.obligations.write(obligation_key, obligation);
             self.contribution_nonces.write(nonce_key, true);
+            self.credit_round_liability(circle_id, round, record.contribution_amount);
             self.emit(ContributionStateUpdated { circle_id, round, member_ref, status });
             status
         }
@@ -439,15 +536,18 @@ pub mod IwaCircle {
             self.cure_nonces.read((circle_id, member_ref, nonce))
         }
 
-        fn cure_default(
+        fn settle_cure_from_helper(
             ref self: ContractState,
             circle_id: u32,
             round: u32,
             member_ref: felt252,
+            token: ContractAddress,
+            amount: u128,
             nonce: felt252,
             signature_r: felt252,
             signature_s: felt252,
         ) -> CureState {
+            self.assert_settlement_helper();
             self.assert_exists(circle_id);
             let obligation_key = (circle_id, round, member_ref);
             assert(self.obligation_exists.read(obligation_key), iwa_errors::OBLIGATION_NOT_FOUND);
@@ -457,6 +557,9 @@ pub mod IwaCircle {
                 iwa_errors::CURE_NOT_ELIGIBLE,
             );
             assert(self.joined.read((circle_id, member_ref)), iwa_errors::NOT_MEMBER);
+            let record = self.read_record(circle_id);
+            assert(token == self.token_for_asset(record.asset), iwa_errors::UNSUPPORTED_ASSET);
+            assert(amount == obligation.required_amount, iwa_errors::WRONG_AMOUNT);
 
             let nonce_key = (circle_id, member_ref, nonce);
             assert(!self.cure_nonces.read(nonce_key), iwa_errors::CURE_NONCE_USED);
@@ -465,11 +568,14 @@ pub mod IwaCircle {
 
             let auth_key = self.member_auth_keys.read((circle_id, member_ref));
             assert(
-                verify_cure_authorization(
+                verify_cure_settlement_authorization(
                     auth_key,
                     circle_id,
                     round,
                     member_ref,
+                    self.settlement_helper.read(),
+                    self.privacy_pool.read(),
+                    token,
                     obligation.required_amount,
                     nonce,
                     signature_r,
@@ -482,6 +588,7 @@ pub mod IwaCircle {
             // precede both accounting writes. Reverts roll both back atomically.
             self.cured_deficits.write(obligation_key, true);
             self.cure_nonces.write(nonce_key, true);
+            self.credit_round_liability(circle_id, round, obligation.required_amount);
             self.emit(CureAccountingSettled { circle_id, round, member_ref });
 
             CureState {
@@ -529,22 +636,29 @@ pub mod IwaCircle {
             let recipient_slot: u8 = (round - 1).try_into().unwrap();
             assert(recipient_slot < record.member_limit, iwa_errors::WRONG_ROUND);
             let scheduled_member_ref = self.payout_order.read((circle_id, recipient_slot));
-            let recipient_key = (circle_id, round, scheduled_member_ref);
-            let recipient_obligation = self.obligations.read(recipient_key);
-            let unresolved_deficit = recipient_obligation
-                .status == ContributionStatus::MissedDefault
-                && !self.cured_deficits.read(recipient_key);
-            let payout_status = if unresolved_deficit {
+            let round_unresolved_deficit = self
+                .calculate_round_unresolved_deficit(circle_id, round, record.member_limit);
+            let member_count: u128 = record.member_limit.into();
+            let scheduled_payout_amount = record.contribution_amount * member_count;
+            assert(
+                round_unresolved_deficit <= scheduled_payout_amount,
+                iwa_errors::LIABILITY_INVARIANT,
+            );
+            let funded_amount: u256 = (scheduled_payout_amount - round_unresolved_deficit).into();
+            assert(
+                self.round_outstanding_liability.read((circle_id, round)) == funded_amount,
+                iwa_errors::LIABILITY_INVARIANT,
+            );
+            let payout_status = if round_unresolved_deficit > 0 {
                 PayoutStatus::DeferredLocked
             } else {
                 PayoutStatus::Scheduled
             };
-            let member_count: u128 = record.member_limit.into();
             let payout = PayoutState {
                 circle_id,
                 round,
                 scheduled_member_ref,
-                amount: record.contribution_amount * member_count,
+                amount: scheduled_payout_amount,
                 status: payout_status,
             };
 
@@ -589,7 +703,10 @@ pub mod IwaCircle {
 
             let is_scheduled = payout.status == PayoutStatus::Scheduled;
             let is_cured_deferred = payout.status == PayoutStatus::DeferredLocked
-                && self.cured_deficits.read((circle_id, round, payout.scheduled_member_ref));
+                && self
+                    .calculate_round_unresolved_deficit(
+                        circle_id, round, self.read_record(circle_id).member_limit,
+                    ) == 0;
             assert(is_scheduled || is_cured_deferred, iwa_errors::PAYOUT_NOT_AUTHORIZABLE);
 
             let nonce_key = (circle_id, payout.scheduled_member_ref, nonce);
@@ -628,6 +745,136 @@ pub mod IwaCircle {
             self.final_settlement_prepared.read(circle_id)
         }
 
+        fn is_payout_settlement_nonce_consumed(
+            self: @ContractState, circle_id: u32, member_ref: felt252, nonce: felt252,
+        ) -> bool {
+            self.assert_exists(circle_id);
+            self.payout_settlement_nonces.read((circle_id, member_ref, nonce))
+        }
+
+        fn settle_payout_from_helper(
+            ref self: ContractState,
+            circle_id: u32,
+            round: u32,
+            token: ContractAddress,
+            open_note_id: felt252,
+            nonce: felt252,
+            signature_r: felt252,
+            signature_s: felt252,
+        ) -> PayoutState {
+            self.assert_settlement_helper();
+            assert(open_note_id != 0, iwa_errors::INVALID_OPEN_NOTE);
+            let record = self.read_record(circle_id);
+            assert(token == self.token_for_asset(record.asset), iwa_errors::UNSUPPORTED_ASSET);
+            let payout_key = (circle_id, round);
+            assert(self.payout_exists.read(payout_key), iwa_errors::PAYOUT_LOCKED);
+            let mut payout = self.payout_states.read(payout_key);
+            assert(
+                payout.status == PayoutStatus::SettlementAuthorized,
+                iwa_errors::PAYOUT_NOT_AUTHORIZABLE,
+            );
+            assert(
+                self.calculate_round_unresolved_deficit(circle_id, round, record.member_limit) == 0,
+                iwa_errors::PAYOUT_LOCKED,
+            );
+
+            let nonce_key = (circle_id, payout.scheduled_member_ref, nonce);
+            assert(!self.payout_settlement_nonces.read(nonce_key), iwa_errors::PAYOUT_NONCE_USED);
+            let auth_key = self.member_auth_keys.read((circle_id, payout.scheduled_member_ref));
+            assert(
+                verify_payout_settlement_authorization(
+                    auth_key,
+                    circle_id,
+                    round,
+                    payout.scheduled_member_ref,
+                    self.settlement_helper.read(),
+                    self.privacy_pool.read(),
+                    token,
+                    payout.amount,
+                    open_note_id,
+                    nonce,
+                    signature_r,
+                    signature_s,
+                ),
+                iwa_errors::INVALID_SIGNATURE,
+            );
+            self.assert_round_can_debit(circle_id, round, payout.amount);
+
+            payout.status = PayoutStatus::Paid;
+            self.payout_states.write(payout_key, payout);
+            self.payout_settlement_nonces.write(nonce_key, true);
+            self.debit_round_liability(circle_id, round, payout.amount);
+            payout
+        }
+
+        fn get_recovery_amount(self: @ContractState, circle_id: u32, round: u32) -> u128 {
+            self.assert_exists(circle_id);
+            assert(
+                self.recovery_amount_exists.read((circle_id, round)),
+                iwa_errors::RECOVERY_NOT_READY,
+            );
+            self.recovery_amounts.read((circle_id, round))
+        }
+
+        fn is_recovery_settlement_nonce_consumed(
+            self: @ContractState, circle_id: u32, member_ref: felt252, nonce: felt252,
+        ) -> bool {
+            self.assert_exists(circle_id);
+            self.recovery_settlement_nonces.read((circle_id, member_ref, nonce))
+        }
+
+        fn settle_recovery_from_helper(
+            ref self: ContractState,
+            circle_id: u32,
+            round: u32,
+            token: ContractAddress,
+            open_note_id: felt252,
+            nonce: felt252,
+            signature_r: felt252,
+            signature_s: felt252,
+        ) -> PayoutState {
+            self.assert_settlement_helper();
+            assert(open_note_id != 0, iwa_errors::INVALID_OPEN_NOTE);
+            let record = self.read_record(circle_id);
+            assert(token == self.token_for_asset(record.asset), iwa_errors::UNSUPPORTED_ASSET);
+            let payout_key = (circle_id, round);
+            assert(self.payout_exists.read(payout_key), iwa_errors::PAYOUT_LOCKED);
+            let mut payout = self.payout_states.read(payout_key);
+            assert(payout.status == PayoutStatus::RecoveryPending, iwa_errors::RECOVERY_NOT_READY);
+            assert(self.recovery_amount_exists.read(payout_key), iwa_errors::RECOVERY_NOT_READY);
+            let recovery_amount = self.recovery_amounts.read(payout_key);
+
+            let nonce_key = (circle_id, payout.scheduled_member_ref, nonce);
+            assert(
+                !self.recovery_settlement_nonces.read(nonce_key), iwa_errors::RECOVERY_NONCE_USED,
+            );
+            let auth_key = self.member_auth_keys.read((circle_id, payout.scheduled_member_ref));
+            assert(
+                verify_recovery_settlement_authorization(
+                    auth_key,
+                    circle_id,
+                    round,
+                    payout.scheduled_member_ref,
+                    self.settlement_helper.read(),
+                    self.privacy_pool.read(),
+                    token,
+                    recovery_amount,
+                    open_note_id,
+                    nonce,
+                    signature_r,
+                    signature_s,
+                ),
+                iwa_errors::INVALID_SIGNATURE,
+            );
+            self.assert_round_can_debit(circle_id, round, recovery_amount);
+
+            payout.status = PayoutStatus::Recovered;
+            self.payout_states.write(payout_key, payout);
+            self.recovery_settlement_nonces.write(nonce_key, true);
+            self.debit_round_liability(circle_id, round, recovery_amount);
+            payout
+        }
+
         fn prepare_final_settlement(ref self: ContractState, circle_id: u32) {
             let mut record = self.read_record(circle_id);
             assert(
@@ -648,12 +895,16 @@ pub mod IwaCircle {
                 }
                 if payout.status == PayoutStatus::DeferredLocked {
                     assert(
-                        !self.cured_deficits.read((circle_id, round, payout.scheduled_member_ref)),
+                        self
+                            .calculate_round_unresolved_deficit(
+                                circle_id, round, record.member_limit,
+                            ) > 0,
                         iwa_errors::FINAL_NOT_READY,
                     );
                 } else {
                     assert(
-                        payout.status == PayoutStatus::SettlementAuthorized,
+                        payout.status == PayoutStatus::SettlementAuthorized
+                            || payout.status == PayoutStatus::Paid,
                         iwa_errors::FINAL_NOT_READY,
                     );
                 }
@@ -667,7 +918,28 @@ pub mod IwaCircle {
                 let payout_key = (circle_id, round);
                 let mut payout = self.payout_states.read(payout_key);
                 if payout.status == PayoutStatus::DeferredLocked {
-                    payout.status = PayoutStatus::RecoveryPending;
+                    let unresolved = self
+                        .calculate_round_unresolved_deficit(circle_id, round, record.member_limit);
+                    assert(unresolved <= payout.amount, iwa_errors::LIABILITY_INVARIANT);
+                    let recovery_amount = payout.amount - unresolved;
+                    let recovery_amount_u256: u256 = recovery_amount.into();
+                    assert(
+                        self.round_outstanding_liability.read(payout_key) == recovery_amount_u256,
+                        iwa_errors::LIABILITY_INVARIANT,
+                    );
+                    assert(
+                        !self.recovery_amount_exists.read(payout_key),
+                        iwa_errors::RECOVERY_ALREADY_PREPARED,
+                    );
+                    self.recovery_amounts.write(payout_key, recovery_amount);
+                    self.recovery_amount_exists.write(payout_key, true);
+                    payout
+                        .status =
+                            if recovery_amount == 0 {
+                                PayoutStatus::NoFundedRecovery
+                            } else {
+                                PayoutStatus::RecoveryPending
+                            };
                     self.payout_states.write(payout_key, payout);
                 }
 
@@ -695,6 +967,81 @@ pub mod IwaCircle {
 
     #[generate_trait]
     impl InternalImpl of InternalTrait {
+        fn assert_settlement_helper(self: @ContractState) {
+            assert(
+                get_caller_address() == self.settlement_helper.read(),
+                iwa_errors::NOT_SETTLEMENT_HELPER,
+            );
+        }
+
+        fn token_for_asset(self: @ContractState, asset: SupportedAsset) -> ContractAddress {
+            match asset {
+                SupportedAsset::Usdc => self.usdc.read(),
+                SupportedAsset::Strk => self.strk.read(),
+            }
+        }
+
+        fn calculate_round_unresolved_deficit(
+            self: @ContractState, circle_id: u32, round: u32, member_limit: u8,
+        ) -> u128 {
+            let mut unresolved: u128 = 0;
+            let mut slot: u8 = 0;
+            while slot < member_limit {
+                let member_ref = self.payout_order.read((circle_id, slot));
+                let key = (circle_id, round, member_ref);
+                assert(self.obligation_exists.read(key), iwa_errors::OBLIGATION_NOT_FOUND);
+                let obligation = self.obligations.read(key);
+                if obligation.status == ContributionStatus::MissedDefault
+                    && !self.cured_deficits.read(key) {
+                    unresolved += obligation.required_amount;
+                }
+                slot += 1;
+            }
+            unresolved
+        }
+
+        fn credit_round_liability(
+            ref self: ContractState, circle_id: u32, round: u32, amount: u128,
+        ) {
+            let key = (circle_id, round);
+            let amount_u256: u256 = amount.into();
+            let token = self.token_for_asset(self.read_record(circle_id).asset);
+            self
+                .round_settled_inflows
+                .write(key, self.round_settled_inflows.read(key) + amount_u256);
+            self
+                .round_outstanding_liability
+                .write(key, self.round_outstanding_liability.read(key) + amount_u256);
+            self
+                .token_outstanding_liability
+                .write(token, self.token_outstanding_liability.read(token) + amount_u256);
+        }
+
+        fn assert_round_can_debit(self: @ContractState, circle_id: u32, round: u32, amount: u128) {
+            let amount_u256: u256 = amount.into();
+            assert(
+                self.round_outstanding_liability.read((circle_id, round)) >= amount_u256,
+                iwa_errors::LIABILITY_INVARIANT,
+            );
+        }
+
+        fn debit_round_liability(
+            ref self: ContractState, circle_id: u32, round: u32, amount: u128,
+        ) {
+            let key = (circle_id, round);
+            let amount_u256: u256 = amount.into();
+            let outstanding = self.round_outstanding_liability.read(key);
+            let token = self.token_for_asset(self.read_record(circle_id).asset);
+            let token_outstanding = self.token_outstanding_liability.read(token);
+            assert(outstanding >= amount_u256, iwa_errors::LIABILITY_INVARIANT);
+            assert(token_outstanding >= amount_u256, iwa_errors::LIABILITY_INVARIANT);
+            self
+                .round_settled_outflows
+                .write(key, self.round_settled_outflows.read(key) + amount_u256);
+            self.round_outstanding_liability.write(key, outstanding - amount_u256);
+            self.token_outstanding_liability.write(token, token_outstanding - amount_u256);
+        }
+
         fn resolve_asset(self: @ContractState, token: ContractAddress) -> SupportedAsset {
             if token == self.usdc.read() {
                 return SupportedAsset::Usdc;

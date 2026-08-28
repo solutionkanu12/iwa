@@ -760,3 +760,36 @@ Agents must never:
 If IWA cannot satisfy the security gate safely before a deadline:
 
 **reduce scope instead of weakening the security model.**
+
+## Task 8A-S settlement authority and solvency rules
+
+`IwaCircle` pins the settlement helper and STRK20 pool in its constructor.
+Neither organizer nor admin can replace or redirect that authority. Every
+function asserting financial value settlement first requires
+`caller == settlement_helper`.
+
+The helper-only APIs are narrowly typed for contribution, cure, payout, and
+recovery. There is no arbitrary target, selector, calldata, liability setter,
+`mark_paid`, or `mark_recovered` surface. Public payout authorization remains
+preparatory only. Public callers cannot consume financial contribution/cure
+state or produce `Paid`/`Recovered`.
+
+All financial signatures bind circle, round, member, helper, pool, token,
+exact amount, and nonce under distinct domains. Payout and recovery also bind
+the member-authorized open-note id.
+
+Solvency is enforced per `(circle, round, token)`. Only helper-confirmed
+contributions and cures credit that round, and only its payout or recovery may
+debit it. A debit exceeding the same round's funded liability fails closed.
+Another token, another round, donations, organizer funds, or hypothetical
+insurance are not protocol backing.
+
+Uncured final accounting stores net-funded recovery separately: nominal payout
+minus exact uncured deficits in that round. Nominal payout and defaults are not
+rewritten.
+
+A zero derived recovery is terminal `NoFundedRecovery`, not a zero-value token
+operation. It can arise only during deterministic final preparation, preserves
+the recipient and nominal amount, consumes no settlement nonce or signature,
+and cannot transition to `RecoveryPending`, `Paid`, or `Recovered`. Positive
+derived recovery alone uses `RecoveryPending` and requires later real movement.

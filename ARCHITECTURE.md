@@ -938,4 +938,49 @@ When implementation and this document disagree:
 3. update the approved architecture if necessary
 4. do not silently allow architecture drift
 
+## Task 8A-S — atomic settlement boundary
+
+The Starknet `IwaCircle` constructor pins exactly one settlement-helper address
+and one STRK20 pool address together with the USDC and STRK allowlist. These
+addresses are immutable: there is no organizer, admin, or replacement setter.
+Deployment must deterministically know the reviewed helper address before
+deploying `IwaCircle`; Task 8A must bind the helper back to the resulting circle
+without creating mutable circle-side authority.
+
+Public preparation and financial settlement are distinct. `IWA_PAYOUT_V1` may
+produce `SettlementAuthorized`, which does not assert value movement.
+Contribution status, cured-deficit financial state, `Paid`, and `Recovered`
+change only through the pinned helper under four distinct settlement domains.
+Every domain binds helper, pool, token, exact amount, member, circle, round, and
+nonce. Payout/recovery also bind the rightful member's `open_note_id`.
+
+Every helper-confirmed inbound amount belongs to one exact
+`(circle_id, round, token)` funded-liability ledger:
+
+```text
+settled round inflows
+- real settled round payouts/recoveries
+= remaining funded liability for that same round and token
+```
+
+No round or token may fund another. Full payout requires every deficit in its
+round to be cured. At final preparation an uncured round stores separately:
+
+```text
+scheduled_payout_amount = contribution_amount * member_limit
+round_unresolved_deficit = sum(exact uncured defaults in that round)
+recovery_amount = scheduled_payout_amount - round_unresolved_deficit
+```
+
+Nominal payout, recipient, contribution history, and cure history remain
+unchanged. There is no external subsidy or cross-round borrowing assumption.
+
+If `recovery_amount > 0`, final preparation records `RecoveryPending` and the
+funded amount still requires real STRK20 recovery settlement. If
+`recovery_amount == 0`, it records terminal `NoFundedRecovery`: the nominal
+payout and rightful recipient remain visible, but there is no funded liability,
+no output note, no signature/nonce consumption, and no token action to perform.
+`NoFundedRecovery` counts as terminal accounting for eventual completion but
+must never be represented as `Paid` or `Recovered`.
+
 This file describes the current technical direction for IWA.

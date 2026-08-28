@@ -5,6 +5,7 @@
 use core::ec::{EcPointTrait, stark_curve};
 use core::ecdsa::check_ecdsa_signature;
 use core::poseidon::poseidon_hash_span;
+use starknet::ContractAddress;
 
 /// Domain-separated invite commitment. Off-chain invite secrets never appear
 /// in storage or events. Join proves possession of the preimage.
@@ -12,6 +13,10 @@ pub const INVITE_DOMAIN_TAG: felt252 = 'IWA_INVITE_V1';
 pub const CONTRIBUTION_AUTH_DOMAIN_TAG: felt252 = 'IWA_CONTRIBUTION_V1';
 pub const CURE_AUTH_DOMAIN_TAG: felt252 = 'IWA_CURE_V1';
 pub const PAYOUT_AUTH_DOMAIN_TAG: felt252 = 'IWA_PAYOUT_V1';
+pub const CONTRIBUTION_SETTLEMENT_DOMAIN_TAG: felt252 = 'IWA_CONTRIBUTION_SETTLEMENT_V1';
+pub const CURE_SETTLEMENT_DOMAIN_TAG: felt252 = 'IWA_CURE_SETTLEMENT_V1';
+pub const PAYOUT_SETTLEMENT_DOMAIN_TAG: felt252 = 'IWA_PAYOUT_SETTLEMENT_V1';
+pub const RECOVERY_SETTLEMENT_DOMAIN_TAG: felt252 = 'IWA_RECOVERY_SETTLEMENT_V1';
 
 pub fn invite_commitment(secret: felt252) -> felt252 {
     poseidon_hash_span(array![INVITE_DOMAIN_TAG, secret].span())
@@ -23,9 +28,9 @@ pub fn is_valid_auth_public_key(public_key: felt252) -> bool {
     public_key != 0 && EcPointTrait::new_nz_from_x(public_key).is_some()
 }
 
-/// Domain-separated authorization for one exact contribution obligation.
-/// The nonce is consumed by the contribution/helper state transition in 6D;
-/// this task only defines and verifies the signed message.
+/// Legacy accounting-preparation message retained for explicit domain
+/// separation tests. It cannot drive financial state; helper settlement uses
+/// `IWA_CONTRIBUTION_SETTLEMENT_V1` below.
 pub fn contribution_authorization_hash(
     circle_id: u32, round: u32, member_ref: felt252, amount: u128, nonce: felt252,
 ) -> felt252 {
@@ -71,9 +76,8 @@ pub fn verify_contribution_authorization(
     )
 }
 
-/// Domain-separated authorization for settling the exact stored deficit of
-/// one historical MISSED_DEFAULT obligation. This does not attest token
-/// movement; Task 8 must bind it to verified STRK20 settlement.
+/// Legacy cure-preparation message. It cannot settle a deficit financially;
+/// helper settlement uses `IWA_CURE_SETTLEMENT_V1` below.
 pub fn cure_authorization_hash(
     circle_id: u32, round: u32, member_ref: felt252, amount: u128, nonce: felt252,
 ) -> felt252 {
@@ -161,6 +165,196 @@ pub fn verify_payout_authorization(
     )
 }
 
+fn verify_settlement_hash(
+    public_key: felt252, message_hash: felt252, signature_r: felt252, signature_s: felt252,
+) -> bool {
+    const ORDER_U256: u256 = stark_curve::ORDER.into();
+    let r: u256 = signature_r.into();
+    let s: u256 = signature_s.into();
+    if !is_valid_auth_public_key(public_key)
+        || signature_r == 0
+        || signature_s == 0
+        || r >= ORDER_U256
+        || s >= ORDER_U256
+        || s > ORDER_U256
+        / 2 {
+        return false;
+    }
+    check_ecdsa_signature(message_hash, public_key, signature_r, signature_s)
+}
+
+pub fn contribution_settlement_authorization_hash(
+    circle_id: u32,
+    round: u32,
+    member_ref: felt252,
+    helper: ContractAddress,
+    pool: ContractAddress,
+    token: ContractAddress,
+    amount: u128,
+    nonce: felt252,
+) -> felt252 {
+    poseidon_hash_span(
+        array![
+            CONTRIBUTION_SETTLEMENT_DOMAIN_TAG, circle_id.into(), round.into(), member_ref,
+            helper.into(), pool.into(), token.into(), amount.into(), nonce,
+        ]
+            .span(),
+    )
+}
+
+pub fn verify_contribution_settlement_authorization(
+    public_key: felt252,
+    circle_id: u32,
+    round: u32,
+    member_ref: felt252,
+    helper: ContractAddress,
+    pool: ContractAddress,
+    token: ContractAddress,
+    amount: u128,
+    nonce: felt252,
+    signature_r: felt252,
+    signature_s: felt252,
+) -> bool {
+    verify_settlement_hash(
+        public_key,
+        contribution_settlement_authorization_hash(
+            circle_id, round, member_ref, helper, pool, token, amount, nonce,
+        ),
+        signature_r,
+        signature_s,
+    )
+}
+
+pub fn cure_settlement_authorization_hash(
+    circle_id: u32,
+    round: u32,
+    member_ref: felt252,
+    helper: ContractAddress,
+    pool: ContractAddress,
+    token: ContractAddress,
+    amount: u128,
+    nonce: felt252,
+) -> felt252 {
+    poseidon_hash_span(
+        array![
+            CURE_SETTLEMENT_DOMAIN_TAG, circle_id.into(), round.into(), member_ref, helper.into(),
+            pool.into(), token.into(), amount.into(), nonce,
+        ]
+            .span(),
+    )
+}
+
+pub fn verify_cure_settlement_authorization(
+    public_key: felt252,
+    circle_id: u32,
+    round: u32,
+    member_ref: felt252,
+    helper: ContractAddress,
+    pool: ContractAddress,
+    token: ContractAddress,
+    amount: u128,
+    nonce: felt252,
+    signature_r: felt252,
+    signature_s: felt252,
+) -> bool {
+    verify_settlement_hash(
+        public_key,
+        cure_settlement_authorization_hash(
+            circle_id, round, member_ref, helper, pool, token, amount, nonce,
+        ),
+        signature_r,
+        signature_s,
+    )
+}
+
+pub fn payout_settlement_authorization_hash(
+    circle_id: u32,
+    round: u32,
+    member_ref: felt252,
+    helper: ContractAddress,
+    pool: ContractAddress,
+    token: ContractAddress,
+    amount: u128,
+    open_note_id: felt252,
+    nonce: felt252,
+) -> felt252 {
+    poseidon_hash_span(
+        array![
+            PAYOUT_SETTLEMENT_DOMAIN_TAG, circle_id.into(), round.into(), member_ref, helper.into(),
+            pool.into(), token.into(), amount.into(), open_note_id, nonce,
+        ]
+            .span(),
+    )
+}
+
+pub fn verify_payout_settlement_authorization(
+    public_key: felt252,
+    circle_id: u32,
+    round: u32,
+    member_ref: felt252,
+    helper: ContractAddress,
+    pool: ContractAddress,
+    token: ContractAddress,
+    amount: u128,
+    open_note_id: felt252,
+    nonce: felt252,
+    signature_r: felt252,
+    signature_s: felt252,
+) -> bool {
+    verify_settlement_hash(
+        public_key,
+        payout_settlement_authorization_hash(
+            circle_id, round, member_ref, helper, pool, token, amount, open_note_id, nonce,
+        ),
+        signature_r,
+        signature_s,
+    )
+}
+
+pub fn recovery_settlement_authorization_hash(
+    circle_id: u32,
+    round: u32,
+    member_ref: felt252,
+    helper: ContractAddress,
+    pool: ContractAddress,
+    token: ContractAddress,
+    amount: u128,
+    open_note_id: felt252,
+    nonce: felt252,
+) -> felt252 {
+    poseidon_hash_span(
+        array![
+            RECOVERY_SETTLEMENT_DOMAIN_TAG, circle_id.into(), round.into(), member_ref,
+            helper.into(), pool.into(), token.into(), amount.into(), open_note_id, nonce,
+        ]
+            .span(),
+    )
+}
+
+pub fn verify_recovery_settlement_authorization(
+    public_key: felt252,
+    circle_id: u32,
+    round: u32,
+    member_ref: felt252,
+    helper: ContractAddress,
+    pool: ContractAddress,
+    token: ContractAddress,
+    amount: u128,
+    open_note_id: felt252,
+    nonce: felt252,
+    signature_r: felt252,
+    signature_s: felt252,
+) -> bool {
+    verify_settlement_hash(
+        public_key,
+        recovery_settlement_authorization_hash(
+            circle_id, round, member_ref, helper, pool, token, amount, open_note_id, nonce,
+        ),
+        signature_r,
+        signature_s,
+    )
+}
+
 /// Reliability classification of a contribution obligation (INV-018).
 /// No default variant: uninitialized storage must not become a valid status.
 #[allow(starknet::store_no_default_variant)]
@@ -212,6 +406,10 @@ pub enum PayoutStatus {
     /// Final deterministic recovery accounting exists for the same rightful
     /// member and amount. Tokens have not moved.
     RecoveryPending,
+    /// The round has no funded value available for recovery. The original
+    /// recipient and nominal payout remain recorded, but no token movement or
+    /// settlement authorization exists to consume.
+    NoFundedRecovery,
     Paid,
     Recovered,
 }
@@ -296,8 +494,9 @@ pub struct ContributionObligation {
     pub status: ContributionStatus,
 }
 
-/// Financial-deficit accounting is separate from immutable contribution
-/// history. `deficit_settled` does not assert that tokens moved.
+/// Financial-deficit state is separate from immutable contribution history.
+/// Only the pinned helper may set `deficit_settled`; Task 8 must make that
+/// helper call atomic with the corresponding STRK20 value movement.
 #[derive(Copy, Drop, Serde, PartialEq)]
 pub struct CureState {
     pub circle_id: u32,
@@ -319,6 +518,24 @@ pub struct PayoutState {
     /// Locked rotating-pot amount. This is accounting, not a transfer claim.
     pub amount: u128,
     pub status: PayoutStatus,
+}
+
+#[derive(Copy, Drop, Serde, PartialEq)]
+pub struct SettlementConfig {
+    pub settlement_helper: ContractAddress,
+    pub privacy_pool: ContractAddress,
+}
+
+/// Helper-confirmed value conservation for exactly one circle round and its
+/// locked token. No field may be credited by a public accounting-only call.
+#[derive(Copy, Drop, Serde, PartialEq)]
+pub struct RoundLiability {
+    pub circle_id: u32,
+    pub round: u32,
+    pub token: ContractAddress,
+    pub settled_inflows: u256,
+    pub settled_outflows: u256,
+    pub outstanding: u256,
 }
 
 /// Scoped Portable Trust Credential claim. Not a numerical credit score.

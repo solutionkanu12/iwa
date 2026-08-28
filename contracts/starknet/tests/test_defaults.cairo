@@ -6,7 +6,8 @@ use core::ec::stark_curve;
 use core::serde::Serde;
 use iwa::iwa_circle::{IIwaCircleDispatcher, IIwaCircleDispatcherTrait};
 use iwa::iwa_types::{
-    ContributionStatus, SupportedAsset, contribution_authorization_hash, invite_commitment,
+    ContributionStatus, SupportedAsset, contribution_settlement_authorization_hash,
+    invite_commitment,
 };
 use snforge_std::signature::stark_curve::{
     StarkCurveKeyPair, StarkCurveKeyPairImpl, StarkCurveSignerImpl,
@@ -33,6 +34,12 @@ fn usdc() -> ContractAddress {
 fn strk() -> ContractAddress {
     0x222.try_into().unwrap()
 }
+fn settlement_helper() -> ContractAddress {
+    0x444.try_into().unwrap()
+}
+fn privacy_pool() -> ContractAddress {
+    0x555.try_into().unwrap()
+}
 fn organizer() -> ContractAddress {
     0xabc.try_into().unwrap()
 }
@@ -56,6 +63,8 @@ fn deploy() -> IIwaCircleDispatcher {
     let mut calldata = array![];
     usdc().serialize(ref calldata);
     strk().serialize(ref calldata);
+    settlement_helper().serialize(ref calldata);
+    privacy_pool().serialize(ref calldata);
     let (address, _) = contract.deploy(@calldata).unwrap();
     IIwaCircleDispatcher { contract_address: address }
 }
@@ -78,9 +87,15 @@ fn satisfy(
     member_key: StarkCurveKeyPair,
     nonce: felt252,
 ) -> ContributionStatus {
-    let hash = contribution_authorization_hash(id, 1, member_ref, AMOUNT, nonce);
+    let hash = contribution_settlement_authorization_hash(
+        id, 1, member_ref, settlement_helper(), privacy_pool(), usdc(), AMOUNT, nonce,
+    );
     let (r, raw_s) = StarkCurveSignerImpl::sign(member_key, hash).unwrap();
-    dispatcher.satisfy_contribution(id, 1, member_ref, AMOUNT, nonce, r, canonical_s(raw_s))
+    start_cheat_caller_address(dispatcher.contract_address, settlement_helper());
+    dispatcher
+        .settle_contribution_from_helper(
+            id, 1, member_ref, usdc(), AMOUNT, nonce, r, canonical_s(raw_s),
+        )
 }
 fn at(dispatcher: IIwaCircleDispatcher, now: u64) {
     start_cheat_block_timestamp(dispatcher.contract_address, now);

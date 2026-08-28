@@ -331,6 +331,43 @@ Starknet implementation. The Starknet implementation does not exist yet.
 
 ---
 
+## INV-022 — Financial settlement is helper-only and destination-bound
+
+- **Origin:** `NEW` (Task 8A-S security gate, August 28, 2026)
+- **Definition:** One constructor-pinned helper is the only caller that may
+  transition contribution/cure financial state or mark payout/recovery value
+  settled. Every financial authorization binds helper, pool, token, amount,
+  circle, round, member, and nonce. Payout/recovery also bind the rightful
+  member's `open_note_id` under distinct domains.
+- **Enforcement point:** immutable constructor configuration, helper-only core
+  APIs, signature verification, and per-domain nonce maps.
+- **Test:** `test_settlement_boundary.cairo`.
+
+## INV-023 — Funded liabilities are conserved per round and token
+
+- **Origin:** `NEW` (Task 8A-S solvency amendment, August 28, 2026)
+- **Definition:** Helper-confirmed inflows minus helper-confirmed real outflows
+  equal remaining liability for that exact `(circle, round, token)`. No
+  cross-round or cross-token borrowing is permitted. Any unresolved round
+  deficit locks full payout. Final recovery is the immutable net-funded amount:
+  `scheduled payout - sum(exact uncured deficits in that round)`.
+- **Historical separation:** nominal payout, recipient, `MISSED_DEFAULT`, cure
+  records, and derived recovery amount remain separate.
+- **Enforcement point:** round ledger, full-funding gate, deterministic recovery
+  derivation, and same-round debit check.
+- **Test:** `test_settlement_boundary.cairo`.
+
+## INV-024 — Zero-funded recovery never fabricates settlement
+
+- **Origin:** `NEW` (Task 8A-S zero-funded edge, August 28, 2026)
+- **Definition:** When final preparation derives a same-round recovery amount
+  of zero, the payout becomes terminal `NoFundedRecovery`. Its recipient,
+  nominal payout, defaults, and zero recovery amount remain immutable. No
+  signature, nonce, output note, `Paid`, `Recovered`, or token action is used.
+- **Enforcement:** The status is selected only from the stored final-preparation
+  calculation; helper recovery accepts only positive `RecoveryPending` state.
+- **Test:** `test_settlement_boundary.cairo`.
+
 ## Legacy invariants superseded or removed
 
 | Legacy property | Legacy source | Disposition |
@@ -370,13 +407,9 @@ Resolved (August 27, 2026): deficit-fallback state machine and grace timing
 semantics are locked — see INV-009, INV-018, INV-020, and `ARCHITECTURE.md`
 "Grace periods" / "Deficit handling".
 
-Remaining:
-
-1. How obligation/payout uniqueness is represented under STRK20 note mechanics
-   (replay model per `INTEGRATION_RESEARCH.md:243-281`).
-2. Whether `INV-015`'s recipient must be bound to a user-controlled
-   destination or a deterministic internal state (legacy Option A binding is
-   not inherited; see `LEGACY_BEHAVIOR.md` 2.4, U-04/U-08).
+Resolved (August 28, 2026): STRK20 financial nonces are consumed only through
+the pinned helper, and payout/recovery signatures bind the rightful member's
+open-note destination. See INV-022 and INV-023.
 
 Resolved (August 28, 2026): cure-rule parameters are locked — see
 `ARCHITECTURE.md` "Deficit handling" and `CureConfig` in
