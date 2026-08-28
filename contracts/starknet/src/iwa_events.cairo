@@ -1,7 +1,13 @@
 // Event payloads for IwaCircle. The contract Event enum is assembled in Task 6.
 // Payloads use member_ref commitments, not wallet addresses (INV-013).
 
+use starknet::ContractAddress;
 use super::iwa_types::{ContributionStatus, PayoutStatus, SupportedAsset};
+
+#[derive(Drop, starknet::Event)]
+pub struct SettlementHelperInitialized {
+    pub helper: ContractAddress,
+}
 
 #[derive(Drop, starknet::Event)]
 pub struct CircleCreated {

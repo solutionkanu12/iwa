@@ -763,10 +763,18 @@ If IWA cannot satisfy the security gate safely before a deadline:
 
 ## Task 8A-S settlement authority and solvency rules
 
-`IwaCircle` pins the settlement helper and STRK20 pool in its constructor.
-Neither organizer nor admin can replace or redirect that authority. Every
-function asserting financial value settlement first requires
+`IwaCircle` pins the STRK20 pool and a deployment-only setup authority in its
+constructor. The helper starts unset. Only that authority may initialize one
+non-zero helper, exactly once; successful initialization locks the helper and
+clears the authority to zero. The authority has no circle, membership,
+financial, pause, token, pool, or replacement capability. Neither organizer
+nor admin can replace or redirect the helper. Every financial-settlement
+function rejects before initialization and then requires
 `caller == settlement_helper`.
+
+Deployment is valid only after the circle is deployed, the helper is deployed
+with that circle pinned, the authority initializes the helper, and onchain
+reads confirm the exact helper, locked initialization, and cleared authority.
 
 The helper-only APIs are narrowly typed for contribution, cure, payout, and
 recovery. There is no arbitrary target, selector, calldata, liability setter,

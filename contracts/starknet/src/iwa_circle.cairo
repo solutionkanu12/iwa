@@ -50,6 +50,9 @@ pub trait IIwaCircle<TContractState> {
         self: @TContractState, circle_id: u32, member_ref: felt252, nonce: felt252,
     ) -> bool;
     fn get_settlement_config(self: @TContractState) -> SettlementConfig;
+    /// One-time deployment wiring. The setup authority is cleared on success
+    /// and has no other privileged capability.
+    fn initialize_settlement_helper(ref self: TContractState, helper: ContractAddress);
     fn get_round_liability(self: @TContractState, circle_id: u32, round: u32) -> RoundLiability;
     fn get_round_unresolved_deficit(self: @TContractState, circle_id: u32, round: u32) -> u128;
     fn get_token_outstanding_liability(self: @TContractState, token: ContractAddress) -> u256;
@@ -154,6 +157,7 @@ pub mod IwaCircle {
     use super::super::iwa_events::{
         CircleActivated, CircleCreated, ContributionStateUpdated, CureAccountingSettled,
         FinalSettlementPrepared, MemberJoined, PayoutAccountingPrepared, PayoutSettlementAuthorized,
+        SettlementHelperInitialized,
     };
     use super::super::iwa_types::{
         CircleStatus, ContributionObligation, ContributionStatus, CureConfig, CureState,
@@ -187,6 +191,8 @@ pub mod IwaCircle {
         strk: ContractAddress,
         settlement_helper: ContractAddress,
         privacy_pool: ContractAddress,
+        setup_authority: ContractAddress,
+        helper_initialized: bool,
         next_circle_id: u32,
         exists: Map<u32, bool>,
         circles: Map<u32, CircleRecord>,
@@ -225,6 +231,7 @@ pub mod IwaCircle {
         PayoutAccountingPrepared: PayoutAccountingPrepared,
         PayoutSettlementAuthorized: PayoutSettlementAuthorized,
         FinalSettlementPrepared: FinalSettlementPrepared,
+        SettlementHelperInitialized: SettlementHelperInitialized,
     }
 
     #[constructor]
@@ -232,19 +239,18 @@ pub mod IwaCircle {
         ref self: ContractState,
         usdc: ContractAddress,
         strk: ContractAddress,
-        settlement_helper: ContractAddress,
         privacy_pool: ContractAddress,
+        setup_authority: ContractAddress,
     ) {
         assert(!usdc.is_zero(), iwa_errors::INVALID_CONFIG);
         assert(!strk.is_zero(), iwa_errors::INVALID_CONFIG);
-        assert(!settlement_helper.is_zero(), iwa_errors::INVALID_CONFIG);
         assert(!privacy_pool.is_zero(), iwa_errors::INVALID_CONFIG);
+        assert(!setup_authority.is_zero(), iwa_errors::INVALID_CONFIG);
         assert(usdc != strk, iwa_errors::INVALID_CONFIG);
-        assert(settlement_helper != privacy_pool, iwa_errors::INVALID_CONFIG);
         self.usdc.write(usdc);
         self.strk.write(strk);
-        self.settlement_helper.write(settlement_helper);
         self.privacy_pool.write(privacy_pool);
+        self.setup_authority.write(setup_authority);
     }
 
     #[abi(embed_v0)]
@@ -391,7 +397,20 @@ pub mod IwaCircle {
             SettlementConfig {
                 settlement_helper: self.settlement_helper.read(),
                 privacy_pool: self.privacy_pool.read(),
+                setup_authority: self.setup_authority.read(),
+                helper_initialized: self.helper_initialized.read(),
             }
+        }
+
+        fn initialize_settlement_helper(ref self: ContractState, helper: ContractAddress) {
+            assert(!self.helper_initialized.read(), iwa_errors::HELPER_ALREADY_INITIALIZED);
+            assert(get_caller_address() == self.setup_authority.read(), iwa_errors::UNAUTHORIZED);
+            assert(!helper.is_zero(), iwa_errors::INVALID_CONFIG);
+
+            self.settlement_helper.write(helper);
+            self.helper_initialized.write(true);
+            self.setup_authority.write(Zero::zero());
+            self.emit(SettlementHelperInitialized { helper });
         }
 
         fn get_round_liability(self: @ContractState, circle_id: u32, round: u32) -> RoundLiability {
@@ -968,10 +987,10 @@ pub mod IwaCircle {
     #[generate_trait]
     impl InternalImpl of InternalTrait {
         fn assert_settlement_helper(self: @ContractState) {
-            assert(
-                get_caller_address() == self.settlement_helper.read(),
-                iwa_errors::NOT_SETTLEMENT_HELPER,
-            );
+            assert(self.helper_initialized.read(), iwa_errors::HELPER_NOT_INITIALIZED);
+            let helper = self.settlement_helper.read();
+            assert(!helper.is_zero(), iwa_errors::HELPER_NOT_INITIALIZED);
+            assert(get_caller_address() == helper, iwa_errors::NOT_SETTLEMENT_HELPER);
         }
 
         fn token_for_asset(self: @ContractState, asset: SupportedAsset) -> ContractAddress {

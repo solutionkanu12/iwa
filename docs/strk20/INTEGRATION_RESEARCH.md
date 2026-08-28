@@ -400,10 +400,16 @@ Each transaction must be verified for:
 
 ## Locked Task 8A-S core settlement design
 
-`IwaCircle` constructor configuration pins one reviewed settlement helper and
-one privacy pool. Contribution and cure are inbound parked-value legs and bind
-no output note. Payout and recovery are outbound legs and require a
-member-signed open-note id before `Paid` or `Recovered`.
+`IwaCircle` constructor configuration pins the privacy pool, supported tokens,
+and a deployment-only setup authority. Deployment then creates the helper with
+the resulting circle address and uses the authority once to initialize that
+exact helper. Initialization locks permanently and clears the authority. The
+deployment is not valid until onchain reads confirm the helper, lock, and
+cleared authority. Financial entrypoints reject before that point.
+
+Contribution and cure are inbound parked-value legs and bind no output note.
+Payout and recovery are outbound legs and require a member-signed open-note id
+before `Paid` or `Recovered`.
 
 For every round:
 

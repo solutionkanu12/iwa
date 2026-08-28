@@ -524,6 +524,10 @@ pub struct PayoutState {
 pub struct SettlementConfig {
     pub settlement_helper: ContractAddress,
     pub privacy_pool: ContractAddress,
+    /// Non-zero only during deployment wiring. Cleared permanently when the
+    /// helper is initialized successfully.
+    pub setup_authority: ContractAddress,
+    pub helper_initialized: bool,
 }
 
 /// Helper-confirmed value conservation for exactly one circle round and its

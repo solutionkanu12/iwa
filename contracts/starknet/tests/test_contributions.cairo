@@ -69,10 +69,13 @@ fn deploy() -> IIwaCircleDispatcher {
     let mut calldata = array![];
     usdc().serialize(ref calldata);
     strk().serialize(ref calldata);
-    settlement_helper().serialize(ref calldata);
     privacy_pool().serialize(ref calldata);
+    settlement_helper().serialize(ref calldata);
     let (address, _) = contract.deploy(@calldata).unwrap();
-    IIwaCircleDispatcher { contract_address: address }
+    let dispatcher = IIwaCircleDispatcher { contract_address: address };
+    start_cheat_caller_address(dispatcher.contract_address, settlement_helper());
+    dispatcher.initialize_settlement_helper(settlement_helper());
+    dispatcher
 }
 fn order() -> Array<felt252> {
     array![invite_commitment(SECRET_1), invite_commitment(SECRET_2), invite_commitment(SECRET_3)]

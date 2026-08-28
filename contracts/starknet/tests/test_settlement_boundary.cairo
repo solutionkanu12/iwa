@@ -46,6 +46,9 @@ fn pool() -> ContractAddress {
 fn other_pool() -> ContractAddress {
     0x445.try_into().unwrap()
 }
+fn setup_authority() -> ContractAddress {
+    0x666.try_into().unwrap()
+}
 fn organizer() -> ContractAddress {
     0xabc.try_into().unwrap()
 }
@@ -72,15 +75,37 @@ fn canonical_s(signature_s: felt252) -> felt252 {
     }
 }
 
-fn deploy() -> IIwaCircleDispatcher {
+fn deploy_uninitialized() -> IIwaCircleDispatcher {
     let contract = declare("IwaCircle").unwrap().contract_class();
     let mut calldata = array![];
     usdc().serialize(ref calldata);
     strk().serialize(ref calldata);
-    helper().serialize(ref calldata);
     pool().serialize(ref calldata);
+    setup_authority().serialize(ref calldata);
     let (address, _) = contract.deploy(@calldata).unwrap();
     IIwaCircleDispatcher { contract_address: address }
+}
+
+fn deploy() -> IIwaCircleDispatcher {
+    let dispatcher = deploy_uninitialized();
+    start_cheat_caller_address(dispatcher.contract_address, setup_authority());
+    dispatcher.initialize_settlement_helper(helper());
+    dispatcher
+}
+
+fn deployment_rejected(
+    usdc_address: ContractAddress,
+    strk_address: ContractAddress,
+    pool_address: ContractAddress,
+    authority: ContractAddress,
+) -> bool {
+    let contract = declare("IwaCircle").unwrap().contract_class();
+    let mut calldata = array![];
+    usdc_address.serialize(ref calldata);
+    strk_address.serialize(ref calldata);
+    pool_address.serialize(ref calldata);
+    authority.serialize(ref calldata);
+    contract.deploy(@calldata).is_err()
 }
 
 fn activate(dispatcher: IIwaCircleDispatcher) -> u32 {
@@ -205,21 +230,119 @@ fn contribution_calldata(
 }
 
 #[test]
-fn constructor_pins_one_immutable_helper_and_pool() {
-    let dispatcher = deploy();
+fn constructor_validates_setup_pool_and_tokens() {
+    let zero: ContractAddress = 0.try_into().unwrap();
+    assert(deployment_rejected(zero, strk(), pool(), setup_authority()), 'zero usdc');
+    assert(deployment_rejected(usdc(), zero, pool(), setup_authority()), 'zero strk');
+    assert(deployment_rejected(usdc(), strk(), zero, setup_authority()), 'zero pool');
+    assert(deployment_rejected(usdc(), strk(), pool(), zero), 'zero authority');
+    assert(deployment_rejected(usdc(), usdc(), pool(), setup_authority()), 'same token');
+}
+
+#[test]
+fn helper_is_unset_until_setup_authority_initializes_once() {
+    let dispatcher = deploy_uninitialized();
     let config = dispatcher.get_settlement_config();
-    assert(config.settlement_helper == helper(), 'helper');
+    let zero: ContractAddress = 0.try_into().unwrap();
+    assert(config.settlement_helper == zero, 'initially unset');
     assert(config.privacy_pool == pool(), 'pool');
+    assert(config.setup_authority == setup_authority(), 'authority');
+    assert(!config.helper_initialized, 'unlocked');
 
     let mut calldata = array![];
-    other_helper().serialize(ref calldata);
-    start_cheat_caller_address(dispatcher.contract_address, organizer());
-    assert(try_call(dispatcher, selector!("set_settlement_helper"), calldata.span()), 'no setter');
+    helper().serialize(ref calldata);
     start_cheat_caller_address(dispatcher.contract_address, attacker());
     assert(
-        try_call(dispatcher, selector!("initialize_settlement_helper"), calldata.span()), 'no init',
+        try_call(dispatcher, selector!("initialize_settlement_helper"), calldata.span()),
+        'attacker rejected',
     );
-    assert(dispatcher.get_settlement_config() == config, 'immutable');
+    start_cheat_caller_address(dispatcher.contract_address, organizer());
+    assert(
+        try_call(dispatcher, selector!("initialize_settlement_helper"), calldata.span()),
+        'organizer rejected',
+    );
+
+    let mut zero_calldata = array![];
+    zero.serialize(ref zero_calldata);
+    start_cheat_caller_address(dispatcher.contract_address, setup_authority());
+    assert(
+        try_call(dispatcher, selector!("initialize_settlement_helper"), zero_calldata.span()),
+        'zero helper rejected',
+    );
+    dispatcher.initialize_settlement_helper(helper());
+
+    let locked = dispatcher.get_settlement_config();
+    assert(locked.settlement_helper == helper(), 'helper stored');
+    assert(locked.setup_authority == zero, 'authority cleared');
+    assert(locked.helper_initialized, 'locked');
+
+    let mut replacement = array![];
+    other_helper().serialize(ref replacement);
+    start_cheat_caller_address(dispatcher.contract_address, setup_authority());
+    assert(
+        try_call(dispatcher, selector!("initialize_settlement_helper"), replacement.span()),
+        'second initialization rejected',
+    );
+    assert(dispatcher.get_settlement_config() == locked, 'immutable');
+    assert(
+        try_call(dispatcher, selector!("set_settlement_helper"), replacement.span()),
+        'no replacement setter',
+    );
+}
+
+#[test]
+fn financial_settlement_rejects_before_helper_initialization() {
+    let dispatcher = deploy_uninitialized();
+    let id = activate(dispatcher);
+    let (r, s) = sign_contribution(key(0x101), id, 1, member_1(), AMOUNT, 99);
+    let calldata = contribution_calldata(id, 1, member_1(), usdc(), AMOUNT, 99, r, s);
+    start_cheat_caller_address(dispatcher.contract_address, helper());
+    assert(
+        try_call(dispatcher, selector!("settle_contribution_from_helper"), calldata.span()),
+        'unset helper rejected',
+    );
+    let cure_calldata = contribution_calldata(id, 1, member_1(), usdc(), AMOUNT, 100, r, s);
+    assert(
+        try_call(dispatcher, selector!("settle_cure_from_helper"), cure_calldata.span()),
+        'unset cure rejected',
+    );
+    let mut outbound_calldata = array![];
+    id.serialize(ref outbound_calldata);
+    1_u32.serialize(ref outbound_calldata);
+    usdc().serialize(ref outbound_calldata);
+    0x999.serialize(ref outbound_calldata);
+    101.serialize(ref outbound_calldata);
+    r.serialize(ref outbound_calldata);
+    s.serialize(ref outbound_calldata);
+    assert(
+        try_call(dispatcher, selector!("settle_payout_from_helper"), outbound_calldata.span()),
+        'unset payout rejected',
+    );
+    assert(
+        try_call(dispatcher, selector!("settle_recovery_from_helper"), outbound_calldata.span()),
+        'unset recovery rejected',
+    );
+    assert(!dispatcher.is_contribution_nonce_consumed(id, member_1(), 99), 'nonce unused');
+}
+
+#[test]
+fn organizer_can_initialize_only_when_explicitly_chosen_as_setup_authority() {
+    let contract = declare("IwaCircle").unwrap().contract_class();
+    let mut calldata = array![];
+    usdc().serialize(ref calldata);
+    strk().serialize(ref calldata);
+    pool().serialize(ref calldata);
+    organizer().serialize(ref calldata);
+    let (address, _) = contract.deploy(@calldata).unwrap();
+    let dispatcher = IIwaCircleDispatcher { contract_address: address };
+
+    start_cheat_caller_address(dispatcher.contract_address, organizer());
+    dispatcher.initialize_settlement_helper(helper());
+    let config = dispatcher.get_settlement_config();
+    let zero: ContractAddress = 0.try_into().unwrap();
+    assert(config.settlement_helper == helper(), 'helper');
+    assert(config.setup_authority == zero, 'authority exhausted');
+    assert(config.helper_initialized, 'locked');
 }
 
 #[test]

@@ -334,13 +334,15 @@ Starknet implementation. The Starknet implementation does not exist yet.
 ## INV-022 — Financial settlement is helper-only and destination-bound
 
 - **Origin:** `NEW` (Task 8A-S security gate, August 28, 2026)
-- **Definition:** One constructor-pinned helper is the only caller that may
-  transition contribution/cure financial state or mark payout/recovery value
-  settled. Every financial authorization binds helper, pool, token, amount,
-  circle, round, member, and nonce. Payout/recovery also bind the rightful
-  member's `open_note_id` under distinct domains.
-- **Enforcement point:** immutable constructor configuration, helper-only core
-  APIs, signature verification, and per-domain nonce maps.
+- **Definition:** One helper, wired exactly once by a constructor-pinned
+  deployment authority, is the only caller that may transition
+  contribution/cure financial state or mark payout/recovery value settled.
+  Initialization clears the authority permanently. Every financial
+  authorization binds helper, pool, token, amount, circle, round, member, and
+  nonce. Payout/recovery also bind the rightful member's `open_note_id` under
+  distinct domains.
+- **Enforcement point:** one-time initialization lock, cleared setup authority,
+  helper-only core APIs, signature verification, and per-domain nonce maps.
 - **Test:** `test_settlement_boundary.cairo`.
 
 ## INV-023 — Funded liabilities are conserved per round and token

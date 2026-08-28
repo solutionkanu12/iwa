@@ -940,12 +940,22 @@ When implementation and this document disagree:
 
 ## Task 8A-S — atomic settlement boundary
 
-The Starknet `IwaCircle` constructor pins exactly one settlement-helper address
-and one STRK20 pool address together with the USDC and STRK allowlist. These
-addresses are immutable: there is no organizer, admin, or replacement setter.
-Deployment must deterministically know the reviewed helper address before
-deploying `IwaCircle`; Task 8A must bind the helper back to the resulting circle
-without creating mutable circle-side authority.
+The Starknet `IwaCircle` constructor pins the STRK20 pool, USDC, STRK, and one
+non-zero deployment-only setup authority. The helper begins unset. The setup
+authority has exactly one capability: call `initialize_settlement_helper` once
+with a non-zero helper. Success stores and permanently locks that helper, marks
+initialization complete, and clears the setup authority to zero. There is no
+organizer, admin, emergency, rotation, or replacement setter.
+
+The deployment sequence is fixed:
+
+1. deploy `IwaCircle` with setup authority, pool, USDC, and STRK;
+2. deploy `IwaStrk20Helper` with the resulting circle, pool, USDC, and STRK;
+3. the setup authority initializes the exact helper once;
+4. verify the helper, initialization lock, and cleared setup authority onchain.
+
+The deployment is invalid until step 4 succeeds. Every helper-only financial
+entrypoint fails while initialization is incomplete.
 
 Public preparation and financial settlement are distinct. `IWA_PAYOUT_V1` may
 produce `SettlementAuthorized`, which does not assert value movement.
