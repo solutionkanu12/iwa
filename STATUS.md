@@ -2,14 +2,15 @@
 
 ## Current phase
 
-**Phase 3 — IwaCircle creation (Task 6A complete)**
+**Phase 3 — IwaCircle membership (Task 6B complete)**
 
-`IwaCircle` can create configured private circles. Membership joins,
-contributions, payout execution, and STRK20 `privacy_invoke` are not
-implemented.
+Circles can be created and joined by proving an off-chain invite secret
+against Poseidon commitments stored in the locked payout order.
+Contributions, payout execution, pause, cure execution, and STRK20
+`privacy_invoke` are not implemented.
 
 No Stellar/Soroban or ZK code has been deleted. `iwa-web/` was not modified
-in Task 6A.
+in Task 6B.
 
 ## STRK20 Private Sprint registration
 
@@ -554,7 +555,8 @@ No Starknet-specific types inside the core.
 
 ### Phase 3 — Cairo IWA circle contracts
 
-Task 5 complete (workspace). Task 6A complete (creation). Next is 6B.
+Task 5 complete (workspace). Task 6A complete (creation). Task 6B complete
+(membership). Next is 6C.
 
 Build and verify:
 
@@ -756,13 +758,54 @@ What was not done (out of 6A scope):
 - no STRK20 helper
 - not committed, not pushed
 
-Next: plan Task 6B — membership (invite/capacity/duplicate/cannot join after
-activation; pause-blocks-joins can wait for 6G if pause is not present yet).
+Next after Task 6A was plan Task 6B (complete — see below).
+
+## IwaCircle membership (plan Task 6B)
+
+Task 6B complete (TDD), including invite-secret join hardening.
+
+Created:
+
+- `contracts/starknet/tests/test_membership.cairo`
+
+Updated:
+
+- `contracts/starknet/src/iwa_circle.cairo` — `join_circle(invite_secret)`
+  hashes with `invite_commitment` before invite-list lookup; does not bind
+  `get_caller_address()`
+- `contracts/starknet/src/iwa_types.cairo` — `INVITE_DOMAIN_TAG` /
+  `invite_commitment` (Poseidon, `'IWA_INVITE_V1'`)
+- `contracts/starknet/src/iwa_events.cairo` — `CircleActivated`;
+  `MemberJoined` emits commitment + slot, never the secret
+
+Security fix: knowing a stored member commitment is no longer enough to join.
+Join requires the invite preimage.
+
+What passed (WSL Ubuntu):
+
+- `scarb fmt --check` — exit 0
+- `scarb build` — exit 0
+- `snforge test` — 33 passed, 0 failed
+- no `iwa-web/` changes
+- no legacy deletions
+
+What was not done (out of 6B scope):
+
+- no pause (6G)
+- no contributions / grace execution
+- no payout or cure execution
+- no STRK20 helper
+- not committed, not pushed
+
+Next: plan Task 6C — fixed payout order (immutability after lock/activation;
+admin cannot reorder). Order is already stored and unchanged by joins; 6C
+should add explicit reorder-rejection tests/entrypoints if any write path
+exists.
 
 ## Immediate next work
 
 1. Do not delete legacy code.
-2. Implement IwaCircle membership with TDD (plan Task 6B).
+2. Implement payout-order immutability tests (plan Task 6C).
 3. Do not implement contributions, payouts, or STRK20 `privacy_invoke` yet.
 4. STRK20 helper design must follow the verified integration research
    (`docs/strk20/INTEGRATION_RESEARCH.md`) — never from memory.
@@ -786,5 +829,5 @@ August 28, 2026
 
 Current state:
 
-**Phase 3 Task 6A complete. IwaCircle creation is implemented.
-Next: plan Task 6B — membership.**
+**Phase 3 Task 6B complete. Invite-secret membership is hardened.
+Next: plan Task 6C — payout-order immutability.**

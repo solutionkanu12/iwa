@@ -22,6 +22,12 @@ pub struct MemberJoined {
 }
 
 #[derive(Drop, starknet::Event)]
+pub struct CircleActivated {
+    #[key]
+    pub circle_id: u32,
+}
+
+#[derive(Drop, starknet::Event)]
 pub struct ContributionRecorded {
     #[key]
     pub circle_id: u32,

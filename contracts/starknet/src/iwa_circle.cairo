@@ -1,5 +1,5 @@
-// IwaCircle — circle creation and configuration (Task 6A).
-// No join, contribution, payout execution, or STRK20 helper in this slice.
+// IwaCircle — creation (6A) and invite-list membership (6B).
+// No contribution, payout, pause, cure execution, or STRK20 helper.
 
 use starknet::ContractAddress;
 use super::iwa_types::{CircleStatus, CureConfig, SupportedAsset};
@@ -17,6 +17,7 @@ pub struct CircleView {
     pub created_at: u64,
     pub organizer: ContractAddress,
     pub payout_order_locked: bool,
+    pub joined_count: u8,
 }
 
 #[starknet::interface]
@@ -33,6 +34,8 @@ pub trait IIwaCircle<TContractState> {
     fn get_circle(self: @TContractState, circle_id: u32) -> CircleView;
     fn get_payout_order(self: @TContractState, circle_id: u32) -> Array<felt252>;
     fn get_cure_config(self: @TContractState, circle_id: u32) -> CureConfig;
+    fn join_circle(ref self: TContractState, circle_id: u32, invite_secret: felt252) -> u8;
+    fn is_member(self: @TContractState, circle_id: u32, member_ref: felt252) -> bool;
 }
 
 #[starknet::contract]
@@ -44,8 +47,10 @@ pub mod IwaCircle {
     };
     use starknet::{ContractAddress, get_block_timestamp, get_caller_address};
     use super::super::iwa_errors;
-    use super::super::iwa_events::CircleCreated;
-    use super::super::iwa_types::{CircleStatus, CureConfig, SupportedAsset, locked_cure_config};
+    use super::super::iwa_events::{CircleActivated, CircleCreated, MemberJoined};
+    use super::super::iwa_types::{
+        CircleStatus, CureConfig, SupportedAsset, invite_commitment, locked_cure_config,
+    };
     use super::{CircleView, IIwaCircle};
 
     #[derive(Copy, Drop, starknet::Store)]
@@ -61,6 +66,7 @@ pub mod IwaCircle {
         organizer: ContractAddress,
         cure: CureConfig,
         payout_order_locked: bool,
+        joined_count: u8,
     }
 
     #[storage]
@@ -72,12 +78,15 @@ pub mod IwaCircle {
         circles: Map<u32, CircleRecord>,
         payout_order: Map<(u32, u8), felt252>,
         payout_order_len: Map<u32, u8>,
+        joined: Map<(u32, felt252), bool>,
     }
 
     #[event]
     #[derive(Drop, starknet::Event)]
     enum Event {
         CircleCreated: CircleCreated,
+        MemberJoined: MemberJoined,
+        CircleActivated: CircleActivated,
     }
 
     #[constructor]
@@ -122,6 +131,7 @@ pub mod IwaCircle {
                 organizer: get_caller_address(),
                 cure: locked_cure_config(),
                 payout_order_locked: true,
+                joined_count: 0,
             };
             self.circles.write(id, record);
             self.exists.write(id, true);
@@ -145,6 +155,7 @@ pub mod IwaCircle {
                 created_at: record.created_at,
                 organizer: record.organizer,
                 payout_order_locked: record.payout_order_locked,
+                joined_count: record.joined_count,
             }
         }
 
@@ -162,6 +173,35 @@ pub mod IwaCircle {
 
         fn get_cure_config(self: @ContractState, circle_id: u32) -> CureConfig {
             self.read_record(circle_id).cure
+        }
+
+        fn join_circle(ref self: ContractState, circle_id: u32, invite_secret: felt252) -> u8 {
+            let mut record = self.read_record(circle_id);
+            assert(record.status == CircleStatus::OpenForMembers, iwa_errors::JOIN_CLOSED);
+            assert(invite_secret != 0, iwa_errors::INVALID_CONFIG);
+            let member_ref = invite_commitment(invite_secret);
+            let slot = self.find_invite_slot(circle_id, member_ref);
+            assert(!self.joined.read((circle_id, member_ref)), iwa_errors::ALREADY_MEMBER);
+            assert(record.joined_count < record.member_limit, iwa_errors::CIRCLE_FULL);
+
+            self.joined.write((circle_id, member_ref), true);
+            record.joined_count += 1;
+            let activating = record.joined_count == record.member_limit;
+            if activating {
+                record.status = CircleStatus::Active;
+            }
+            self.circles.write(circle_id, record);
+
+            self.emit(MemberJoined { circle_id, member_ref, slot });
+            if activating {
+                self.emit(CircleActivated { circle_id });
+            }
+            slot
+        }
+
+        fn is_member(self: @ContractState, circle_id: u32, member_ref: felt252) -> bool {
+            self.assert_exists(circle_id);
+            self.joined.read((circle_id, member_ref))
         }
     }
 
@@ -184,6 +224,18 @@ pub mod IwaCircle {
         fn read_record(self: @ContractState, circle_id: u32) -> CircleRecord {
             self.assert_exists(circle_id);
             self.circles.read(circle_id)
+        }
+
+        fn find_invite_slot(self: @ContractState, circle_id: u32, member_ref: felt252) -> u8 {
+            let len = self.payout_order_len.read(circle_id);
+            let mut slot: u8 = 0;
+            while slot < len {
+                if self.payout_order.read((circle_id, slot)) == member_ref {
+                    return slot;
+                }
+                slot += 1;
+            }
+            core::panic_with_felt252(iwa_errors::NOT_MEMBER)
         }
 
         fn store_payout_order(

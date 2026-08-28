@@ -2,6 +2,16 @@
 // Identities are felt252 commitments (INV-013), never ContractAddress.
 // Token addresses stay in chain config; the domain allowlist is this enum.
 
+use core::poseidon::poseidon_hash_span;
+
+/// Domain-separated invite commitment. Off-chain invite secrets never appear
+/// in storage or events. Join proves possession of the preimage.
+pub const INVITE_DOMAIN_TAG: felt252 = 'IWA_INVITE_V1';
+
+pub fn invite_commitment(secret: felt252) -> felt252 {
+    poseidon_hash_span(array![INVITE_DOMAIN_TAG, secret].span())
+}
+
 /// Reliability classification of a contribution obligation (INV-018).
 /// No default variant: uninitialized storage must not become a valid status.
 #[allow(starknet::store_no_default_variant)]
