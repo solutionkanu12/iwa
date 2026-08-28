@@ -23,3 +23,4 @@ pub const NONCE_USED: felt252 = 'IWA: nonce used';
 pub const ALREADY_SATISFIED: felt252 = 'IWA: already satisfied';
 pub const OBLIGATION_NOT_FOUND: felt252 = 'IWA: obligation not found';
 pub const CONTRIBUTION_WINDOW_CLOSED: felt252 = 'IWA: window closed';
+pub const GRACE_NOT_EXPIRED: felt252 = 'IWA: grace not expired';

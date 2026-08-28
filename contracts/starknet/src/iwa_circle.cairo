@@ -60,6 +60,13 @@ pub trait IIwaCircle<TContractState> {
         signature_r: felt252,
         signature_s: felt252,
     ) -> ContributionStatus;
+    /// Permissionless post-grace finalization of an unpaid obligation.
+    /// The outcome derives only from immutable obligation state and the
+    /// contract-side block timestamp, so the caller has no discretion over
+    /// the member, status, deadline, amount, or asset. No token movement.
+    fn finalize_contribution_default(
+        ref self: TContractState, circle_id: u32, round: u32, member_ref: felt252,
+    ) -> ContributionStatus;
 }
 
 #[starknet::contract]
@@ -322,6 +329,36 @@ pub mod IwaCircle {
             self.contribution_nonces.write(nonce_key, true);
             self.emit(ContributionStateUpdated { circle_id, round, member_ref, status });
             status
+        }
+
+        fn finalize_contribution_default(
+            ref self: ContractState, circle_id: u32, round: u32, member_ref: felt252,
+        ) -> ContributionStatus {
+            self.assert_exists(circle_id);
+            let key = (circle_id, round, member_ref);
+            assert(self.obligation_exists.read(key), iwa_errors::OBLIGATION_NOT_FOUND);
+            let mut obligation = self.obligations.read(key);
+
+            // Only an unresolved obligation may default. ON_TIME,
+            // LATE_WITHIN_GRACE, and MISSED_DEFAULT are historical and are
+            // never rewritten, by any caller (INV-004).
+            assert(obligation.status == ContributionStatus::Pending, iwa_errors::HISTORY_IMMUTABLE);
+
+            // Same contract-side clock the classifier uses, compared against the
+            // deadline stored on the obligation at round creation. Strictly
+            // after `grace_ends_at`; the boundary itself is still curable by a
+            // LATE_WITHIN_GRACE contribution (INV-018).
+            assert(get_block_timestamp() > obligation.grace_ends_at, iwa_errors::GRACE_NOT_EXPIRED);
+
+            obligation.status = ContributionStatus::MissedDefault;
+            self.obligations.write(key, obligation);
+            self
+                .emit(
+                    ContributionStateUpdated {
+                        circle_id, round, member_ref, status: ContributionStatus::MissedDefault,
+                    },
+                );
+            ContributionStatus::MissedDefault
         }
     }
 

@@ -2,7 +2,7 @@
 
 ## Current phase
 
-**Phase 3 — authenticated contribution accounting (Task 6D complete)**
+**Phase 3 — contribution accounting and defaults (Task 6E complete)**
 
 Circles can be created and joined by proving an off-chain invite secret
 against Poseidon commitments stored in the locked payout order.
@@ -14,13 +14,15 @@ Activation now creates exactly one contribution obligation per circle, round,
 and member, each carrying the circle's locked asset and required amount.
 Members satisfy the current round's obligation with a signed, nonce-bound
 authorization that is verified and consumed atomically, producing an ON_TIME
-or LATE_WITHIN_GRACE transition.
+or LATE_WITHIN_GRACE transition. An obligation still unpaid strictly after its
+grace deadline can be finalized as MISSED_DEFAULT by any caller, derived from
+immutable obligation state and the contract clock alone.
 Contribution state is accounting only: real ERC-20/STRK20 settlement is
 intentionally not implemented yet. Payout execution, pause, cure execution,
 and STRK20 `privacy_invoke` are not implemented.
 
 No Stellar/Soroban or ZK code has been deleted. `iwa-web/` was not modified
-in Task 6D.
+in Task 6E.
 
 ## STRK20 Private Sprint registration
 
@@ -568,7 +570,8 @@ No Starknet-specific types inside the core.
 Task 5 complete (workspace). Task 6A complete (creation). Task 6B complete
 (membership). Task 6C complete (fixed payout-order immutability). Task 6D-A
 complete (member authorization foundation). Task 6D complete (authenticated
-contribution obligations with atomic nonce consumption). Task 6E not started.
+contribution obligations with atomic nonce consumption). Task 6E complete
+(post-grace default finalization). Next is Task 6F cure execution.
 
 Build and verify:
 
@@ -962,15 +965,97 @@ What passed (WSL Ubuntu):
 - no legacy deletions
 - not committed, not pushed
 
-Task 6E not started.
+Task 6E followed (see below).
+
+## IwaCircle post-grace default finalization (plan Task 6E)
+
+Task 6E complete (TDD) and fully verified.
+
+Created:
+
+- `contracts/starknet/tests/test_defaults.cairo`
+
+Updated:
+
+- `contracts/starknet/src/iwa_circle.cairo` — `finalize_contribution_default`
+- `contracts/starknet/src/iwa_errors.cairo` — `GRACE_NOT_EXPIRED`
+
+`iwa_types.cairo` and `iwa_events.cairo` needed no change: `MISSED_DEFAULT`
+already existed as a locked reliability state, and `ContributionStateUpdated`
+already carries the resulting status, so no new event surface was introduced.
+
+Finalization model:
+
+- one new entrypoint, `finalize_contribution_default(circle_id, round,
+  member_ref)`, returning the resulting `ContributionStatus`
+- permissionless: any caller may finalize, because the outcome derives only
+  from immutable obligation state plus the contract-side block timestamp
+- the caller supplies only the obligation coordinates; member, status,
+  deadline, amount, and asset are all read from storage and none of them are
+  caller-influenced
+- the obligation must exist for the exact `(circle_id, round, member_ref)`;
+  unknown circle, round, or member is rejected
+- only a `PENDING` obligation may transition; every other status is rejected
+  as `IWA: history immutable`
+- no token movement, no payout, no cure execution, no `privacy_invoke`
+
+Boundary semantics (INV-018):
+
+```text
+now <= due_at                  -> ON_TIME            (satisfy path)
+due_at < now <= grace_ends_at  -> LATE_WITHIN_GRACE  (satisfy path)
+now == grace_ends_at           -> not defaultable
+now >  grace_ends_at           -> MISSED_DEFAULT     (finalize path)
+```
+
+`grace_ends_at` itself stays curable by a late contribution; the first second
+strictly after it is the first defaultable timestamp.
+
+Security review:
+
+- every write to `obligations` is guarded: creation asserts the obligation does
+  not already exist, and `satisfy_contribution` and
+  `finalize_contribution_default` each assert `status == Pending` first
+- the only status transitions that exist are `PENDING -> ON_TIME`,
+  `PENDING -> LATE_WITHIN_GRACE`, and `PENDING -> MISSED_DEFAULT`; there is no
+  reverse or rewrite edge, and no path clears `obligation_exists`
+- both deadlines are stored on the obligation at round creation from one
+  contract-side `get_block_timestamp()` read; no caller-supplied time exists
+  anywhere in the contract
+- `get_caller_address()` is read only at circle creation to record the
+  organizer, and that field is never consulted for authorization, so no admin
+  or organizer privilege exists in the contract at all
+- no ERC-20, transfer, approve, external contract call, library call, class
+  replacement, or `privacy_invoke` surface exists under
+  `contracts/starknet/src`
+- the emitted event carries `circle_id`, `round`, `member_ref`, and `status`
+  only — no wallet address, auth key, or invite secret
+
+What passed (WSL Ubuntu):
+
+- `scarb fmt` and `scarb fmt --check` — exit 0
+- `scarb build` — exit 0
+- `snforge test test_defaults` — 19 passed, 0 failed
+- `snforge test` — 95 passed, 0 failed
+- `git diff --check` — exit 0
+- no `iwa-web/` changes
+- no legacy deletions
+- not committed, not pushed
+
+Still intentionally absent:
+
+- real ERC-20 / STRK20 settlement
+- cure execution (Task 6F), payouts, pause, and `privacy_invoke`
 
 ## Immediate next work
 
 1. Do not delete legacy code.
-2. Task 6D is complete and fully verified. Task 6E has not been started.
-3. Do not implement `MISSED_DEFAULT` behavior, payouts, cure execution, pause,
-   or STRK20 `privacy_invoke` outside their own tasks. Real ERC-20 / STRK20
-   settlement for contributions remains intentionally absent.
+2. Task 6E is complete and fully verified. Next is Task 6F — cure execution
+   for `MISSED_DEFAULT` obligations under the locked `CureConfig`, beginning
+   with failing tests in `contracts/starknet/tests/test_cure.cairo`.
+3. A cure must settle the deficit without rewriting `MISSED_DEFAULT`. Do not
+   implement payouts, pause, or STRK20 `privacy_invoke` outside their own
+   tasks. Real ERC-20 / STRK20 settlement remains intentionally absent.
 4. STRK20 helper design must follow the verified integration research
    (`docs/strk20/INTEGRATION_RESEARCH.md`) — never from memory.
 
@@ -993,9 +1078,9 @@ August 28, 2026
 
 Current state:
 
-**Phase 3 Task 6D complete and fully verified. Circle activation creates one
-locked-terms contribution obligation per circle, round, and member, and members
-satisfy the current round with a signed, nonce-bound authorization that is
-verified and consumed atomically, producing ON_TIME or LATE_WITHIN_GRACE. Real
-ERC-20 / STRK20 settlement is intentionally not implemented yet. Next: Task 6E,
-not started.**
+**Phase 3 Task 6E complete and fully verified. An unpaid obligation can be
+finalized as MISSED_DEFAULT permissionlessly and deterministically, only
+strictly after `grace_ends_at`, and ON_TIME, LATE_WITHIN_GRACE, and
+MISSED_DEFAULT are never rewritten. Real ERC-20 / STRK20 settlement is still
+intentionally not implemented. Next: Task 6F — cure execution under the locked
+CureConfig, without rewriting MISSED_DEFAULT.**
