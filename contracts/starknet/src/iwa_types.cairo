@@ -18,8 +18,14 @@ pub const CURE_SETTLEMENT_DOMAIN_TAG: felt252 = 'IWA_CURE_SETTLEMENT_V1';
 pub const PAYOUT_SETTLEMENT_DOMAIN_TAG: felt252 = 'IWA_PAYOUT_SETTLEMENT_V1';
 pub const RECOVERY_SETTLEMENT_DOMAIN_TAG: felt252 = 'IWA_RECOVERY_SETTLEMENT_V1';
 
-pub fn invite_commitment(secret: felt252) -> felt252 {
-    poseidon_hash_span(array![INVITE_DOMAIN_TAG, secret].span())
+/// Binds an invite to the exact authentication key the organizer intends the
+/// member to register. A leaked `secret` alone is useless: presenting it with
+/// any other key produces a different commitment, which matches no slot in the
+/// locked payout order. The commitment stays one felt, so `member_ref` and every
+/// downstream obligation, nonce, payout-order and signature path are unchanged,
+/// and membership remains unbound to any Starknet caller address.
+pub fn invite_commitment(secret: felt252, auth_public_key: felt252) -> felt252 {
+    poseidon_hash_span(array![INVITE_DOMAIN_TAG, secret, auth_public_key].span())
 }
 
 /// A member authentication key is an x-coordinate on the Stark curve. It is

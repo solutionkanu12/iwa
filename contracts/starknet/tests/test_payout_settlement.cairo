@@ -50,10 +50,10 @@ fn key(secret: felt252) -> StarkCurveKeyPair {
     StarkCurveKeyPairImpl::from_secret_key(secret)
 }
 fn member_1() -> felt252 {
-    invite_commitment(SECRET_1)
+    invite_commitment(SECRET_1, key(0x101).public_key)
 }
 fn member_2() -> felt252 {
-    invite_commitment(SECRET_2)
+    invite_commitment(SECRET_2, key(0x102).public_key)
 }
 
 fn canonical_s(signature_s: felt252) -> felt252 {

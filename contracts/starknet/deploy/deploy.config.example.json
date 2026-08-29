@@ -1,0 +1,24 @@
+{
+  "_comment": "Copy to deploy.config.json and fill in. Every REPLACE_ME is rejected by the validator, so a half-filled config cannot deploy. Addresses below marked (verified) were confirmed against Starknet mainnet on 2026-08-29 — see docs/strk20/INTEGRATION_RESEARCH.md and re-verify immediately before deploying.",
+
+  "network": "mainnet",
+  "rpc_url": "https://api.cartridge.gg/x/starknet/mainnet",
+
+  "_privacy_pool": "(verified) StarkWare STRK20 privacy pool. get_version() returned '2.0'. IWA integrates with this; IWA never deploys it.",
+  "privacy_pool": "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a",
+
+  "_usdc_token": "(verified) Circle native USDC on Starknet, symbol USDC, 6 decimals. Not bridged USDC.e.",
+  "usdc_token": "0x033068F6539f8e6e6b131e6B2B814e6c34A5224bC66947c47DaB9dFeE93b35fb",
+
+  "_strk_token": "(verified) STRK, symbol STRK, 18 decimals, name 'Starknet Token'.",
+  "strk_token": "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d",
+
+  "_surplus_sink": "REQUIRED AND IMMUTABLE. Destination for unaccounted tokens sent to the helper. Must be a dedicated IWA protocol treasury multisig. Must not be the helper, the pool, either token, or the setup authority. Deliberately left unset: see the sink policy in deploy/README.md. Choosing this wrongly cannot be corrected after deployment.",
+  "surplus_sink": "REPLACE_ME_WITH_IWA_TREASURY_MULTISIG",
+
+  "_setup_authority": "One-time initializer for IwaCircle. Its only power is calling initialize_settlement_helper once; the contract clears it to zero on success.",
+  "setup_authority": "REPLACE_ME_WITH_SETUP_AUTHORITY_ADDRESS",
+
+  "_deployer_account": "sncast account name used to sign declare/deploy/invoke. Only needed for the gated `deploy` subcommand.",
+  "deployer_account": "REPLACE_ME_WITH_SNCAST_ACCOUNT_NAME"
+}

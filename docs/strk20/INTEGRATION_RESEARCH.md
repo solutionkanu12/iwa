@@ -688,3 +688,77 @@ Regression coverage lives in `tests/test_strk20_pool_integration.cairo` and
 proves donations never become backing, normalization restores exact inbound
 settlement through the real pool, legitimate backing can never be swept,
 tokens stay isolated, and the caller cannot choose the destination or profit.
+
+## Task 8C: mainnet address re-verification (2026-08-29)
+
+Re-verified from current authoritative sources, not from memory or from earlier
+notes in this document. Two independent kinds of evidence were used: published
+documentation, and direct read-only calls against Starknet mainnet.
+
+The RPC endpoint `https://api.cartridge.gg/x/starknet/mainnet` returned chain id
+`0x534e5f4d41494e` (`SN_MAIN`), confirming the calls below were made against
+mainnet. No transaction was sent.
+
+### STRK20 privacy pool — CONFIRMED
+
+`0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a`
+
+- `starknet_getClassHashAt` returned class
+  `0x67dddd89d80fedadc06b6f160798f94800a4a70164e5a24301cd0d6076b554d`,
+  so a contract is deployed there.
+- `get_version()` returned `0x322e30`, which is the short string `"2.0"` —
+  exactly `privacy::utils::constants::CONTRACT_VERSION` in the pinned revision.
+- `get_fee_amount()` and `is_open_note_depositor_blocked(...)` both answered,
+  so the address exposes the pinned pool's `IViews`/`IFees` interface.
+
+This is the strongest available evidence short of a class-hash match: the
+address answers the exact view interface of the pinned pool at the pinned
+version. Web search did **not** corroborate the address from documentation, and
+the pinned repository does not contain any mainnet address, so the on-chain
+interface probe is the verification of record. Re-run it immediately before
+deployment with `deploy/iwa-deploy.sh validate`.
+
+### Native USDC — CONFIRMED
+
+`0x033068F6539f8e6e6b131e6B2B814e6c34A5224bC66947c47DaB9dFeE93b35fb`
+
+- Listed as the Starknet mainnet USDC address in Circle's official developer
+  documentation (`developers.circle.com/stablecoins/usdc-contract-addresses`).
+- On chain: `symbol()` = `"USDC"`, `decimals()` = `6`, `name()` = `"USDC"`.
+
+Note the bridged token `USDC.e`
+(`0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8`) is a
+**different** contract. IWA uses native USDC only.
+
+**Six decimals.** One USDC is `1_000_000`. Any UI or amount arithmetic must not
+assume 18.
+
+### STRK — CONFIRMED
+
+`0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d`
+
+- Corroborated by `starknet-io/starknet-addresses` and Starkscan.
+- On chain: `symbol()` = `"STRK"`, `decimals()` = `18`,
+  `name()` = `"Starknet Token"`.
+
+### Live pool fee — new operational finding
+
+`get_fee_amount()` returned `6000000000000000000`, i.e. **6 STRK per
+`apply_actions` call**, pulled from the caller by `collect_fee` via
+`checked_transfer_from` on the STRK token. Local integration tests ran against a
+pool deployed with a zero fee, so this cost does not appear in them.
+
+Consequences: whoever submits an IWA pool transaction must hold STRK and have
+approved the pool for the fee, and the fee must be read live rather than
+hardcoded, since a governance action can change it.
+
+### Verification method
+
+Reproduce with:
+
+```
+contracts/starknet/deploy/iwa-deploy.sh validate <config.json>
+```
+
+which repeats the chain-id check, the pool class and interface probe, and the
+token symbol and decimals checks, and sends nothing.

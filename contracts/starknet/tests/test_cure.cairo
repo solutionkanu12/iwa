@@ -50,6 +50,23 @@ fn stranger() -> ContractAddress {
 fn key(secret: felt252) -> StarkCurveKeyPair {
     StarkCurveKeyPairImpl::from_secret_key(secret)
 }
+
+/// IWA-01: the invite commitment binds the member's authentication key, so a
+/// leaked secret alone matches no slot. Tests map each secret to the key that
+/// member actually registers.
+fn invite(secret: felt252) -> felt252 {
+    invite_commitment(secret, auth_key_for(secret))
+}
+
+fn auth_key_for(secret: felt252) -> felt252 {
+    if secret == SECRET_1 {
+        key(0x101).public_key
+    } else if secret == SECRET_2 {
+        key(0x102).public_key
+    } else {
+        key(0x103).public_key
+    }
+}
 fn canonical_s(signature_s: felt252) -> felt252 {
     const ORDER_U256: u256 = stark_curve::ORDER.into();
     let s: u256 = signature_s.into();
@@ -87,7 +104,7 @@ fn deploy() -> IIwaCircleDispatcher {
     dispatcher
 }
 fn order() -> Array<felt252> {
-    array![invite_commitment(SECRET_1), invite_commitment(SECRET_2), invite_commitment(SECRET_3)]
+    array![invite(SECRET_1), invite(SECRET_2), invite(SECRET_3)]
 }
 fn activate(dispatcher: IIwaCircleDispatcher) -> u32 {
     start_cheat_caller_address(dispatcher.contract_address, organizer());
@@ -137,7 +154,7 @@ fn cure(
 fn missed_default_is_curable_and_preserves_history() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     default_member(dispatcher, id, member_ref);
     cure(dispatcher, id, member_ref, key(0x101), 41);
     let obligation = dispatcher.get_contribution_obligation(id, 1, member_ref);
@@ -153,7 +170,7 @@ fn missed_default_is_curable_and_preserves_history() {
 fn pending_is_not_curable() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    cure(dispatcher, id, invite_commitment(SECRET_1), key(0x101), 42);
+    cure(dispatcher, id, invite(SECRET_1), key(0x101), 42);
 }
 
 #[test]
@@ -161,7 +178,7 @@ fn pending_is_not_curable() {
 fn on_time_is_not_curable() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     satisfy(dispatcher, id, member_ref, key(0x101), 43, DUE_AT);
     cure(dispatcher, id, member_ref, key(0x101), 44);
 }
@@ -171,7 +188,7 @@ fn on_time_is_not_curable() {
 fn late_within_grace_is_not_curable() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     satisfy(dispatcher, id, member_ref, key(0x101), 45, GRACE_ENDS_AT);
     cure(dispatcher, id, member_ref, key(0x101), 46);
 }
@@ -181,17 +198,16 @@ fn late_within_grace_is_not_curable() {
 fn nonexistent_obligation_is_rejected() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let (r, s) = sign_cure(key(0x101), id, 2, invite_commitment(SECRET_1), AMOUNT, 47);
+    let (r, s) = sign_cure(key(0x101), id, 2, invite(SECRET_1), AMOUNT, 47);
     start_cheat_caller_address(dispatcher.contract_address, settlement_helper());
-    dispatcher
-        .settle_cure_from_helper(id, 2, invite_commitment(SECRET_1), usdc(), AMOUNT, 47, r, s);
+    dispatcher.settle_cure_from_helper(id, 2, invite(SECRET_1), usdc(), AMOUNT, 47, r, s);
 }
 
 #[test]
 fn exact_stored_amount_is_authoritative() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     default_member(dispatcher, id, member_ref);
     assert(dispatcher.get_cure_state(id, 1, member_ref).deficit_amount == AMOUNT, 'exact');
 }
@@ -201,7 +217,7 @@ fn exact_stored_amount_is_authoritative() {
 fn invalid_signature_is_rejected() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     default_member(dispatcher, id, member_ref);
     start_cheat_caller_address(dispatcher.contract_address, settlement_helper());
     dispatcher.settle_cure_from_helper(id, 1, member_ref, usdc(), AMOUNT, 48, 1, 1);
@@ -212,7 +228,7 @@ fn invalid_signature_is_rejected() {
 fn wrong_member_signature_is_rejected() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_2);
+    let member_ref = invite(SECRET_2);
     default_member(dispatcher, id, member_ref);
     let (r, s) = sign_cure(key(0x101), id, 1, member_ref, AMOUNT, 49);
     start_cheat_caller_address(dispatcher.contract_address, settlement_helper());
@@ -224,7 +240,7 @@ fn wrong_member_signature_is_rejected() {
 fn wrong_circle_signature_is_rejected() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     default_member(dispatcher, id, member_ref);
     let (r, s) = sign_cure(key(0x101), id + 1, 1, member_ref, AMOUNT, 50);
     start_cheat_caller_address(dispatcher.contract_address, settlement_helper());
@@ -236,7 +252,7 @@ fn wrong_circle_signature_is_rejected() {
 fn wrong_round_signature_is_rejected() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     default_member(dispatcher, id, member_ref);
     let (r, s) = sign_cure(key(0x101), id, 2, member_ref, AMOUNT, 51);
     start_cheat_caller_address(dispatcher.contract_address, settlement_helper());
@@ -248,7 +264,7 @@ fn wrong_round_signature_is_rejected() {
 fn wrong_amount_authorization_is_rejected() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     default_member(dispatcher, id, member_ref);
     let (r, s) = sign_cure(key(0x101), id, 1, member_ref, AMOUNT + 1, 52);
     start_cheat_caller_address(dispatcher.contract_address, settlement_helper());
@@ -260,7 +276,7 @@ fn wrong_amount_authorization_is_rejected() {
 fn contribution_domain_signature_is_rejected_for_cure() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     default_member(dispatcher, id, member_ref);
     let hash = contribution_authorization_hash(id, 1, member_ref, AMOUNT, 53);
     let (r, raw_s) = StarkCurveSignerImpl::sign(key(0x101), hash).unwrap();
@@ -271,7 +287,7 @@ fn contribution_domain_signature_is_rejected_for_cure() {
 
 #[test]
 fn cure_and_contribution_domains_are_not_cross_replayable() {
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     let keypair = key(0x101);
     let (cure_r, cure_s) = sign_cure(keypair, 1, 1, member_ref, AMOUNT, 54);
     assert(
@@ -294,7 +310,7 @@ fn cure_and_contribution_domains_are_not_cross_replayable() {
 fn nonce_is_consumed_on_success() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     default_member(dispatcher, id, member_ref);
     cure(dispatcher, id, member_ref, key(0x101), 56);
     assert(dispatcher.is_cure_nonce_consumed(id, member_ref, 56), 'consumed');
@@ -304,7 +320,7 @@ fn nonce_is_consumed_on_success() {
 fn failed_cure_does_not_consume_nonce_or_settle_deficit() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     default_member(dispatcher, id, member_ref);
     let mut calldata = array![];
     id.serialize(ref calldata);
@@ -329,7 +345,7 @@ fn failed_cure_does_not_consume_nonce_or_settle_deficit() {
 fn reused_nonce_is_rejected() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     default_member(dispatcher, id, member_ref);
     cure(dispatcher, id, member_ref, key(0x101), 58);
     let (r, s) = sign_cure(key(0x101), id, 1, member_ref, AMOUNT, 58);
@@ -341,7 +357,7 @@ fn reused_nonce_is_rejected() {
 fn double_cure_with_fresh_nonce_is_rejected() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     default_member(dispatcher, id, member_ref);
     cure(dispatcher, id, member_ref, key(0x101), 59);
     cure(dispatcher, id, member_ref, key(0x101), 60);
@@ -352,7 +368,7 @@ fn double_cure_with_fresh_nonce_is_rejected() {
 fn organizer_has_no_bypass() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     default_member(dispatcher, id, member_ref);
     start_cheat_caller_address(dispatcher.contract_address, organizer());
     let (r, s) = sign_cure(key(0x999), id, 1, member_ref, AMOUNT, 61);
@@ -364,7 +380,7 @@ fn organizer_has_no_bypass() {
 fn unrelated_caller_has_no_bypass() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     default_member(dispatcher, id, member_ref);
     start_cheat_caller_address(dispatcher.contract_address, stranger());
     let (r, s) = sign_cure(key(0x999), id, 1, member_ref, AMOUNT, 62);
@@ -375,7 +391,7 @@ fn unrelated_caller_has_no_bypass() {
 fn cure_changes_only_deficit_settlement_state() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     default_member(dispatcher, id, member_ref);
     let order_before = dispatcher.get_payout_order(id);
     let circle_before = dispatcher.get_circle(id);

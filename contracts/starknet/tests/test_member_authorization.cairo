@@ -49,6 +49,27 @@ fn key_2() -> StarkCurveKeyPair {
     StarkCurveKeyPairImpl::from_secret_key(0x67890)
 }
 
+/// IWA-01: the invite commitment binds the member authentication key, so the
+/// organizer commits the key each member will register. SECRET_3 is never
+/// joined in this file; its slot only needs a deterministic commitment.
+fn invite(secret: felt252) -> felt252 {
+    invite_commitment(secret, auth_key_for(secret))
+}
+
+fn auth_key_for(secret: felt252) -> felt252 {
+    if secret == SECRET_1 {
+        key_1().public_key
+    } else if secret == SECRET_2 {
+        key_2().public_key
+    } else {
+        key_3().public_key
+    }
+}
+
+fn key_3() -> StarkCurveKeyPair {
+    StarkCurveKeyPairImpl::from_secret_key(0x33333)
+}
+
 fn canonical_s(signature_s: felt252) -> felt252 {
     const ORDER_U256: u256 = stark_curve::ORDER.into();
     let s: u256 = signature_s.into();
@@ -74,7 +95,7 @@ fn deploy() -> IIwaCircleDispatcher {
 }
 
 fn invite_order() -> Array<felt252> {
-    array![invite_commitment(SECRET_1), invite_commitment(SECRET_2), invite_commitment(SECRET_3)]
+    array![invite(SECRET_1), invite(SECRET_2), invite(SECRET_3)]
 }
 
 fn open_circle(dispatcher: IIwaCircleDispatcher) -> u32 {
@@ -100,7 +121,7 @@ fn valid_invite_registers_auth_public_key_for_member_ref() {
     let slot = dispatcher.join_circle(id, SECRET_1, keypair.public_key);
     assert(slot == 0, 'slot');
     assert(
-        dispatcher.get_member_auth_key(id, invite_commitment(SECRET_1)) == keypair.public_key,
+        dispatcher.get_member_auth_key(id, invite(SECRET_1)) == keypair.public_key,
         'auth key persisted',
     );
 }
@@ -132,14 +153,13 @@ fn auth_public_key_cannot_be_changed_after_join() {
 
     let mut calldata = array![];
     id.serialize(ref calldata);
-    invite_commitment(SECRET_1).serialize(ref calldata);
+    invite(SECRET_1).serialize(ref calldata);
     key_2().public_key.serialize(ref calldata);
     assert_missing_auth_mutator(
         dispatcher.contract_address, selector!("set_member_auth_key"), calldata.span(),
     );
     assert(
-        dispatcher.get_member_auth_key(id, invite_commitment(SECRET_1)) == first.public_key,
-        'key unchanged',
+        dispatcher.get_member_auth_key(id, invite(SECRET_1)) == first.public_key, 'key unchanged',
     );
 }
 
@@ -153,13 +173,13 @@ fn organizer_cannot_replace_member_auth_public_key() {
 
     let mut calldata = array![];
     id.serialize(ref calldata);
-    invite_commitment(SECRET_1).serialize(ref calldata);
+    invite(SECRET_1).serialize(ref calldata);
     key_2().public_key.serialize(ref calldata);
     assert_missing_auth_mutator(
         dispatcher.contract_address, selector!("replace_member_auth_key"), calldata.span(),
     );
     assert(
-        dispatcher.get_member_auth_key(id, invite_commitment(SECRET_1)) == first.public_key,
+        dispatcher.get_member_auth_key(id, invite(SECRET_1)) == first.public_key,
         'organizer cannot replace',
     );
 }
@@ -174,13 +194,13 @@ fn unrelated_caller_cannot_replace_member_auth_public_key() {
 
     let mut calldata = array![];
     id.serialize(ref calldata);
-    invite_commitment(SECRET_1).serialize(ref calldata);
+    invite(SECRET_1).serialize(ref calldata);
     key_2().public_key.serialize(ref calldata);
     assert_missing_auth_mutator(
         dispatcher.contract_address, selector!("replace_member_auth_key"), calldata.span(),
     );
     assert(
-        dispatcher.get_member_auth_key(id, invite_commitment(SECRET_1)) == first.public_key,
+        dispatcher.get_member_auth_key(id, invite(SECRET_1)) == first.public_key,
         'caller cannot replace',
     );
 }

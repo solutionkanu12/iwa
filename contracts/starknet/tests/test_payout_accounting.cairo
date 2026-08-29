@@ -51,6 +51,23 @@ fn stranger() -> ContractAddress {
 fn key(secret: felt252) -> StarkCurveKeyPair {
     StarkCurveKeyPairImpl::from_secret_key(secret)
 }
+
+/// IWA-01: the invite commitment binds the member's authentication key, so a
+/// leaked secret alone matches no slot. Tests map each secret to the key that
+/// member actually registers.
+fn invite(secret: felt252) -> felt252 {
+    invite_commitment(secret, auth_key_for(secret))
+}
+
+fn auth_key_for(secret: felt252) -> felt252 {
+    if secret == SECRET_1 {
+        key(0x101).public_key
+    } else if secret == SECRET_2 {
+        key(0x102).public_key
+    } else {
+        key(0x103).public_key
+    }
+}
 fn canonical_s(signature_s: felt252) -> felt252 {
     const ORDER_U256: u256 = stark_curve::ORDER.into();
     let s: u256 = signature_s.into();
@@ -74,7 +91,7 @@ fn deploy() -> IIwaCircleDispatcher {
     dispatcher
 }
 fn order() -> Array<felt252> {
-    array![invite_commitment(SECRET_1), invite_commitment(SECRET_2), invite_commitment(SECRET_3)]
+    array![invite(SECRET_1), invite(SECRET_2), invite(SECRET_3)]
 }
 fn activate(dispatcher: IIwaCircleDispatcher) -> u32 {
     start_cheat_caller_address(dispatcher.contract_address, organizer());
@@ -105,24 +122,24 @@ fn satisfy(
 }
 fn satisfy_round_one(dispatcher: IIwaCircleDispatcher, id: u32) {
     start_cheat_block_timestamp(dispatcher.contract_address, DUE_AT);
-    satisfy(dispatcher, id, 1, invite_commitment(SECRET_1), key(0x101), 71);
-    satisfy(dispatcher, id, 1, invite_commitment(SECRET_2), key(0x102), 72);
-    satisfy(dispatcher, id, 1, invite_commitment(SECRET_3), key(0x103), 73);
+    satisfy(dispatcher, id, 1, invite(SECRET_1), key(0x101), 71);
+    satisfy(dispatcher, id, 1, invite(SECRET_2), key(0x102), 72);
+    satisfy(dispatcher, id, 1, invite(SECRET_3), key(0x103), 73);
 }
 fn satisfy_round_two(dispatcher: IIwaCircleDispatcher, id: u32) {
-    satisfy(dispatcher, id, 2, invite_commitment(SECRET_1), key(0x101), 81);
-    satisfy(dispatcher, id, 2, invite_commitment(SECRET_2), key(0x102), 82);
-    satisfy(dispatcher, id, 2, invite_commitment(SECRET_3), key(0x103), 83);
+    satisfy(dispatcher, id, 2, invite(SECRET_1), key(0x101), 81);
+    satisfy(dispatcher, id, 2, invite(SECRET_2), key(0x102), 82);
+    satisfy(dispatcher, id, 2, invite(SECRET_3), key(0x103), 83);
 }
 fn default_scheduled_recipient(dispatcher: IIwaCircleDispatcher, id: u32) {
     start_cheat_block_timestamp(dispatcher.contract_address, DUE_AT);
-    satisfy(dispatcher, id, 1, invite_commitment(SECRET_2), key(0x102), 74);
-    satisfy(dispatcher, id, 1, invite_commitment(SECRET_3), key(0x103), 75);
+    satisfy(dispatcher, id, 1, invite(SECRET_2), key(0x102), 74);
+    satisfy(dispatcher, id, 1, invite(SECRET_3), key(0x103), 75);
     start_cheat_block_timestamp(dispatcher.contract_address, GRACE_ENDS_AT + 1);
-    dispatcher.finalize_contribution_default(id, 1, invite_commitment(SECRET_1));
+    dispatcher.finalize_contribution_default(id, 1, invite(SECRET_1));
 }
 fn cure_scheduled_recipient(dispatcher: IIwaCircleDispatcher, id: u32) {
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     let hash = cure_settlement_authorization_hash(
         id, 1, member_ref, settlement_helper(), privacy_pool(), usdc(), AMOUNT, 76,
     );
@@ -144,7 +161,7 @@ fn payout_accounting_rejects_any_pending_obligation() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
     start_cheat_block_timestamp(dispatcher.contract_address, DUE_AT);
-    satisfy(dispatcher, id, 1, invite_commitment(SECRET_1), key(0x101), 77);
+    satisfy(dispatcher, id, 1, invite(SECRET_1), key(0x101), 77);
     dispatcher.finalize_round_payout_accounting(id, 1);
 }
 
@@ -185,7 +202,7 @@ fn unresolved_default_is_deferred_and_never_redirected() {
     default_scheduled_recipient(dispatcher, id);
     let payout = dispatcher.finalize_round_payout_accounting(id, 1);
     assert(payout.status == PayoutStatus::DeferredLocked, 'deferred');
-    assert(payout.scheduled_member_ref == invite_commitment(SECRET_1), 'not redirected');
+    assert(payout.scheduled_member_ref == invite(SECRET_1), 'not redirected');
 }
 
 #[test]
@@ -196,7 +213,7 @@ fn progression_preserves_deferred_claim_and_creates_next_obligations_once() {
     dispatcher.finalize_round_payout_accounting(id, 1);
     assert(dispatcher.get_circle(id).current_round == 2, 'advanced');
     assert(dispatcher.get_payout_state(id, 1).status == PayoutStatus::DeferredLocked, 'preserved');
-    let next = dispatcher.get_contribution_obligation(id, 2, invite_commitment(SECRET_2));
+    let next = dispatcher.get_contribution_obligation(id, 2, invite(SECRET_2));
     assert(next.status == ContributionStatus::Pending, 'next obligation');
 }
 
@@ -204,7 +221,7 @@ fn progression_preserves_deferred_claim_and_creates_next_obligations_once() {
 fn cured_default_is_recognized_without_rewriting_history() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     default_scheduled_recipient(dispatcher, id);
     cure_scheduled_recipient(dispatcher, id);
     let cure_before = dispatcher.get_cure_state(id, 1, member_ref);
@@ -235,14 +252,12 @@ fn payout_accounting_preserves_order_membership_and_contribution_history() {
     let id = activate(dispatcher);
     satisfy_round_one(dispatcher, id);
     let order_before = dispatcher.get_payout_order(id);
-    let obligation_before = dispatcher
-        .get_contribution_obligation(id, 1, invite_commitment(SECRET_1));
+    let obligation_before = dispatcher.get_contribution_obligation(id, 1, invite(SECRET_1));
     dispatcher.finalize_round_payout_accounting(id, 1);
     assert(dispatcher.get_payout_order(id) == order_before, 'order');
-    assert(dispatcher.is_member(id, invite_commitment(SECRET_1)), 'membership');
+    assert(dispatcher.is_member(id, invite(SECRET_1)), 'membership');
     assert(
-        dispatcher
-            .get_contribution_obligation(id, 1, invite_commitment(SECRET_1)) == obligation_before,
+        dispatcher.get_contribution_obligation(id, 1, invite(SECRET_1)) == obligation_before,
         'history',
     );
 }
@@ -254,7 +269,7 @@ fn organizer_and_member_have_no_recipient_override_api() {
     let mut calldata = array![];
     id.serialize(ref calldata);
     1_u32.serialize(ref calldata);
-    invite_commitment(SECRET_2).serialize(ref calldata);
+    invite(SECRET_2).serialize(ref calldata);
     start_cheat_caller_address(dispatcher.contract_address, organizer());
     missing_entrypoint(dispatcher.contract_address, selector!("redirect_payout"), calldata.span());
     start_cheat_caller_address(dispatcher.contract_address, member_caller());

@@ -49,6 +49,23 @@ fn stranger() -> ContractAddress {
 fn key(secret: felt252) -> StarkCurveKeyPair {
     StarkCurveKeyPairImpl::from_secret_key(secret)
 }
+
+/// IWA-01: the invite commitment binds the member's authentication key, so a
+/// leaked secret alone matches no slot. Tests map each secret to the key that
+/// member actually registers.
+fn invite(secret: felt252) -> felt252 {
+    invite_commitment(secret, auth_key_for(secret))
+}
+
+fn auth_key_for(secret: felt252) -> felt252 {
+    if secret == SECRET_1 {
+        key(0x101).public_key
+    } else if secret == SECRET_2 {
+        key(0x102).public_key
+    } else {
+        key(0x103).public_key
+    }
+}
 fn canonical_s(signature_s: felt252) -> felt252 {
     const ORDER_U256: u256 = stark_curve::ORDER.into();
     let s: u256 = signature_s.into();
@@ -72,7 +89,7 @@ fn deploy() -> IIwaCircleDispatcher {
     dispatcher
 }
 fn order() -> Array<felt252> {
-    array![invite_commitment(SECRET_1), invite_commitment(SECRET_2), invite_commitment(SECRET_3)]
+    array![invite(SECRET_1), invite(SECRET_2), invite(SECRET_3)]
 }
 fn activate(dispatcher: IIwaCircleDispatcher) -> u32 {
     start_cheat_caller_address(dispatcher.contract_address, organizer());
@@ -110,7 +127,7 @@ fn pending_cannot_default_before_due_at() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
     at(dispatcher, DUE_AT - 1);
-    dispatcher.finalize_contribution_default(id, 1, invite_commitment(SECRET_1));
+    dispatcher.finalize_contribution_default(id, 1, invite(SECRET_1));
 }
 
 #[test]
@@ -119,7 +136,7 @@ fn pending_cannot_default_at_due_at() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
     at(dispatcher, DUE_AT);
-    dispatcher.finalize_contribution_default(id, 1, invite_commitment(SECRET_1));
+    dispatcher.finalize_contribution_default(id, 1, invite(SECRET_1));
 }
 
 #[test]
@@ -128,7 +145,7 @@ fn pending_cannot_default_during_grace() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
     at(dispatcher, DUE_AT + 1);
-    dispatcher.finalize_contribution_default(id, 1, invite_commitment(SECRET_1));
+    dispatcher.finalize_contribution_default(id, 1, invite(SECRET_1));
 }
 
 #[test]
@@ -137,14 +154,14 @@ fn grace_ends_at_boundary_remains_not_defaulted() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
     at(dispatcher, GRACE_ENDS_AT);
-    dispatcher.finalize_contribution_default(id, 1, invite_commitment(SECRET_1));
+    dispatcher.finalize_contribution_default(id, 1, invite(SECRET_1));
 }
 
 #[test]
 fn first_timestamp_after_grace_produces_missed_default() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     at(dispatcher, GRACE_ENDS_AT + 1);
     assert(
         dispatcher
@@ -164,7 +181,7 @@ fn first_timestamp_after_grace_produces_missed_default() {
 fn on_time_cannot_be_defaulted() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     at(dispatcher, DUE_AT);
     assert(satisfy(dispatcher, id, member_ref, key(0x101), 31) == ContributionStatus::OnTime, 'on');
     at(dispatcher, GRACE_ENDS_AT + 1);
@@ -176,7 +193,7 @@ fn on_time_cannot_be_defaulted() {
 fn late_within_grace_cannot_be_defaulted() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_2);
+    let member_ref = invite(SECRET_2);
     at(dispatcher, GRACE_ENDS_AT);
     assert(
         satisfy(dispatcher, id, member_ref, key(0x102), 32) == ContributionStatus::LateWithinGrace,
@@ -191,7 +208,7 @@ fn late_within_grace_cannot_be_defaulted() {
 fn repeated_default_finalization_is_rejected() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     at(dispatcher, GRACE_ENDS_AT + 1);
     dispatcher.finalize_contribution_default(id, 1, member_ref);
     dispatcher.finalize_contribution_default(id, 1, member_ref);
@@ -202,7 +219,7 @@ fn repeated_default_finalization_is_rejected() {
 fn missed_default_cannot_be_rewritten_by_contribution() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     at(dispatcher, GRACE_ENDS_AT + 1);
     dispatcher.finalize_contribution_default(id, 1, member_ref);
     at(dispatcher, DUE_AT);
@@ -224,7 +241,7 @@ fn unknown_round_obligation_is_rejected() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
     at(dispatcher, GRACE_ENDS_AT + 1);
-    dispatcher.finalize_contribution_default(id, 2, invite_commitment(SECRET_1));
+    dispatcher.finalize_contribution_default(id, 2, invite(SECRET_1));
 }
 
 #[test]
@@ -233,7 +250,7 @@ fn unknown_circle_is_rejected() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
     at(dispatcher, GRACE_ENDS_AT + 1);
-    dispatcher.finalize_contribution_default(id + 1, 1, invite_commitment(SECRET_1));
+    dispatcher.finalize_contribution_default(id + 1, 1, invite(SECRET_1));
 }
 
 #[test]
@@ -243,7 +260,7 @@ fn organizer_cannot_early_default() {
     let id = activate(dispatcher);
     at(dispatcher, GRACE_ENDS_AT);
     start_cheat_caller_address(dispatcher.contract_address, organizer());
-    dispatcher.finalize_contribution_default(id, 1, invite_commitment(SECRET_1));
+    dispatcher.finalize_contribution_default(id, 1, invite(SECRET_1));
 }
 
 #[test]
@@ -251,7 +268,7 @@ fn organizer_cannot_early_default() {
 fn organizer_cannot_erase_a_default() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     at(dispatcher, GRACE_ENDS_AT + 1);
     dispatcher.finalize_contribution_default(id, 1, member_ref);
     start_cheat_caller_address(dispatcher.contract_address, organizer());
@@ -262,7 +279,7 @@ fn organizer_cannot_erase_a_default() {
 fn unrelated_caller_may_finalize_after_grace() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     at(dispatcher, GRACE_ENDS_AT + 1);
     start_cheat_caller_address(dispatcher.contract_address, stranger());
     assert(
@@ -279,18 +296,18 @@ fn default_leaves_payout_order_and_membership_unchanged() {
     let before = dispatcher.get_payout_order(id);
     let count = dispatcher.get_circle(id).joined_count;
     at(dispatcher, GRACE_ENDS_AT + 1);
-    dispatcher.finalize_contribution_default(id, 1, invite_commitment(SECRET_1));
+    dispatcher.finalize_contribution_default(id, 1, invite(SECRET_1));
     assert(dispatcher.get_payout_order(id) == before, 'order unchanged');
     assert(dispatcher.get_circle(id).joined_count == count, 'count unchanged');
-    assert(dispatcher.is_member(id, invite_commitment(SECRET_1)), 'still member');
-    assert(dispatcher.is_member(id, invite_commitment(SECRET_2)), 'peer still member');
+    assert(dispatcher.is_member(id, invite(SECRET_1)), 'still member');
+    assert(dispatcher.is_member(id, invite(SECRET_2)), 'peer still member');
 }
 
 #[test]
 fn default_leaves_locked_asset_amount_and_deadlines_unchanged() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     at(dispatcher, GRACE_ENDS_AT + 1);
     dispatcher.finalize_contribution_default(id, 1, member_ref);
     let after = dispatcher.get_contribution_obligation(id, 1, member_ref);
@@ -308,16 +325,16 @@ fn default_of_one_member_does_not_touch_peer_obligations() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
     at(dispatcher, GRACE_ENDS_AT + 1);
-    dispatcher.finalize_contribution_default(id, 1, invite_commitment(SECRET_1));
+    dispatcher.finalize_contribution_default(id, 1, invite(SECRET_1));
     assert(
         dispatcher
-            .get_contribution_obligation(id, 1, invite_commitment(SECRET_2))
+            .get_contribution_obligation(id, 1, invite(SECRET_2))
             .status == ContributionStatus::Pending,
         'peer still pending',
     );
     assert(
         dispatcher
-            .get_contribution_obligation(id, 1, invite_commitment(SECRET_3))
+            .get_contribution_obligation(id, 1, invite(SECRET_3))
             .status == ContributionStatus::Pending,
         'peer3 pending',
     );
@@ -327,7 +344,7 @@ fn default_of_one_member_does_not_touch_peer_obligations() {
 fn default_does_not_consume_a_contribution_nonce() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     at(dispatcher, GRACE_ENDS_AT + 1);
     dispatcher.finalize_contribution_default(id, 1, member_ref);
     assert(!dispatcher.is_contribution_nonce_consumed(id, member_ref, 34), 'no nonce consumed');

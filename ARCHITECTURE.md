@@ -297,7 +297,10 @@ A pause must not rewrite historical state.
 
 ## Membership
 
-The initial product uses private, invite-based circles.
+The initial product uses invite-based circles. "Invite-based" means entry is
+restricted to holders of a committed invite; it does not mean membership is
+anonymous. See "Membership privacy is limited" below before making any product
+or UI claim about it.
 
 Joining is controlled by:
 
@@ -313,8 +316,31 @@ Membership rules must not allow arbitrary public users to join an existing trust
 Each joined member registers one IWA-specific Stark-curve authentication
 public key while proving possession of the invite secret. The corresponding
 private key stays with the member and is never submitted, stored, or emitted.
-The authentication key is not a Starknet account address and creates no
-required on-chain link to the member's public wallet.
+The authentication key is not a Starknet account address and is not itself
+derived from the member's wallet. It does not, on its own, link the member to a
+wallet - but the join transaction that registers it is sent from some wallet,
+which is publicly observable. See "Membership privacy is limited".
+
+### Membership privacy is limited
+
+State these accurately; do not overstate them in product copy or UI:
+
+- The **invite secret is public** the moment it is submitted. It travels in
+  `join_circle` calldata and stays readable in the transaction forever.
+- The **`member_ref` commitment is public**. It appears in the locked payout
+  order, in events, and in every obligation and settlement path.
+- The **joining wallet can be correlated with its `member_ref`**, because the
+  join transaction has a public sender. IWA does not require that link, but
+  nothing hides it either.
+- **STRK20 protects the privacy of settlement transfers**, not membership.
+  Amounts inside the pool, the sender and receiver of a private transfer, and
+  the spent-note linkage are hidden. Who belongs to a circle is not.
+- Deposit and withdrawal edges, transaction timing, helper invocation, and
+  open-note amounts remain public.
+
+The UI must not claim fully private membership, anonymous circles, or hidden
+participation unless a future mechanism actually provides it. Claiming private
+*payments* is accurate; claiming private *membership* is not.
 
 Contribution authorization is a canonical Stark-curve ECDSA signature over a
 Poseidon hash of:

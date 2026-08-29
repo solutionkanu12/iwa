@@ -40,9 +40,9 @@ use snforge_std::signature::stark_curve::{
     StarkCurveKeyPair, StarkCurveKeyPairImpl, StarkCurveSignerImpl,
 };
 use snforge_std::{
-    CheatSpan, ContractClassTrait, DeclareResultTrait, cheat_proof_facts, declare,
-    map_entry_address, start_cheat_block_number_global, start_cheat_block_timestamp,
-    start_cheat_caller_address, stop_cheat_caller_address,
+    CheatSpan, ContractClassTrait, DeclareResultTrait, Token, TokenTrait, cheat_proof_facts,
+    declare, map_entry_address, set_balance, start_cheat_block_number_global,
+    start_cheat_block_timestamp, start_cheat_caller_address, stop_cheat_caller_address,
 };
 use starknet::syscalls::{call_contract_syscall, get_class_hash_at_syscall};
 use starknet::{ContractAddress, SyscallResultTrait};
@@ -86,11 +86,11 @@ fn key(secret: felt252) -> StarkCurveKeyPair {
 }
 
 fn member_1() -> felt252 {
-    invite_commitment(SECRET_1)
+    invite_commitment(SECRET_1, key(0x101).public_key)
 }
 
 fn member_2() -> felt252 {
-    invite_commitment(SECRET_2)
+    invite_commitment(SECRET_2, key(0x102).public_key)
 }
 
 fn canonical_s(s: felt252) -> felt252 {
@@ -230,7 +230,7 @@ fn deploy_env() -> Env {
     // The genuine pinned pool contract.
     let pool_class = declare("Privacy").unwrap().contract_class();
     let mut pool_data = array![];
-    addr('GOVERNANCE').serialize(ref pool_data);
+    governance_admin().serialize(ref pool_data);
     key('auditor').public_key.serialize(ref pool_data);
     key('screener').public_key.serialize(ref pool_data);
     PROOF_VALIDITY_BLOCKS.serialize(ref pool_data);
@@ -966,4 +966,168 @@ fn normalization_is_permissionless_and_unprofitable() {
     assert(balance_of(env.usdc, surplus_sink()) == 5_u256, 'sink is the only payee');
     assert(env.helper.get_config().surplus_sink == surplus_sink(), 'sink immutable');
     assert(env.helper.get_surplus(env.usdc) == 0, 'normalized');
+}
+
+// ===========================================================================
+// IWA-03: the live pool charges a fee per `apply_actions`, paid by the caller
+// ===========================================================================
+//
+// Every other test here runs against a pool deployed with a zero fee, which is
+// not how mainnet behaves. These tests configure the genuine pinned pool with a
+// non-zero fee through its own role-gated admin path and prove the fee is real,
+// is collected from the caller, and never touches IWA custody or liability.
+//
+// The amount below is a deterministic TEST value. It is not a protocol
+// invariant: production code and runbooks must read `get_fee_amount()` live,
+// because a pool governance action can change it at any time.
+const TEST_FEE: u128 = 1_000_000_000_000_000_000;
+
+/// Role ids from `starkware_utils::components::roles`. `Role` serializes as its
+/// RoleId felt, not as a variant index, so the ids are used directly rather
+/// than adding a dependency on that package just for two setup calls.
+const ROLE_APP_ROLE_ADMIN: felt252 =
+    0x3e615638e0b79444a70f8c695bf8f2a47033bf1cf95691ec3130f64939cee99;
+const ROLE_APP_GOVERNOR: felt252 = 0xd2ead78c620e94b02d0a996e99298c59ddccfa1d8a0149080ac3a20de06068;
+
+fn governance_admin() -> ContractAddress {
+    addr('GOVERNANCE')
+}
+fn app_role_admin() -> ContractAddress {
+    addr('APP_ROLE_ADMIN')
+}
+fn app_governor() -> ContractAddress {
+    addr('APP_GOVERNOR')
+}
+fn fee_collector() -> ContractAddress {
+    addr('FEE_COLLECTOR')
+}
+fn payer() -> ContractAddress {
+    addr('PAYER')
+}
+
+fn pool_admin_call(env: Env, caller: ContractAddress, selector: felt252, data: Span<felt252>) {
+    start_cheat_caller_address(env.pool, caller);
+    call_contract_syscall(env.pool, selector, data).unwrap_syscall();
+    stop_cheat_caller_address(env.pool);
+}
+
+fn grant_role(env: Env, granter: ContractAddress, role: felt252, account: ContractAddress) {
+    let mut data = array![];
+    role.serialize(ref data);
+    account.serialize(ref data);
+    pool_admin_call(env, granter, selector!("grant_role"), data.span());
+}
+
+/// Turns the fee on through the pool's real role-gated admin path.
+fn enable_pool_fee(env: Env, amount: u128) {
+    grant_role(env, governance_admin(), ROLE_APP_ROLE_ADMIN, app_role_admin());
+    grant_role(env, app_role_admin(), ROLE_APP_GOVERNOR, app_governor());
+
+    let mut collector = array![];
+    fee_collector().serialize(ref collector);
+    pool_admin_call(env, app_governor(), selector!("set_fee_collector"), collector.span());
+
+    let mut fee = array![];
+    amount.serialize(ref fee);
+    pool_admin_call(env, app_governor(), selector!("set_fee_amount"), fee.span());
+}
+
+fn pool_fee_amount(env: Env) -> u128 {
+    let out = call_contract_syscall(env.pool, selector!("get_fee_amount"), array![].span())
+        .unwrap_syscall();
+    let mut span = out;
+    Serde::<u128>::deserialize(ref span).expect('fee amount')
+}
+
+/// `apply_actions` as a named caller, so fee payment can be attributed.
+#[feature("safe_dispatcher")]
+fn apply_as(env: Env, actions: Span<ServerAction>, caller: ContractAddress) -> bool {
+    cheat_pool_proof(env, actions);
+    start_cheat_caller_address(env.pool, caller);
+    let result = env.safe_server.apply_actions(actions, Option::None);
+    stop_cheat_caller_address(env.pool);
+    result.is_ok()
+}
+
+#[test]
+fn pool_fee_is_charged_to_the_caller_and_never_touches_iwa_custody() {
+    let env = deploy_env();
+    let id = activate(env);
+    enable_pool_fee(env, TEST_FEE);
+
+    // The fee is whatever the pool says it is, read live.
+    let fee = pool_fee_amount(env);
+    assert(fee == TEST_FEE, 'fee configured');
+    assert(fee != 0, 'fee is non-zero');
+
+    fund_pool(env, env.usdc, AMOUNT);
+    let (r, s) = sign_contribution(env, id, 1, member_1(), key(0x101), 80);
+    let actions = array![
+        transfer_to_helper(env, env.usdc, AMOUNT),
+        invoke_helper(
+            env, IwaOperation::SettleContribution, id, 1, member_1(), env.usdc, 0, 80, r, s,
+        ),
+    ]
+        .span();
+
+    // 1. A caller who cannot pay the fee cannot settle at all.
+    assert(!apply_as(env, actions, payer()), 'unfunded caller rejected');
+    assert(
+        env
+            .core
+            .get_contribution_obligation(id, 1, member_1())
+            .status == ContributionStatus::Pending,
+        'no settlement without fee',
+    );
+    assert(balance_of(Token::STRK.contract_address(), fee_collector()) == 0, 'no fee yet');
+
+    // 2. Fund the caller in the real fee token and approve the pool for exactly
+    //    the fee. The pool always pulls its fee from the canonical STRK address,
+    //    which the runner pre-deploys, so this is that token and not env.strk.
+    let strk_fee_token = Token::STRK.contract_address();
+    set_balance(payer(), fee.into(), Token::STRK);
+    start_cheat_caller_address(strk_fee_token, payer());
+    IERC20Dispatcher { contract_address: strk_fee_token }
+        .approve(spender: env.pool, amount: fee.into());
+    stop_cheat_caller_address(strk_fee_token);
+
+    let helper_usdc_before = balance_of(env.usdc, env.helper.contract_address);
+    let helper_fee_token_before = balance_of(
+        Token::STRK.contract_address(), env.helper.contract_address,
+    );
+
+    // 3. The same transaction now succeeds.
+    assert(apply_as(env, actions, payer()), 'funded caller settles');
+
+    // The exact fee moved from the caller to the collector.
+    assert(
+        balance_of(Token::STRK.contract_address(), fee_collector()) == fee.into(),
+        'exact fee collected',
+    );
+    assert(balance_of(Token::STRK.contract_address(), payer()) == 0, 'caller paid exactly');
+
+    // IWA settlement still executed correctly behind the fee.
+    assert(
+        env
+            .core
+            .get_contribution_obligation(id, 1, member_1())
+            .status == ContributionStatus::OnTime,
+        'settled on time',
+    );
+    assert(env.core.is_contribution_nonce_consumed(id, member_1(), 80), 'nonce consumed');
+    assert(env.helper.get_round_token_liability(id, 1, env.usdc) == AMOUNT.into(), 'round credit');
+
+    // Fee movement is entirely outside IWA custody and accounting.
+    assert(
+        balance_of(env.usdc, env.helper.contract_address) == helper_usdc_before + AMOUNT.into(),
+        'usdc custody exact',
+    );
+    assert(
+        balance_of(
+            Token::STRK.contract_address(), env.helper.contract_address,
+        ) == helper_fee_token_before,
+        'helper paid no fee',
+    );
+    assert(env.helper.get_token_liability(env.strk) == 0, 'no strk liability');
+    assert(env.helper.get_surplus(env.usdc) == 0, 'no surplus created');
 }

@@ -203,3 +203,82 @@ fn missing_circle_fails() {
     let dispatcher = deploy();
     dispatcher.get_circle(1);
 }
+
+// IWA-02: the final-settlement preparation walks rounds x payout slots, so an
+// unbounded member_limit could make that terminal call unexecutable and strand
+// the circle. The cap keeps it bounded.
+
+fn order_of(size: u32) -> Array<felt252> {
+    let mut order = array![];
+    let mut i: u32 = 0;
+    while i < size {
+        order.append((i + 1).into());
+        i += 1;
+    }
+    order
+}
+
+fn create_with_limit(dispatcher: IIwaCircleDispatcher, member_limit: u8) -> bool {
+    let mut calldata = array![];
+    usdc().serialize(ref calldata);
+    5_000_000_u128.serialize(ref calldata);
+    604_800_u64.serialize(ref calldata);
+    86_400_u64.serialize(ref calldata);
+    member_limit.serialize(ref calldata);
+    order_of(member_limit.into()).span().serialize(ref calldata);
+    starknet::syscalls::call_contract_syscall(
+        dispatcher.contract_address, selector!("create_circle"), calldata.span(),
+    )
+        .is_ok()
+}
+
+#[test]
+fn member_limit_boundaries_are_enforced() {
+    let dispatcher = deploy();
+    start_cheat_caller_address(dispatcher.contract_address, organizer());
+    assert(create_with_limit(dispatcher, 2), 'min 2 allowed');
+    assert(create_with_limit(dispatcher, 32), 'max 32 allowed');
+    assert(!create_with_limit(dispatcher, 33), 'over cap rejected');
+    assert(!create_with_limit(dispatcher, 255), 'far over cap rejected');
+    assert(!create_with_limit(dispatcher, 1), 'under min rejected');
+}
+
+// IWA-07: the scheduled payout for a full round is
+// `contribution_amount * member_limit`. Creation must reject any configuration
+// whose product cannot be represented in u128, so an impossible circle fails at
+// creation rather than at payout time. This test pins the guard itself: it goes
+// red if the guard is ever removed.
+
+fn create_with_amount(
+    dispatcher: IIwaCircleDispatcher, contribution_amount: u128, member_limit: u8,
+) -> bool {
+    let mut calldata = array![];
+    usdc().serialize(ref calldata);
+    contribution_amount.serialize(ref calldata);
+    604_800_u64.serialize(ref calldata);
+    86_400_u64.serialize(ref calldata);
+    member_limit.serialize(ref calldata);
+    order_of(member_limit.into()).span().serialize(ref calldata);
+    starknet::syscalls::call_contract_syscall(
+        dispatcher.contract_address, selector!("create_circle"), calldata.span(),
+    )
+        .is_ok()
+}
+
+#[test]
+fn scheduled_payout_overflow_is_rejected_at_creation() {
+    let dispatcher = deploy();
+    start_cheat_caller_address(dispatcher.contract_address, organizer());
+
+    // 2^127 doubled is exactly 2^128, one past the u128 maximum.
+    assert(
+        !create_with_amount(dispatcher, 0x80000000000000000000000000000000_u128, 2),
+        'overflow rejected',
+    );
+
+    // (2^127 - 1) doubled is 2^128 - 2, the largest product that still fits.
+    assert(
+        create_with_amount(dispatcher, 0x7fffffffffffffffffffffffffffffff_u128, 2),
+        'max product accepted',
+    );
+}

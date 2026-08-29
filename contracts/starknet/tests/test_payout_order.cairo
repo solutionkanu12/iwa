@@ -36,6 +36,21 @@ fn auth_key(secret_key: felt252) -> felt252 {
     StarkCurveKeyPairImpl::from_secret_key(secret_key).public_key
 }
 
+/// IWA-01: the invite commitment binds the member authentication key.
+fn invite(secret: felt252) -> felt252 {
+    invite_commitment(secret, auth_key_for(secret))
+}
+
+fn auth_key_for(secret: felt252) -> felt252 {
+    if secret == SECRET_1 {
+        auth_key(0x101)
+    } else if secret == SECRET_2 {
+        auth_key(0x102)
+    } else {
+        auth_key(0x103)
+    }
+}
+
 fn deploy() -> IIwaCircleDispatcher {
     let contract = declare("IwaCircle").unwrap().contract_class();
     let mut calldata = array![];
@@ -51,7 +66,7 @@ fn deploy() -> IIwaCircleDispatcher {
 }
 
 fn invite_order() -> Array<felt252> {
-    array![invite_commitment(SECRET_1), invite_commitment(SECRET_2), invite_commitment(SECRET_3)]
+    array![invite(SECRET_1), invite(SECRET_2), invite(SECRET_3)]
 }
 
 fn open_circle(dispatcher: IIwaCircleDispatcher) -> u32 {
@@ -119,7 +134,7 @@ fn creating_another_circle_does_not_mutate_existing_order() {
     let dispatcher = deploy();
     let first_expected = invite_order();
     let first = open_circle(dispatcher);
-    let second_order = array![invite_commitment('s-a'), invite_commitment('s-b')];
+    let second_order = array![invite('s-a'), invite('s-b')];
     let _second = dispatcher.create_circle(strk(), 1_u128, 1_u64, 1_u64, 2_u8, second_order.span());
     let stored: Array<felt252> = dispatcher.get_payout_order(first);
     assert_same_order(@stored, @first_expected);
@@ -135,7 +150,7 @@ fn organizer_cannot_replace_or_reorder_payout_entries() {
     let mut replace_calldata = array![];
     id.serialize(ref replace_calldata);
     0_u8.serialize(ref replace_calldata);
-    invite_commitment('intruder').serialize(ref replace_calldata);
+    invite('intruder').serialize(ref replace_calldata);
     assert_no_mutating_entrypoint(
         dispatcher.contract_address, selector!("set_payout_order"), replace_calldata.span(),
     );
@@ -145,8 +160,7 @@ fn organizer_cannot_replace_or_reorder_payout_entries() {
 
     let mut reorder_calldata = array![];
     id.serialize(ref reorder_calldata);
-    array![invite_commitment(SECRET_3), invite_commitment(SECRET_2), invite_commitment(SECRET_1)]
-        .serialize(ref reorder_calldata);
+    array![invite(SECRET_3), invite(SECRET_2), invite(SECRET_1)].serialize(ref reorder_calldata);
     assert_no_mutating_entrypoint(
         dispatcher.contract_address, selector!("reorder_payout_order"), reorder_calldata.span(),
     );
@@ -164,8 +178,7 @@ fn member_cannot_reorder_payout_entries() {
 
     let mut calldata = array![];
     id.serialize(ref calldata);
-    array![invite_commitment(SECRET_2), invite_commitment(SECRET_1), invite_commitment(SECRET_3)]
-        .serialize(ref calldata);
+    array![invite(SECRET_2), invite(SECRET_1), invite(SECRET_3)].serialize(ref calldata);
     assert_no_mutating_entrypoint(
         dispatcher.contract_address, selector!("reorder_payout_order"), calldata.span(),
     );
@@ -199,7 +212,7 @@ fn no_callable_path_mutates_payout_order_after_creation() {
 #[should_panic(expected: ('IWA: invalid config', 'ENTRYPOINT_FAILED'))]
 fn duplicate_payout_order_refs_rejected_at_creation() {
     let dispatcher = deploy();
-    let dup = invite_commitment(SECRET_1);
+    let dup = invite(SECRET_1);
     dispatcher.create_circle(usdc(), 1_u128, 1_u64, 1_u64, 2_u8, array![dup, dup].span());
 }
 
@@ -208,7 +221,5 @@ fn duplicate_payout_order_refs_rejected_at_creation() {
 fn zero_payout_order_ref_rejected_at_creation() {
     let dispatcher = deploy();
     dispatcher
-        .create_circle(
-            usdc(), 1_u128, 1_u64, 1_u64, 2_u8, array![invite_commitment(SECRET_1), 0].span(),
-        );
+        .create_circle(usdc(), 1_u128, 1_u64, 1_u64, 2_u8, array![invite(SECRET_1), 0].span());
 }

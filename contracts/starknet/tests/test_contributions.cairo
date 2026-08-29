@@ -41,6 +41,23 @@ fn organizer() -> ContractAddress {
 fn key(secret: felt252) -> StarkCurveKeyPair {
     StarkCurveKeyPairImpl::from_secret_key(secret)
 }
+
+/// IWA-01: the invite commitment binds the member's authentication key, so a
+/// leaked secret alone matches no slot. Tests map each secret to the key that
+/// member actually registers.
+fn invite(secret: felt252) -> felt252 {
+    invite_commitment(secret, auth_key_for(secret))
+}
+
+fn auth_key_for(secret: felt252) -> felt252 {
+    if secret == SECRET_1 {
+        key(0x101).public_key
+    } else if secret == SECRET_2 {
+        key(0x102).public_key
+    } else {
+        key(0x103).public_key
+    }
+}
 fn canonical_s(signature_s: felt252) -> felt252 {
     const ORDER_U256: u256 = stark_curve::ORDER.into();
     let s: u256 = signature_s.into();
@@ -78,7 +95,7 @@ fn deploy() -> IIwaCircleDispatcher {
     dispatcher
 }
 fn order() -> Array<felt252> {
-    array![invite_commitment(SECRET_1), invite_commitment(SECRET_2), invite_commitment(SECRET_3)]
+    array![invite(SECRET_1), invite(SECRET_2), invite(SECRET_3)]
 }
 fn activate(dispatcher: IIwaCircleDispatcher) -> u32 {
     let id = dispatcher.create_circle(usdc(), AMOUNT, CADENCE, GRACE, 3, order().span());
@@ -104,7 +121,7 @@ fn satisfy(
 fn pending_obligation_exists_with_locked_terms() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let obligation = dispatcher.get_contribution_obligation(id, 1, invite_commitment(SECRET_1));
+    let obligation = dispatcher.get_contribution_obligation(id, 1, invite(SECRET_1));
     assert(obligation.circle_id == id, 'circle');
     assert(obligation.round == 1, 'round');
     assert(obligation.asset == SupportedAsset::Usdc, 'locked asset');
@@ -118,7 +135,7 @@ fn pending_obligation_exists_with_locked_terms() {
 fn valid_authenticated_current_round_satisfaction_is_on_time_and_consumes_nonce() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     start_cheat_block_timestamp(dispatcher.contract_address, ACTIVATED_AT + CADENCE);
     assert(
         satisfy(dispatcher, id, member_ref, key(0x101), 7) == ContributionStatus::OnTime, 'on time',
@@ -137,7 +154,7 @@ fn valid_authenticated_current_round_satisfaction_is_on_time_and_consumes_nonce(
 fn invalid_signature_is_rejected() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     let (r, s) = sign(key(0x999), id, 1, member_ref, AMOUNT, 8);
     start_cheat_caller_address(dispatcher.contract_address, settlement_helper());
     dispatcher.settle_contribution_from_helper(id, 1, member_ref, usdc(), AMOUNT, 8, r, s);
@@ -148,7 +165,7 @@ fn invalid_signature_is_rejected() {
 fn wrong_member_signature_is_rejected() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_2);
+    let member_ref = invite(SECRET_2);
     let (r, s) = sign(key(0x101), id, 1, member_ref, AMOUNT, 9);
     start_cheat_caller_address(dispatcher.contract_address, settlement_helper());
     dispatcher.settle_contribution_from_helper(id, 1, member_ref, usdc(), AMOUNT, 9, r, s);
@@ -159,7 +176,7 @@ fn wrong_member_signature_is_rejected() {
 fn wrong_circle_signature_is_rejected() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     let (r, s) = sign(key(0x101), id + 1, 1, member_ref, AMOUNT, 10);
     start_cheat_caller_address(dispatcher.contract_address, settlement_helper());
     dispatcher.settle_contribution_from_helper(id, 1, member_ref, usdc(), AMOUNT, 10, r, s);
@@ -170,7 +187,7 @@ fn wrong_circle_signature_is_rejected() {
 fn wrong_round_signature_is_rejected() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     let (r, s) = sign(key(0x101), id, 2, member_ref, AMOUNT, 11);
     start_cheat_caller_address(dispatcher.contract_address, settlement_helper());
     dispatcher.settle_contribution_from_helper(id, 1, member_ref, usdc(), AMOUNT, 11, r, s);
@@ -181,7 +198,7 @@ fn wrong_round_signature_is_rejected() {
 fn wrong_amount_signature_is_rejected() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     let (r, s) = sign(key(0x101), id, 1, member_ref, AMOUNT + 1, 12);
     start_cheat_caller_address(dispatcher.contract_address, settlement_helper());
     dispatcher.settle_contribution_from_helper(id, 1, member_ref, usdc(), AMOUNT, 12, r, s);
@@ -193,8 +210,7 @@ fn zero_amount_is_rejected() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
     start_cheat_caller_address(dispatcher.contract_address, settlement_helper());
-    dispatcher
-        .settle_contribution_from_helper(id, 1, invite_commitment(SECRET_1), usdc(), 0, 13, 1, 1);
+    dispatcher.settle_contribution_from_helper(id, 1, invite(SECRET_1), usdc(), 0, 13, 1, 1);
 }
 
 #[test]
@@ -204,9 +220,7 @@ fn under_or_over_amount_is_rejected() {
     let id = activate(dispatcher);
     start_cheat_caller_address(dispatcher.contract_address, settlement_helper());
     dispatcher
-        .settle_contribution_from_helper(
-            id, 1, invite_commitment(SECRET_1), usdc(), AMOUNT + 1, 14, 1, 1,
-        );
+        .settle_contribution_from_helper(id, 1, invite(SECRET_1), usdc(), AMOUNT + 1, 14, 1, 1);
 }
 
 #[test]
@@ -224,10 +238,7 @@ fn future_round_is_rejected() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
     start_cheat_caller_address(dispatcher.contract_address, settlement_helper());
-    dispatcher
-        .settle_contribution_from_helper(
-            id, 2, invite_commitment(SECRET_1), usdc(), AMOUNT, 16, 1, 1,
-        );
+    dispatcher.settle_contribution_from_helper(id, 2, invite(SECRET_1), usdc(), AMOUNT, 16, 1, 1);
 }
 
 #[test]
@@ -236,17 +247,14 @@ fn past_or_non_current_round_is_rejected() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
     start_cheat_caller_address(dispatcher.contract_address, settlement_helper());
-    dispatcher
-        .settle_contribution_from_helper(
-            id, 0, invite_commitment(SECRET_1), usdc(), AMOUNT, 17, 1, 1,
-        );
+    dispatcher.settle_contribution_from_helper(id, 0, invite(SECRET_1), usdc(), AMOUNT, 17, 1, 1);
 }
 
 #[test]
 fn failed_transaction_does_not_consume_nonce() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     let mut calldata = array![];
     id.serialize(ref calldata);
     1_u32.serialize(ref calldata);
@@ -273,7 +281,7 @@ fn failed_transaction_does_not_consume_nonce() {
 fn reused_nonce_is_rejected() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     satisfy(dispatcher, id, member_ref, key(0x101), 19);
     let (r, s) = sign(key(0x101), id, 1, member_ref, AMOUNT, 19);
     dispatcher.settle_contribution_from_helper(id, 1, member_ref, usdc(), AMOUNT, 19, r, s);
@@ -284,7 +292,7 @@ fn reused_nonce_is_rejected() {
 fn duplicate_satisfaction_fails_even_with_fresh_nonce() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     satisfy(dispatcher, id, member_ref, key(0x101), 20);
     let (r, s) = sign(key(0x101), id, 1, member_ref, AMOUNT, 21);
     dispatcher.settle_contribution_from_helper(id, 1, member_ref, usdc(), AMOUNT, 21, r, s);
@@ -297,7 +305,7 @@ fn late_within_grace_is_classified_at_inclusive_boundary() {
     start_cheat_block_timestamp(dispatcher.contract_address, ACTIVATED_AT + CADENCE + GRACE);
     assert(
         satisfy(
-            dispatcher, id, invite_commitment(SECRET_2), key(0x102), 22,
+            dispatcher, id, invite(SECRET_2), key(0x102), 22,
         ) == ContributionStatus::LateWithinGrace,
         'late',
     );
@@ -309,10 +317,10 @@ fn contribution_does_not_change_payout_order_or_membership() {
     let id = activate(dispatcher);
     let before = dispatcher.get_payout_order(id);
     let count = dispatcher.get_circle(id).joined_count;
-    satisfy(dispatcher, id, invite_commitment(SECRET_1), key(0x101), 23);
+    satisfy(dispatcher, id, invite(SECRET_1), key(0x101), 23);
     assert(dispatcher.get_payout_order(id) == before, 'order unchanged');
     assert(dispatcher.get_circle(id).joined_count == count, 'count unchanged');
-    assert(dispatcher.is_member(id, invite_commitment(SECRET_1)), 'membership unchanged');
+    assert(dispatcher.is_member(id, invite(SECRET_1)), 'membership unchanged');
 }
 
 #[test]
@@ -321,7 +329,7 @@ fn organizer_has_no_contribution_bypass() {
     let dispatcher = deploy();
     let id = activate(dispatcher);
     start_cheat_caller_address(dispatcher.contract_address, organizer());
-    let member_ref = invite_commitment(SECRET_1);
+    let member_ref = invite(SECRET_1);
     let (r, s) = sign(key(0x999), id, 1, member_ref, AMOUNT, 24);
     dispatcher.settle_contribution_from_helper(id, 1, member_ref, usdc(), AMOUNT, 24, r, s);
 }

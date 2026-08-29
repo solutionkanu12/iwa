@@ -1072,26 +1072,98 @@ settlement, and legitimate backing can never be swept.
 
 The helper constructor now takes a fifth immutable argument, `surplus_sink`.
 
-### Finding 8B-02 — open, documented
+### Finding 8B-02 — closed operationally in Task 8C
 
-`scarb build` also emits StarkWare's `Privacy` class into
-`target/dev`, because `build-external-contracts` sits on the package target so
-integration tests can declare the genuine pool. IWA must never deploy it.
-Deployment tooling must name `IwaCircle` and `IwaStrk20Helper` explicitly and
-must never iterate over every generated artifact. Confining the pool to a
-test-only target was attempted and reverted; the diagnosis is in the research
-document.
+`scarb build` still emits StarkWare's `Privacy` class into `target/dev`,
+because `build-external-contracts` sits on the package target so integration
+tests can declare the genuine pool. The risk that IWA deploys it is now closed
+in tooling rather than in the Scarb layout: `deploy/iwa-deploy.sh` acts only on
+an explicit two-name allowlist, keeps `Privacy` on a forbidden list, and never
+enumerates artifacts. Proven by `deploy/test-iwa-deploy.sh`.
+
+## Deployment safety preparation (Task 8C)
+
+Preparation only. Nothing was deployed and no transaction was sent.
+
+`contracts/starknet/deploy/` now holds `iwa-deploy.sh` (validate / plan /
+verify / gated deploy), `test-iwa-deploy.sh` (27 offline assertions),
+`deploy.config.example.json`, and `README.md` carrying the surplus-sink policy
+and the approved deployment order.
+
+Mainnet addresses were re-verified on 2026-08-29 by read-only calls against
+`SN_MAIN`, recorded with sources in `docs/strk20/INTEGRATION_RESEARCH.md`:
+
+- pool `0x0403…812a` answers `get_version() = "2.0"`, matching the pinned
+  revision's `CONTRACT_VERSION`
+- native USDC `0x0330…35fb` reports symbol `USDC`, **6 decimals**
+- STRK `0x0471…938d` reports symbol `STRK`, 18 decimals
+
+New operational finding: the live pool charges **6 STRK per `apply_actions`
+call**, pulled from the caller. Local tests used a zero-fee pool, so this cost
+is absent from them.
+
+## Pre-deployment security audit (Task 8)
+
+A full pre-deployment audit was performed against the Cairo contracts, the
+STRK20 integration and the deployment tooling. Counts: 0 Critical, 1 High,
+3 Medium, 2 Low, 4 Informational.
+
+### IWA-01 (High) - FIXED
+
+`join_circle` identified a member only by `H(TAG, secret)` and registered a
+caller-supplied authentication key, so the invite secret was a bearer
+credential: whoever presented it first captured the slot and the key that
+authorizes its contributions, cures, payouts and recoveries. Verified with a
+passing proof of concept before the fix.
+
+The commitment is now `H(TAG, secret, auth_public_key)`. A stolen secret alone
+matches no slot. `member_ref` is still one felt, so obligations, nonces, payout
+order and every signature path are unchanged, and membership remains unbound to
+any Starknet caller address. Regression coverage lives in
+`tests/test_audit_findings.cairo`.
+
+Onboarding change: the organizer must collect each member authentication public
+key before creating the circle.
+
+### IWA-02 (Medium) - FIXED
+
+`create_circle` now enforces `2 <= member_limit <= 32`. Final settlement is
+O(member_limit^2) in storage reads with no resumable path, so an unbounded size
+could have made that terminal call unexecutable and stranded the circle.
+
+### IWA-03 (Medium) - FIXED
+
+The mainnet pool charges a fee per `apply_actions`, paid by the caller, and no
+test previously exercised it. The integration harness now configures the
+genuine pool with a non-zero fee through its own role-gated admin path and
+proves an unfunded caller cannot settle, a funded one can, the exact fee is
+collected, and fee movement never touches IWA custody or liability. The fee
+value in tests is deterministic and is not a protocol invariant: production
+code and runbooks must read `get_fee_amount()` live.
+
+### Accepted risks
+
+IWA-04 (artifact hygiene enforced by tooling convention), IWA-05 (transient
+donation front-running), IWA-06 (pool blocked-depositor kill switch).
+
+### Privacy claims corrected
+
+`ARCHITECTURE.md` and `SECURITY.md` now state plainly that the invite secret
+and `member_ref` are public, that the joining wallet can be correlated with its
+`member_ref`, and that STRK20 protects settlement transfers rather than
+membership. UI must not claim private membership.
 
 ## Immediate next work
 
 1. Do not delete legacy code.
-2. Task 8B is complete and locally verified. Before deployment, decide and
-   record the real `surplus_sink` address; it is immutable once deployed.
-3. Resolve 8B-02 properly, or encode the explicit two-contract selection in
-   the deployment tooling so the pool class can never be deployed by IWA.
-4. Re-verify the mainnet USDC, STRK, and pool addresses immediately before
-   deployment, then run the Task 8 security review.
-5. STRK20 work must follow the verified integration research
+2. **Choose the `surplus_sink` address** — a dedicated IWA treasury multisig.
+   It is immutable after deployment and is a hard blocker. No address is
+   invented anywhere in this repository.
+3. Choose the setup authority and prepare a funded deployer account holding
+   STRK for pool fees.
+4. Re-run `deploy/iwa-deploy.sh validate` immediately before deploying.
+5. Run the Task 8 final security review.
+6. STRK20 work must follow the verified integration research
    (`docs/strk20/INTEGRATION_RESEARCH.md`) — never from memory.
 
 ## Working rules
@@ -1121,7 +1193,13 @@ service on inbound settlement) is confirmed and fixed under Option B via an
 immutable-sink `normalize_surplus`, with exact inbound accounting preserved.
 Local results: 8B focused 11 passed, 8A helper 7 passed, full suite 176
 passed, 0 failed; `scarb fmt --check` and `scarb build` clean. Nothing is
-committed, and nothing is deployed. Finding 8B-02 (the pool class also lands
-in production build artifacts) remains open and documented. Next: choose the
-immutable `surplus_sink` address, harden deployment tooling against 8B-02,
-re-verify mainnet addresses, then the Task 8 security review.**
+committed, and nothing is deployed.
+
+Task 8C added deployment safety preparation only: an explicit two-contract
+artifact allowlist that can never deploy StarkWare's pool (closing 8B-02
+operationally), configuration and network validation, the encoded deployment
+order, and a documented immutable surplus-sink policy — with 27 offline tooling
+assertions passing and the mainnet pool, USDC and STRK addresses re-verified by
+read-only calls against SN_MAIN. No deployment was performed. The remaining
+hard blocker is choosing the immutable `surplus_sink` treasury address. Next:
+Task 8 final security review.**

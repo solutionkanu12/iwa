@@ -169,6 +169,15 @@ pub mod IwaCircle {
     };
     use super::{CircleView, IIwaCircle};
 
+    /// Upper bound on circle size. Final settlement is O(member_limit^2) in
+    /// storage reads, and it has no resumable path, so the size must stay
+    /// comfortably executable in a single transaction.
+    const MAX_MEMBER_LIMIT: u8 = 32;
+
+    /// Largest value representable in `u128`, as `u256`, for the widened
+    /// scheduled-payout overflow check in `create_circle`.
+    const U128_MAX: u256 = 0xffffffffffffffffffffffffffffffff;
+
     #[derive(Copy, Drop, starknet::Store)]
     struct CircleRecord {
         asset: SupportedAsset,
@@ -266,12 +275,28 @@ pub mod IwaCircle {
         ) -> u32 {
             let asset = self.resolve_asset(token);
             assert(contribution_amount > 0, iwa_errors::INVALID_CONFIG);
-            assert(member_limit >= 2, iwa_errors::INVALID_CONFIG);
+            // Final settlement preparation walks rounds x payout slots, so an
+            // unbounded member_limit could make that terminal call unexecutable
+            // and strand the circle. The cap keeps it bounded.
+            assert(
+                member_limit >= 2 && member_limit <= MAX_MEMBER_LIMIT, iwa_errors::INVALID_CONFIG,
+            );
             assert(cadence_seconds > 0, iwa_errors::INVALID_CONFIG);
             assert(grace_period_seconds > 0, iwa_errors::INVALID_CONFIG);
             validate_payout_order(payout_order, member_limit);
+            // IWA-07: the scheduled payout for a full round is
+            // `contribution_amount * member_limit`. Reject any configuration whose
+            // product cannot be represented in u128, so an impossible circle fails
+            // at creation instead of at payout time.
+            //
+            // The check is deliberately explicit. It previously relied on the
+            // overflow panic of an otherwise unused multiplication, which a routine
+            // "remove the unused binding" cleanup could have silently deleted along
+            // with the guard. The widened product cannot itself overflow: the
+            // operands are bounded by u128::MAX and MAX_MEMBER_LIMIT.
             let member_count: u128 = member_limit.into();
-            let _scheduled_payout_amount = contribution_amount * member_count;
+            let scheduled_payout_amount: u256 = contribution_amount.into() * member_count.into();
+            assert(scheduled_payout_amount <= U128_MAX, iwa_errors::INVALID_CONFIG);
 
             let id = self.next_circle_id.read() + 1;
             self.next_circle_id.write(id);
@@ -342,7 +367,7 @@ pub mod IwaCircle {
             assert(record.status == CircleStatus::OpenForMembers, iwa_errors::JOIN_CLOSED);
             assert(invite_secret != 0, iwa_errors::INVALID_CONFIG);
             assert(is_valid_auth_public_key(auth_public_key), iwa_errors::INVALID_AUTH_KEY);
-            let member_ref = invite_commitment(invite_secret);
+            let member_ref = invite_commitment(invite_secret, auth_public_key);
             let slot = self.find_invite_slot(circle_id, member_ref);
             assert(!self.joined.read((circle_id, member_ref)), iwa_errors::ALREADY_MEMBER);
             assert(record.joined_count < record.member_limit, iwa_errors::CIRCLE_FULL);

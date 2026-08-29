@@ -89,6 +89,22 @@ The following must not leak through the backend, frontend logs, analytics or adm
 
 Public exposure must be minimized to what protocol correctness and usability require.
 
+### Public by construction
+
+These are **not** leaks; they are unavoidable properties of the current design
+and must be described honestly rather than defended as private:
+
+- the invite secret, once submitted in `join_circle` calldata
+- the `member_ref` commitment, in the payout order, events and settlement paths
+- the correlation between the joining wallet and that `member_ref`, because the
+  join transaction has a public sender
+- circle existence, size, cadence, asset and round progression
+- deposit and withdrawal edges at the STRK20 boundary, transaction timing,
+  helper invocation, and open-note amounts
+
+STRK20 gives IWA private settlement transfers. It does not give IWA anonymous
+membership. Product copy, UI and marketing must not imply otherwise.
+
 ## STRK20 integration rule
 
 Do not implement STRK20 behavior from memory.
