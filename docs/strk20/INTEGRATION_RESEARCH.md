@@ -400,6 +400,16 @@ Each transaction must be verified for:
 
 ## Locked Task 8A-S core settlement design
 
+### Cairo privacy package pin
+
+Task 8A uses the official StarkWare `privacy` Cairo package from
+`https://github.com/starkware-libs/starknet-privacy`, pinned immutably to
+`66e3caae8c0201227a6719696d004e30d90aea65`. This is the revision resolved
+from the official `PRIVACY-0.14.3-RC.5` tag on August 28, 2026. The required
+protocol return type is `privacy::objects::OpenNoteDeposit`. The IWA toolchain
+remains Scarb/Cairo 2.18.0 with `starknet` 2.17.0; compatibility must pass the
+workspace build before helper production code is accepted.
+
 `IwaCircle` constructor configuration pins the privacy pool, supported tokens,
 and a deployment-only setup authority. Deployment then creates the helper with
 the resulting circle address and uses the authority once to initialize that

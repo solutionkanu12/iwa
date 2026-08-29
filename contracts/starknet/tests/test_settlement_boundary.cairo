@@ -8,8 +8,7 @@ use iwa::iwa_types::{
     ContributionStatus, PayoutStatus, contribution_settlement_authorization_hash,
     cure_settlement_authorization_hash, invite_commitment, payout_authorization_hash,
     payout_settlement_authorization_hash, recovery_settlement_authorization_hash,
-    verify_contribution_settlement_authorization, verify_cure_settlement_authorization,
-    verify_payout_settlement_authorization, verify_recovery_settlement_authorization,
+    verify_cure_settlement_authorization, verify_payout_settlement_authorization,
 };
 use snforge_std::signature::stark_curve::{
     StarkCurveKeyPair, StarkCurveKeyPairImpl, StarkCurveSignerImpl,
