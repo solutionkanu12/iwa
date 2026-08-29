@@ -792,6 +792,45 @@ debit it. A debit exceeding the same round's funded liability fails closed.
 Another token, another round, donations, organizer funds, or hypothetical
 insurance are not protocol backing.
 
+### Unaccounted surplus (finding 8B-01)
+
+The helper is an ordinary ERC20 holder, so anyone can send it tokens it never
+agreed to hold. Accounted custody for a token is exactly `token_liability`,
+the sum of that token's legitimate round liabilities; anything above it is
+surplus.
+
+Surplus is never backing. `credit_liability` and `debit_liability` are the only
+writers of custody or round liability, and both are reachable only from the
+four pool-authorized settlement branches of `privacy_invoke`. Inbound
+settlement still requires `balance == accounted custody + exact amount`, so a
+donation can never stand in for a member's contribution or cure.
+
+Because that check is exact, a surplus previously blocked every later inbound
+settlement in that token, permanently and with no recovery path. That was
+confirmed against the real pool and is now fixed by
+`normalize_surplus(token)`:
+
+- accepts only the two configured assets, so there is no general token rescue
+- requires `balance >= accounted custody`, then moves exactly the difference
+- leaves `balance == accounted custody`, so legitimate backing cannot be swept
+- reverts when there is no surplus, rather than silently draining anything
+- writes no storage at all: no liability, circle, round, member, note, nonce,
+  payout recipient, default, or cure history is touched
+- sends to `surplus_sink`, an immutable address pinned at deployment and
+  validated non-zero and distinct from the helper, the pool, and both tokens
+
+The destination is never a parameter, so a caller cannot direct value and gains
+nothing by calling. There is no setter, no admin path, and no upgradeable
+destination. Anyone may call it, which is what removes the denial of service.
+
+Residual, accepted: an attacker can still donate immediately before a
+settlement transaction to make that one transaction revert, then repeat. This
+is transient and repeatable rather than permanent, costs the attacker real
+tokens plus gas each time, and is cleared by any permissionless normalization.
+Folding normalization into the settlement path would remove it entirely, at the
+cost of a token transfer inside every contribution and cure; that trade has not
+been taken.
+
 Uncured final accounting stores net-funded recovery separately: nominal payout
 minus exact uncured deficits in that round. Nominal payout and defaults are not
 rewritten.

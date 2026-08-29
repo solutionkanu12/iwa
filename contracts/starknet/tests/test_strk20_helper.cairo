@@ -40,6 +40,12 @@ struct Env {
 fn addr(value: felt252) -> ContractAddress {
     value.try_into().unwrap()
 }
+
+/// Immutable surplus destination pinned at deployment. Not selectable by any
+/// caller and never a parameter of a settlement path.
+fn surplus_sink() -> ContractAddress {
+    addr('SURPLUS_SINK')
+}
 fn key(secret: felt252) -> StarkCurveKeyPair {
     StarkCurveKeyPairImpl::from_secret_key(secret)
 }
@@ -69,7 +75,11 @@ fn deploy_token(name: ByteArray, symbol: ByteArray) -> ContractAddress {
 }
 
 fn helper_deploy_fails(
-    core: ContractAddress, pool: ContractAddress, usdc: ContractAddress, strk: ContractAddress,
+    core: ContractAddress,
+    pool: ContractAddress,
+    usdc: ContractAddress,
+    strk: ContractAddress,
+    sink: ContractAddress,
 ) -> bool {
     let class = declare("IwaStrk20Helper").unwrap().contract_class();
     let mut calldata = array![];
@@ -77,6 +87,7 @@ fn helper_deploy_fails(
     pool.serialize(ref calldata);
     usdc.serialize(ref calldata);
     strk.serialize(ref calldata);
+    sink.serialize(ref calldata);
     class.deploy(@calldata).is_err()
 }
 
@@ -99,6 +110,7 @@ fn deploy_env() -> Env {
     pool.serialize(ref helper_data);
     usdc.serialize(ref helper_data);
     strk.serialize(ref helper_data);
+    surplus_sink().serialize(ref helper_data);
     let (helper_address, _) = helper_class.deploy(@helper_data).unwrap();
     let helper = IIwaStrk20HelperDispatcher { contract_address: helper_address };
     start_cheat_caller_address(core_address, setup);
@@ -284,13 +296,18 @@ fn dependency_constructor_and_pool_only_boundary() {
     assert(config.privacy_pool == env.pool, 'pool');
     assert(config.usdc_token == env.usdc, 'usdc');
     assert(config.strk_token == env.strk, 'strk');
+    assert(config.surplus_sink == surplus_sink(), 'sink');
     let zero: ContractAddress = 0.try_into().unwrap();
-    assert(helper_deploy_fails(zero, env.pool, env.usdc, env.strk), 'zero core');
-    assert(helper_deploy_fails(env.core.contract_address, zero, env.usdc, env.strk), 'zero pool');
-    assert(helper_deploy_fails(env.core.contract_address, env.pool, zero, env.strk), 'zero token');
-    assert(
-        helper_deploy_fails(env.core.contract_address, env.pool, env.usdc, env.usdc), 'same token',
-    );
+    let core = env.core.contract_address;
+    assert(helper_deploy_fails(zero, env.pool, env.usdc, env.strk, surplus_sink()), 'zero core');
+    assert(helper_deploy_fails(core, zero, env.usdc, env.strk, surplus_sink()), 'zero pool');
+    assert(helper_deploy_fails(core, env.pool, zero, env.strk, surplus_sink()), 'zero token');
+    assert(helper_deploy_fails(core, env.pool, env.usdc, env.usdc, surplus_sink()), 'same token');
+    // The surplus destination is validated at deployment and can never be
+    // changed afterwards, so these are the only chances to get it wrong.
+    assert(helper_deploy_fails(core, env.pool, env.usdc, env.strk, zero), 'zero sink');
+    assert(helper_deploy_fails(core, env.pool, env.usdc, env.strk, env.pool), 'pool sink');
+    assert(helper_deploy_fails(core, env.pool, env.usdc, env.strk, env.usdc), 'token sink');
 
     let id = activate(env);
     mint(env, AMOUNT);

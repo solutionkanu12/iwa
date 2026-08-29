@@ -1047,16 +1047,51 @@ Still intentionally absent:
 - real ERC-20 / STRK20 settlement
 - cure execution (Task 6F), payouts, pause, and `privacy_invoke`
 
+## STRK20 pool integration (Task 8B)
+
+Task 8B proved the Task 8A settlement helper against the **real pinned STRK20
+pool**, not a hand-written stand-in. `privacy::privacy::Privacy` from
+`66e3caae8c0201227a6719696d004e30d90aea65` is deployed locally and driven
+through its own `apply_actions` server-action entrypoint, so contribution,
+cure, payout, recovery, `NoFundedRecovery`, and rollback are all exercised over
+genuine protocol code: real calldata forwarding to `privacy_invoke`, real
+token movement, real `OpenNoteDeposit` crediting, real revert propagation.
+
+Verified behavior is recorded in `docs/strk20/INTEGRATION_RESEARCH.md`. No
+contradiction was found between the pinned protocol source and the helper.
+
+### Finding 8B-01 — fixed
+
+A 1-unit ERC20 donation to the helper used to make `assert_exact_inbound_balance`
+reject every later contribution and cure in that token, permanently and
+unrecoverably. Confirmed by test against the real pool, then fixed under the
+approved Option B: exact inbound accounting is unchanged, and a narrowly scoped
+permissionless `normalize_surplus(token)` moves only unaccounted surplus to an
+immutable sink pinned at deployment. Surplus is never liability, never funds a
+settlement, and legitimate backing can never be swept.
+
+The helper constructor now takes a fifth immutable argument, `surplus_sink`.
+
+### Finding 8B-02 — open, documented
+
+`scarb build` also emits StarkWare's `Privacy` class into
+`target/dev`, because `build-external-contracts` sits on the package target so
+integration tests can declare the genuine pool. IWA must never deploy it.
+Deployment tooling must name `IwaCircle` and `IwaStrk20Helper` explicitly and
+must never iterate over every generated artifact. Confining the pool to a
+test-only target was attempted and reverted; the diagnosis is in the research
+document.
+
 ## Immediate next work
 
 1. Do not delete legacy code.
-2. Task 6E is complete and fully verified. Next is Task 6F — cure execution
-   for `MISSED_DEFAULT` obligations under the locked `CureConfig`, beginning
-   with failing tests in `contracts/starknet/tests/test_cure.cairo`.
-3. A cure must settle the deficit without rewriting `MISSED_DEFAULT`. Do not
-   implement payouts, pause, or STRK20 `privacy_invoke` outside their own
-   tasks. Real ERC-20 / STRK20 settlement remains intentionally absent.
-4. STRK20 helper design must follow the verified integration research
+2. Task 8B is complete and locally verified. Before deployment, decide and
+   record the real `surplus_sink` address; it is immutable once deployed.
+3. Resolve 8B-02 properly, or encode the explicit two-contract selection in
+   the deployment tooling so the pool class can never be deployed by IWA.
+4. Re-verify the mainnet USDC, STRK, and pool addresses immediately before
+   deployment, then run the Task 8 security review.
+5. STRK20 work must follow the verified integration research
    (`docs/strk20/INTEGRATION_RESEARCH.md`) — never from memory.
 
 ## Working rules
@@ -1074,13 +1109,19 @@ Still intentionally absent:
 
 ## Last updated
 
-August 28, 2026
+August 29, 2026
 
 Current state:
 
-**Phase 3 Task 6E complete and fully verified. An unpaid obligation can be
-finalized as MISSED_DEFAULT permissionlessly and deterministically, only
-strictly after `grace_ends_at`, and ON_TIME, LATE_WITHIN_GRACE, and
-MISSED_DEFAULT are never rewritten. Real ERC-20 / STRK20 settlement is still
-intentionally not implemented. Next: Task 6F — cure execution under the locked
-CureConfig, without rewriting MISSED_DEFAULT.**
+**Phase 4 Task 8B complete and locally verified. IWA settlement is proven
+end-to-end against the real pinned STRK20 pool: contribution, cure, payout,
+recovery, `NoFundedRecovery`, and full transaction rollback all execute over
+genuine protocol code. Security finding 8B-01 (permanent donation denial of
+service on inbound settlement) is confirmed and fixed under Option B via an
+immutable-sink `normalize_surplus`, with exact inbound accounting preserved.
+Local results: 8B focused 11 passed, 8A helper 7 passed, full suite 176
+passed, 0 failed; `scarb fmt --check` and `scarb build` clean. Nothing is
+committed, and nothing is deployed. Finding 8B-02 (the pool class also lands
+in production build artifacts) remains open and documented. Next: choose the
+immutable `surplus_sink` address, harden deployment tooling against 8B-02,
+re-verify mainnet addresses, then the Task 8 security review.**

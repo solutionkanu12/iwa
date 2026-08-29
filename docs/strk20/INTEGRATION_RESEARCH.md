@@ -452,3 +452,239 @@ operation; `Recovered` remains reserved for confirmed funded token movement.
 - mainnet pool/class hash must be rechecked before deployment
 - credential circuit has not yet been re-audited
 - public metadata leakage from the IWA state machine remains to be designed carefully
+
+## Task 8B verified pool behavior (read from pinned source)
+
+Everything in this section was read directly from the pinned revision
+`66e3caae8c0201227a6719696d004e30d90aea65`, package `packages/privacy`.
+Line references are to that revision. Nothing here is inferred from memory.
+
+### Invoke entrypoint and selector
+
+`privacy::utils::constants::INVOKE_SELECTOR = selector!("privacy_invoke")`
+(`utils.cairo:83`). The pool reaches an application helper only through that
+selector, so the IWA helper entrypoint name is correct.
+
+`ComputeAndInvoke` uses `INVOKE_WITH_COMPUTATION_SELECTOR =
+selector!("privacy_invoke_with_computation")` (`utils.cairo:89`). IWA does not
+implement that selector and therefore cannot be driven through that path.
+
+### Calldata encoding
+
+`InvokeExternalInput { contract_address, calldata: Span<felt252> }`
+(`actions.cairo`). The pool forwards `calldata` verbatim through
+`call_contract_syscall` (`privacy.cairo:983-987`). There is no envelope,
+length prefix, or operation tag added by the protocol: the helper's own
+`privacy_invoke` ABI is the encoding. IWA's parameter order
+`(operation, circle_id, round, member_ref, token, open_note_id, nonce,
+signature_r, signature_s)` is therefore the whole contract.
+
+### Return encoding
+
+The pool deserializes the return data as `Span<OpenNoteDeposit>` and then
+asserts the buffer is fully consumed (`privacy.cairo:989-991`,
+`INVALID_INVOKE_RETURN_DATA`). Returning anything else, or trailing bytes,
+reverts.
+
+`OpenNoteDeposit { note_id: felt252, token: ContractAddress, amount: u128 }`
+(`objects.cairo:104-111`). This matches the IWA helper exactly.
+
+An empty span is valid and is the correct encoding for "no output note".
+
+### Inbound value: pool to helper
+
+Inbound value reaches the helper as `ServerAction::TransferTo`, applied by
+`_apply_transfer_to` as a plain ERC20 `transfer` from the pool. `TransferTo`
+is produced by the client `Withdraw` action, which sits in `WITHDRAW_PHASE`
+(6) while `InvokeExternal` sits in `INVOKE_PHASE` (7), and
+`assert_and_advance_phase` forbids moving backwards (`actions.cairo`).
+
+Verified consequence: tokens are already in the helper before
+`privacy_invoke` is called. The IWA helper's `assert_exact_inbound_balance`
+is therefore correctly placed.
+
+### Outbound value: helper to pool
+
+The pool does not receive outbound value from the return value. For each
+returned deposit it calls `_deposit_to_open_note` with
+`depositor = the invoked contract` (the helper), which performs
+`checked_transfer_from(token, sender: helper, recipient: pool, amount)`
+(`privacy.cairo:1032-1037`).
+
+Verified consequence: the helper MUST hold an ERC20 approval to the pool for
+exactly the returned amount at the moment it returns. The IWA helper's
+`approve_pool` is required, and its exact-amount approval is consumed in full
+by the pull, leaving zero residual allowance.
+
+### Open-note deposit rules enforced by the pool
+
+`_deposit_to_open_note` (`privacy.cairo:1010-1043`) asserts, in order:
+
+- `token.is_non_zero()` — `ZERO_TOKEN`
+- `amount.is_non_zero()` — `ZERO_AMOUNT`
+- the note exists — `NOTE_NOT_FOUND`
+- `salt == OPEN_NOTE_SALT` — `NOTE_NOT_OPEN`
+- the note's current amount is zero — `NOTE_ALREADY_DEPOSITED`
+- `token == note.token` — `TOKEN_MISMATCH`
+
+Verified consequences for IWA:
+
+- A zero-amount output note can never be credited. IWA's `NoFundedRecovery`
+  design, which returns an empty span rather than a zero-value deposit, is the
+  only encoding the protocol accepts.
+- An open note can be filled at most once, protocol-side. This is an
+  additional, independent replay bound on top of IWA's own nonce domains.
+- The output token is bound to the note itself, independently of IWA's own
+  token binding.
+
+### Open-note accounting invariant
+
+`_apply_actions` counts open notes: every `EmitOpenNoteCreated` increments
+`undeposited_open_notes`; each returned deposit decrements it via
+`checked_sub` (`privacy.cairo:1002-1004`), and the whole transaction ends with
+`assert(undeposited_open_notes == 0, UNDEPOSITED_OPEN_NOTES)`
+(`privacy.cairo:903`).
+
+Verified consequences:
+
+- Returning more deposits than open notes created panics with
+  `TOO_MANY_OPEN_NOTES_DEPOSITED`.
+- Creating an open note and returning an empty span reverts the whole
+  transaction with `UNDEPOSITED_OPEN_NOTES`.
+- Contribution and cure, which return an empty span, must therefore be
+  submitted without a `CreateOpenNote` action. Payout and recovery must be
+  submitted with exactly one.
+
+### Client-side open-note creation
+
+`create_open_note` (`privacy.cairo:674-710`) compiles one `CreateOpenNote`
+client action into exactly two server actions:
+
+1. `to_write_once_action(storage_address, open_note(token))`, where
+   `open_note(token) = Note { packed_value: OPEN_NOTE_PACKED_VALUE, token }`
+2. `ServerAction::EmitOpenNoteCreated(OpenNoteCreated { enc_recipient_addr,
+   token, note_id })`
+
+`enc_recipient_addr` is an auditor-encrypted blob that the pool emits but never
+validates.
+
+### Revert propagation
+
+The pool calls the helper with `call_contract_syscall(...).unwrap_syscall()`
+(`privacy.cairo:983-987`). A helper revert is not caught: it propagates and
+reverts the entire pool transaction, together with every token movement,
+storage write and event in that transaction. `apply_actions` is additionally
+documented as all-or-nothing (`interface.cairo:410-420`).
+
+### Caller observed by the helper
+
+The pool invokes from its own contract context, so the helper observes
+`get_caller_address() == pool address`. The protocol's own documentation on
+`InvokeWithComputation` states the target "should assert the caller is the
+privacy contract, otherwise anyone could invoke it directly and bypass the
+privacy pool" (`actions.cairo:428-430`), which is exactly IWA's
+`NOT_PRIVACY_POOL` guard.
+
+### Action ordering and the one-invoke rule
+
+`ClientActionTrait::assert_and_advance_phase` (`actions.cairo`) enforces
+non-decreasing phases and advances past `INVOKE_PHASE` after an invoke, so at
+most one `InvokeExternal`/`ComputeAndInvoke` may appear per transaction. IWA
+uses exactly one.
+
+### Other guards on the pool entrypoint
+
+`apply_actions` (`privacy.cairo:782-799`) is callable by any address, but:
+
+- it is reentrancy-guarded, so an invoked helper cannot call back into
+  `apply_actions`
+- it fails when the pool is paused
+- `validate_proof` requires the transaction to carry `proof_facts` whose
+  `message_to_l1_hashes` equals `[compute_message_hash(actions, pool)]`
+  (`privacy.cairo:804-838`)
+- `collect_fee` pulls `fee_amount` STRK from the caller when non-zero
+- a `TransferFrom` (regular-pool deposit) additionally requires a
+  screener-signed attestation; IWA's helper flows contain no `TransferFrom`
+  and therefore require no screening
+
+The pool also maintains `blocked_open_note_depositors`; a blocked depositor
+cannot credit open notes (`OPEN_NOTE_DEPOSITOR_BLOCKED`). The IWA helper is an
+open-note depositor and is therefore subject to that list. This is an
+operational dependency on the pool operator, not something IWA controls.
+
+### Consistency with the Task 8A helper
+
+No contradiction was found between the pinned protocol source and the Task 8A
+helper. Specifically confirmed consistent: entrypoint selector, calldata
+shape, return type, empty-span encoding, inbound-before-invoke ordering,
+outbound approval-and-pull, exact-amount approval with no residual allowance,
+zero-amount output rejection, and revert atomicity.
+
+## Task 8B local harness and its deployment caveat
+
+The integration harness deploys the genuine pinned `privacy::privacy::Privacy`
+contract locally. To make it declarable from `snforge`, `Scarb.toml` carries:
+
+```toml
+[[target.starknet-contract]]
+build-external-contracts = ["privacy::privacy::Privacy"]
+```
+
+### Caveat: the pool also appears in production build artifacts
+
+Because that setting sits on the package's `starknet-contract` target, a plain
+`scarb build` emits three contract classes rather than two:
+
+```
+IwaCircle, IwaStrk20Helper, Privacy
+```
+
+`Privacy` is StarkWare's pool. IWA must never declare or deploy it: the mainnet
+pool already exists at the address recorded above. Deployment tooling must name
+`IwaCircle` and `IwaStrk20Helper` explicitly and must never iterate over every
+artifact in `target/dev`.
+
+Confining the pool to the test target alone was attempted and rejected. Adding
+an explicit `[[test]]` target with `source-path = "tests/lib.cairo"` and the
+`build-external-contracts` entry does keep production artifacts clean, but the
+declared test target then builds *only* the listed external contracts and drops
+the package's own, so every test that declares `IwaCircle`, `IwaStrk20Helper`,
+or `TestErc20` fails with:
+
+```
+Failed to get contract artifact for identifier = IwaCircle.
+```
+
+Verified: 15+ previously green tests fail under that layout. The remaining
+option, listing IWA's own contracts as "external" from the test crate, is
+untested and interacts awkwardly with the feature-gated `TestErc20`. Until that
+is resolved, the package-level setting stays and the deployment caveat above is
+the mitigation.
+
+## Finding 8B-01 resolved: unaccounted surplus handling
+
+Verified against the real pool: a 1-unit ERC20 donation to `IwaStrk20Helper`
+made `assert_exact_inbound_balance` reject every later contribution and cure in
+that token, permanently, with no recovery path.
+
+Fixed under approved Option B. Exact inbound accounting is unchanged.
+
+Accounted custody for a token is `token_liability` — the sum of that token's
+legitimate round liabilities. Surplus is `balance - accounted custody`.
+
+`normalize_surplus(token)` is permissionless and narrowly scoped: supported
+tokens only, requires `balance >= accounted custody`, moves exactly the
+difference to the immutable `surplus_sink` pinned at deployment, and reverts
+when there is no surplus. It writes no storage, so it cannot create backing,
+satisfy a settlement, consume a nonce, or alter a payout recipient, default, or
+cure record. `get_surplus(token)` exposes the same figure as a view.
+
+The helper constructor now takes a fifth immutable argument, `surplus_sink`,
+validated non-zero and distinct from the helper itself, the privacy pool, and
+both configured tokens. Deployment must choose this address deliberately: it is
+immutable, and it receives any tokens mistakenly sent to the helper.
+
+Regression coverage lives in `tests/test_strk20_pool_integration.cairo` and
+proves donations never become backing, normalization restores exact inbound
+settlement through the real pool, legitimate backing can never be swept,
+tokens stay isolated, and the caller cannot choose the destination or profit.

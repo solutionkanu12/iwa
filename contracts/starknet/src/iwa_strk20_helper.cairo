@@ -15,6 +15,7 @@ pub struct HelperConfig {
     pub privacy_pool: ContractAddress,
     pub usdc_token: ContractAddress,
     pub strk_token: ContractAddress,
+    pub surplus_sink: ContractAddress,
 }
 
 #[starknet::interface]
@@ -24,6 +25,16 @@ pub trait IIwaStrk20Helper<TContractState> {
         self: @TContractState, circle_id: u32, round: u32, token: ContractAddress,
     ) -> u256;
     fn get_token_liability(self: @TContractState, token: ContractAddress) -> u256;
+    /// Balance held beyond the accounted custody for `token`. Always zero
+    /// immediately after a settlement; non-zero only when someone has sent the
+    /// helper tokens it never agreed to hold.
+    fn get_surplus(self: @TContractState, token: ContractAddress) -> u256;
+    /// Permissionlessly moves unaccounted surplus of a supported token to the
+    /// immutable sink pinned at deployment, restoring
+    /// `balance == accounted custody`. Touches no circle, round, member, note,
+    /// nonce, or liability, and the caller neither chooses the destination nor
+    /// receives anything.
+    fn normalize_surplus(ref self: TContractState, token: ContractAddress) -> u256;
     fn privacy_invoke(
         ref self: TContractState,
         operation: IwaOperation,
@@ -64,6 +75,8 @@ pub mod IwaStrk20Helper {
     const BALANCE_BELOW_LIABILITY: felt252 = 'BALANCE_LT_LIABILITY';
     const STALE_POOL_ALLOWANCE: felt252 = 'STALE_POOL_ALLOWANCE';
     const APPROVAL_FAILED: felt252 = 'APPROVAL_FAILED';
+    const NO_SURPLUS: felt252 = 'NO_SURPLUS';
+    const TRANSFER_FAILED: felt252 = 'TRANSFER_FAILED';
 
     #[storage]
     struct Storage {
@@ -71,8 +84,25 @@ pub mod IwaStrk20Helper {
         privacy_pool: ContractAddress,
         usdc_token: ContractAddress,
         strk_token: ContractAddress,
+        /// Immutable destination for unaccounted surplus. Written once at
+        /// deployment and never again: there is no setter and no admin.
+        surplus_sink: ContractAddress,
         round_token_liability: Map<(u32, u32, ContractAddress), u256>,
         token_liability: Map<ContractAddress, u256>,
+    }
+
+    #[event]
+    #[derive(Drop, starknet::Event)]
+    enum Event {
+        SurplusNormalized: SurplusNormalized,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    struct SurplusNormalized {
+        #[key]
+        token: ContractAddress,
+        amount: u256,
+        sink: ContractAddress,
     }
 
     #[constructor]
@@ -82,16 +112,25 @@ pub mod IwaStrk20Helper {
         privacy_pool: ContractAddress,
         usdc_token: ContractAddress,
         strk_token: ContractAddress,
+        surplus_sink: ContractAddress,
     ) {
         assert(!iwa_circle.is_zero(), INVALID_CONFIG);
         assert(!privacy_pool.is_zero(), INVALID_CONFIG);
         assert(!usdc_token.is_zero(), INVALID_CONFIG);
         assert(!strk_token.is_zero(), INVALID_CONFIG);
         assert(usdc_token != strk_token, INVALID_CONFIG);
+        assert(!surplus_sink.is_zero(), INVALID_CONFIG);
+        // A sink equal to this helper would make normalization a permanent
+        // no-op and re-create the denial of service it exists to remove. A sink
+        // equal to the pool would push unbacked tokens into pool accounting.
+        assert(surplus_sink != get_contract_address(), INVALID_CONFIG);
+        assert(surplus_sink != privacy_pool, INVALID_CONFIG);
+        assert(surplus_sink != usdc_token && surplus_sink != strk_token, INVALID_CONFIG);
         self.iwa_circle.write(iwa_circle);
         self.privacy_pool.write(privacy_pool);
         self.usdc_token.write(usdc_token);
         self.strk_token.write(strk_token);
+        self.surplus_sink.write(surplus_sink);
     }
 
     #[abi(embed_v0)]
@@ -102,6 +141,7 @@ pub mod IwaStrk20Helper {
                 privacy_pool: self.privacy_pool.read(),
                 usdc_token: self.usdc_token.read(),
                 strk_token: self.strk_token.read(),
+                surplus_sink: self.surplus_sink.read(),
             }
         }
 
@@ -115,6 +155,40 @@ pub mod IwaStrk20Helper {
         fn get_token_liability(self: @ContractState, token: ContractAddress) -> u256 {
             self.assert_supported_token(token);
             self.token_liability.read(token)
+        }
+
+        fn get_surplus(self: @ContractState, token: ContractAddress) -> u256 {
+            self.assert_supported_token(token);
+            let (_, surplus) = self.custody_and_surplus(token);
+            surplus
+        }
+
+        fn normalize_surplus(ref self: ContractState, token: ContractAddress) -> u256 {
+            // Only the two configured assets: this is not a general token
+            // rescue surface.
+            self.assert_supported_token(token);
+
+            // Accounted custody is the sum of every legitimate round liability
+            // for this token. Anything above it was never agreed to be held.
+            let (accounted, surplus) = self.custody_and_surplus(token);
+            assert(surplus != 0, NO_SURPLUS);
+
+            // The destination is immutable storage, never a parameter, so the
+            // caller cannot direct value anywhere and gains nothing by calling.
+            let sink = self.surplus_sink.read();
+            let erc20 = IERC20Dispatcher { contract_address: token };
+            assert(erc20.transfer(recipient: sink, amount: surplus), TRANSFER_FAILED);
+
+            // Exactly the surplus left, so accounted backing is untouched and
+            // the exact inbound rule can be satisfied again. No liability,
+            // circle, round, member, note, or nonce state is written anywhere
+            // in this function.
+            assert(
+                erc20.balance_of(account: get_contract_address()) == accounted,
+                BALANCE_BELOW_LIABILITY,
+            );
+            self.emit(SurplusNormalized { token, amount: surplus, sink });
+            surplus
         }
 
         fn privacy_invoke(
@@ -217,6 +291,17 @@ pub mod IwaStrk20Helper {
     impl InternalImpl of InternalTrait {
         fn core(self: @ContractState) -> IIwaCircleDispatcher {
             IIwaCircleDispatcher { contract_address: self.iwa_circle.read() }
+        }
+
+        /// Returns `(accounted custody, surplus)` for a supported token.
+        /// Reverts when the live balance is below accounted custody, so a
+        /// shortfall can never be silently reinterpreted as zero surplus.
+        fn custody_and_surplus(self: @ContractState, token: ContractAddress) -> (u256, u256) {
+            let accounted = self.token_liability.read(token);
+            let balance = IERC20Dispatcher { contract_address: token }
+                .balance_of(account: get_contract_address());
+            assert(balance >= accounted, BALANCE_BELOW_LIABILITY);
+            (accounted, balance - accounted)
         }
 
         fn assert_supported_token(self: @ContractState, token: ContractAddress) {

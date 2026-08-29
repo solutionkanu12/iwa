@@ -29,6 +29,10 @@ test_erc20 = []
 [lib]
 
 [[target.starknet-contract]]
+# Compiles the pinned STRK20 pool into the test artifacts so integration tests
+# can declare the genuine contract. IWA never deploys it; see the deployment
+# caveat in docs/strk20/INTEGRATION_RESEARCH.md.
+build-external-contracts = ["privacy::privacy::Privacy"]
 sierra = true
 
 [scripts]
