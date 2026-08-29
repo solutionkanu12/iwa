@@ -232,6 +232,60 @@ assert_rejects "a missing config file is refused" "config file not found" \
   "$TOOL" plan "$WORK/absent.json"
 
 # --------------------------------------------------------------------------
+# B2. surplus_sink must not be the deployed IwaCircle
+# --------------------------------------------------------------------------
+#
+# `validate` cannot catch this: the circle does not exist yet when the config is
+# first checked. The guard runs between deploying IwaCircle and deploying the
+# helper, and nothing on chain enforces it, so it is tested here directly.
+
+printf '\n--- B2. surplus_sink vs deployed IwaCircle ---\n'
+
+CIRCLE=0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+
+# The sink equals the circle that was just deployed.
+mkcfg "$WORK/sink_is_circle.json" "$CIRCLE"
+assert_rejects "sink equal to the deployed IwaCircle is refused" \
+  "surplus_sink is the deployed IwaCircle" \
+  "$TOOL" check-sink "$WORK/sink_is_circle.json" "$CIRCLE"
+
+# Felt equality, not string equality: a padded circle address must still match.
+mkcfg "$WORK/sink_is_circle_unpadded.json" \
+  "0x123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+assert_rejects "unpadded sink equal to the circle is still refused" \
+  "surplus_sink is the deployed IwaCircle" \
+  "$TOOL" check-sink "$WORK/sink_is_circle_unpadded.json" "$CIRCLE"
+
+# The refusal must name the abort point, so an operator knows nothing shipped.
+assert_output_contains "refusal states the helper was not deployed" \
+  "BEFORE the helper is deployed" \
+  "$TOOL" check-sink "$WORK/sink_is_circle.json" "$CIRCLE"
+assert_output_contains "refusal states initialization did not run" \
+  "BEFORE initialization" \
+  "$TOOL" check-sink "$WORK/sink_is_circle.json" "$CIRCLE"
+
+# A distinct sink passes.
+assert_accepts "a sink distinct from the circle passes" \
+  "$TOOL" check-sink "$WORK/good.json" "$CIRCLE"
+assert_output_contains "passing case is reported explicitly" \
+  "distinct from the deployed IwaCircle" \
+  "$TOOL" check-sink "$WORK/good.json" "$CIRCLE"
+
+# A malformed or missing circle address is refused rather than silently skipped.
+assert_rejects "a zero circle address is refused" "must not be the zero address" \
+  "$TOOL" check-sink "$WORK/good.json" "0x0"
+assert_rejects "a malformed circle address is refused" "not a hex address" \
+  "$TOOL" check-sink "$WORK/good.json" "not-an-address"
+assert_rejects "a missing circle address is refused" "is missing from config" \
+  "$TOOL" check-sink "$WORK/good.json"
+
+# The guard runs after the ordinary config checks, so a placeholder sink is
+# still caught first.
+assert_rejects "a placeholder sink is refused before the circle check" \
+  "still a placeholder" \
+  "$TOOL" check-sink "$WORK/placeholder.json" "$CIRCLE"
+
+# --------------------------------------------------------------------------
 # C. Deployment is gated
 # --------------------------------------------------------------------------
 

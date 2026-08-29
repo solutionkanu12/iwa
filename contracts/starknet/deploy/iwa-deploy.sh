@@ -12,6 +12,9 @@
 #   validate <config.json>              offline + read-only on-chain checks
 #   plan     <config.json>              print the exact ordered deployment steps
 #   deploy   <config.json>              SENDS TRANSACTIONS; requires --confirm-send
+#   check-sink <config.json> <deployed-iwa-circle>
+#                                       offline: refuses a surplus_sink that
+#                                       collides with the deployed IwaCircle
 #   verify   <config.json> <core> <helper>
 #                                       read-only post-deployment verification
 #
@@ -357,6 +360,31 @@ verify_deployment() {
 }
 
 # --------------------------------------------------------------------------
+# surplus_sink vs. deployed IwaCircle
+# --------------------------------------------------------------------------
+
+# The sink policy forbids using the IwaCircle address, but the circle does not
+# exist during initial config validation, so `validate` cannot check it. This is
+# the only moment it can be checked: after IwaCircle is deployed and before the
+# helper's immutable constructor consumes the sink. The helper constructor
+# rejects a sink equal to the pool, either token, or the helper itself, but it
+# does not know the circle address, so nothing on chain enforces this one.
+assert_sink_not_circle() {
+  local core="$1"
+  require_address "deployed IwaCircle" "$core"
+  if same_addr "$CFG_SINK" "$core"; then
+    die "surplus_sink is the deployed IwaCircle.
+       surplus_sink     $CFG_SINK
+       deployed circle  $core
+     The sink is immutable once the helper is deployed, and IwaCircle has no
+     path to move tokens, so any surplus sent there would be stranded forever.
+     Aborting BEFORE the helper is deployed and BEFORE initialization.
+     Set surplus_sink to a dedicated IWA treasury multisig and re-run."
+  fi
+  ok "surplus_sink is distinct from the deployed IwaCircle"
+}
+
+# --------------------------------------------------------------------------
 # Deployment (gated)
 # --------------------------------------------------------------------------
 
@@ -392,6 +420,10 @@ do_deploy() {
     | tee /dev/stderr | grep -Eo '0x[0-9a-fA-F]+' | tail -1)
   [ -n "$core" ] || die "IwaCircle deploy produced no address"
   ok "IwaCircle deployed at $core"
+
+  # Policy gate. Nothing below this line runs if the sink collides with the
+  # circle: no helper deployment, no initialization.
+  assert_sink_not_circle "$core"
 
   helper_class=$(cd "$PACKAGE_DIR" && sncast --account "$CFG_ACCOUNT" declare \
     --url "$CFG_RPC" --contract-name IwaStrk20Helper | tee /dev/stderr \
@@ -440,6 +472,12 @@ main() {
     check-artifacts)
       check_artifacts
       check_no_forbidden_entrypoints
+      ;;
+    check-sink)
+      load_config "${1:-}"
+      check_config_offline
+      assert_sink_not_circle "${2:-}"
+      printf '\nSINK CHECK PASSED — nothing was sent.\n'
       ;;
     verify)
       load_config "${1:-}"
