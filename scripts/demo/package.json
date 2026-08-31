@@ -1,5 +1,6 @@
 {
   "name": "iwa-strk20-demo",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "description": "IWA STRK20 mainnet demo tooling (read-only preflight + gated execution).",
