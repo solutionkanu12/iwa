@@ -1,0 +1,234 @@
+/* Organizer setup and invitation screens. Mobile-first: single column, large
+   tap targets, nothing that needs a pointer. */
+
+.wrap {
+  max-width: 32rem;
+  margin: 0 auto;
+  padding: 1.25rem 1rem 4rem;
+  color: #1b1b23;
+}
+
+.title {
+  font-size: 1.4rem;
+  line-height: 1.25;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  margin: 0 0 0.35rem;
+}
+
+.lede {
+  margin: 0 0 1.5rem;
+  color: #5c5c6b;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.card {
+  border: 1px solid rgba(27, 27, 35, 0.12);
+  border-radius: 16px;
+  padding: 1rem;
+  margin-bottom: 0.85rem;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.cardTitle {
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+}
+
+.field {
+  display: block;
+  margin-bottom: 0.9rem;
+}
+
+.label {
+  display: block;
+  font-size: 0.85rem;
+  color: #5c5c6b;
+  margin-bottom: 0.3rem;
+}
+
+.input,
+.select {
+  width: 100%;
+  box-sizing: border-box;
+  /* 16px keeps iOS from zooming the viewport on focus. */
+  font-size: 1rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid rgba(27, 27, 35, 0.2);
+  border-radius: 12px;
+  background: #fff;
+  color: inherit;
+}
+
+.input:focus,
+.select:focus {
+  outline: 2px solid #4b3bd6;
+  outline-offset: 1px;
+}
+
+.hint {
+  font-size: 0.8rem;
+  color: #6b6b7a;
+  margin: 0.25rem 0 0;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.35rem 0;
+}
+
+.rowLabel {
+  color: #5c5c6b;
+  font-size: 0.9rem;
+}
+
+.rowValue {
+  font-weight: 600;
+  text-align: right;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.actions > * {
+  flex: 1 1 auto;
+  min-height: 44px;
+}
+
+.slot {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.7rem 0;
+  border-top: 1px solid rgba(27, 27, 35, 0.08);
+}
+
+.slot:first-of-type {
+  border-top: none;
+}
+
+.slotNum {
+  flex: 0 0 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: rgba(27, 27, 35, 0.06);
+}
+
+.slotBody {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.slotName {
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.slotMeta {
+  font-size: 0.8rem;
+  color: #6b6b7a;
+  overflow-wrap: anywhere;
+}
+
+.accepted .slotNum {
+  background: rgba(32, 122, 72, 0.16);
+  color: #1d7a4a;
+}
+
+.pending .slotNum {
+  background: rgba(122, 106, 29, 0.14);
+  color: #7a6a1d;
+}
+
+.slotActions {
+  display: flex;
+  gap: 0.3rem;
+  flex: 0 0 auto;
+}
+
+.iconBtn {
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 12px;
+  border: 1px solid rgba(27, 27, 35, 0.18);
+  background: #fff;
+  font-size: 1rem;
+  cursor: pointer;
+  color: inherit;
+}
+
+.iconBtn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.notice {
+  border-left: 3px solid #a82c2c;
+  padding: 0.5rem 0 0.5rem 0.75rem;
+  margin: 0.75rem 0;
+  color: #7a2323;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.success {
+  border-left: 3px solid #1d7a4a;
+  padding: 0.5rem 0 0.5rem 0.75rem;
+  margin: 0.75rem 0;
+  color: #14603a;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.progress {
+  font-size: 0.85rem;
+  color: #5c5c6b;
+  margin: 0 0 0.5rem;
+}
+
+.bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(27, 27, 35, 0.08);
+  overflow: hidden;
+}
+
+.barFill {
+  height: 100%;
+  background: #4b3bd6;
+  transition: width 220ms ease;
+}
+
+.summary {
+  border-radius: 14px;
+  background: rgba(75, 59, 214, 0.06);
+  padding: 0.85rem 1rem;
+  margin: 0.75rem 0;
+}
+
+.busy {
+  font-size: 0.88rem;
+  color: #5c5c6b;
+  margin-top: 0.5rem;
+}
+
+@media (min-width: 640px) {
+  .wrap {
+    padding-top: 2.5rem;
+  }
+  .title {
+    font-size: 1.7rem;
+  }
+}

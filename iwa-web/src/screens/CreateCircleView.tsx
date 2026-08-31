@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import { Island } from "../components/Island.tsx";
 import { Button } from "../components/Button.tsx";
-import { classifyContractError, create_circle } from "../lib/iwaContract.ts";
-import { TOKEN_OPTIONS } from "../lib/stellarConfig.ts";
+import { classifyContractError, create_circle } from "../lib/iwaStarknet.ts";
+import { TOKEN_OPTIONS } from "../lib/starknetConfig.ts";
 import { parseAmount } from "../lib/amount.ts";
 import styles from "./CircleView.module.css";
 

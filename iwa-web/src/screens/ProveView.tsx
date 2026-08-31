@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { generateProof } from "../lib/zk.ts";
-import { verify_proof } from "../lib/iwaContract.ts";
+import { verify_proof } from "../lib/iwaStarknet.ts";
 import type { Claim } from "../lib/types.ts";
 import { Island } from "../components/Island.tsx";
 import { Button } from "../components/Button.tsx";
@@ -166,7 +166,7 @@ function ClaimStep({
       const p = await generateProof(CLAIMS[selected], secret);
 
       setBar(72);
-      setLabel("Checking on Stellar");
+      setLabel("Checking your proof");
       const v = await verify_proof(p.proof, p.publicSignals);
 
       if (!v.verified) {
@@ -286,7 +286,7 @@ function VerifiedCard({
         <span className={styles.vdot}>
           <CheckIcon size={13} />
         </span>
-        Verified on Stellar. Your money and identity stayed private.
+        Proof checked. Your money and identity stayed private.
       </p>
 
       <div className={styles.proofCard}>
@@ -304,7 +304,7 @@ function VerifiedCard({
           <span className={styles.v}>{short(data.proofId)}</span>
         </div>
         <div className={styles.kv}>
-          <span className={styles.k}>Stellar verifier</span>
+          <span className={styles.k}>Proof reference</span>
           <span className={styles.v}>
             <a href="/" onClick={(e) => e.preventDefault()}>
               {short(data.reference)}
@@ -350,13 +350,13 @@ function LenderCard({
         </div>
         <span className={styles.badge}>
           <span className={styles.badgeDot} />
-          Verified on Stellar
+          Proof checked
         </span>
         <p className={`${styles.claimtext} ${styles.lenderClaim}`}>
           {data.claim.statement}
         </p>
         <div className={styles.kv}>
-          <span className={styles.k}>Stellar verifier</span>
+          <span className={styles.k}>Proof reference</span>
           <span className={styles.v}>
             <a href="/" onClick={(e) => e.preventDefault()}>
               {short(data.reference)}

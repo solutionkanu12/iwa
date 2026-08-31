@@ -12,7 +12,7 @@ import styles from "./LandingPage.module.css";
 // 1 glass nav, 2 hero, 3 community, 4 how it works, 5 see it in action, 6 FAQ,
 // 7 footer, 8 dock (fixed glass).
 export interface LandingPageProps {
-  // Opens the same Stellar Wallets Kit connect flow the app uses (lib/wallet.ts
+  // Opens the same Starknet wallet connect flow the app uses (lib/starknetWallet.ts
   // connectWallet). Wired to every live "Enter the circle" CTA (nav, hero, dock).
   onEnterCircle: () => void;
 }

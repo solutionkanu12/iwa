@@ -6,13 +6,16 @@ transaction has been sent from this repository.
 ```
 ./iwa-deploy.sh validate deploy.config.json     # offline + read-only on-chain checks
 ./iwa-deploy.sh plan     deploy.config.json     # print the ordered steps
-./iwa-deploy.sh verify   deploy.config.json <core> <helper>
+./iwa-deploy.sh check-helper deploy.config.json <helper> <core> <helper-class>
+                                                # fail-closed pre-init gate
+./iwa-deploy.sh verify   deploy.config.json <core> <helper> <core-class> <helper-class>
 ./iwa-deploy.sh deploy   deploy.config.json --confirm-send    # sends transactions
 ./test-iwa-deploy.sh                            # offline assertions, no network
 ```
 
-`validate`, `plan`, `verify` and `check-artifacts` never send a transaction.
-`deploy` refuses to run without `--confirm-send`.
+`validate`, `plan`, `verify`, `check-sink`, `check-helper` and
+`check-artifacts` never send a transaction. `deploy` refuses to run without
+`--confirm-send`.
 
 ## Artifact allowlist (closes 8B-02)
 
@@ -75,21 +78,37 @@ decision and is a blocker for deployment.
    deployed at `privacy_pool` and answers the STRK20 pool view interface, and
    that each token reports the expected symbol.
 2. **Deploy `IwaCircle`** with `usdc_token, strk_token, privacy_pool,
-   setup_authority`.
+   setup_authority`, using a fresh salt.
 3. **Deploy `IwaStrk20Helper`** with `iwa_circle, privacy_pool, usdc_token,
-   strk_token, surplus_sink`.
-4. **`initialize_settlement_helper(helper)`** exactly once, from the setup
+   strk_token, surplus_sink`, using a fresh salt.
+4. **Run the pre-initialization gate** (`assert_helper_ready`). Read-only and
+   fail-closed: it re-reads from the chain that the helper address hosts the
+   exact helper class, that the helper config matches every configured address
+   exactly, and that the circle is still uninitialized with the expected
+   setup authority. Initialization is not sent unless every check passes.
+5. **`initialize_settlement_helper(helper)`** exactly once, from the setup
    authority. The contract locks initialization and clears the authority to
    zero in the same call.
-5. **Verify the stored helper** equals the deployed helper.
-6. **Verify the setup authority is cleared** to `0x0`.
-7. **Verify no replacement setter exists** (checked from the ABI in step 1).
-8. **Verify the helper config** matches every expected address.
+6. **Verify the stored helper** equals the deployed helper.
+7. **Verify the setup authority is cleared** to `0x0`.
+8. **Verify no replacement setter exists** (checked from the ABI in step 1).
+9. **Verify the helper config** matches every expected address.
 
-Steps 5-8 are re-runnable at any time:
-`./iwa-deploy.sh verify deploy.config.json <core> <helper>`.
+Steps 6-9 are re-runnable at any time:
+`./iwa-deploy.sh verify deploy.config.json <core> <helper> <core-class> <helper-class>`.
 
-The deployment is not valid until steps 5-8 pass on chain.
+The deployment is not valid until steps 6-9 pass on chain.
+
+## Salt policy
+
+The UDC computes a deployed address deterministically from deployer, salt,
+class hash and constructor calldata. The abandoned deployment used salt `0x0`
+and occupies those addresses. A recovery must therefore use a **fresh salt**:
+reusing `0x0` with identical inputs recomputes the same occupied addresses and
+reverts at deploy time. The tool refuses an explicit `salt: 0x0` in the
+config, and when `salt` is omitted it generates a fresh random salt, prints it
+prominently, and passes it deliberately to every deploy in the run. Record the
+printed salt for reproducibility.
 
 ## What the tool refuses
 
@@ -98,6 +117,11 @@ The deployment is not valid until steps 5-8 pass on chain.
 - `surplus_sink` equal to the pool, either token, or the setup authority
   (address comparison is felt-wise, so `0x0abc` and `0xabc` compare equal)
 - a chain id that does not match the configured network
+- a `salt` of `0x0` (the abandoned deployment occupies the salt-0 addresses)
+- a malformed sncast output missing the `contract_address:` / `class_hash:` field
+- a helper that is not deployed, runs a different class, has a mismatched
+  config, or is wired to a circle that is already initialized (the
+  pre-initialization gate, `check-helper`)
 - missing or duplicated allowlisted artifacts
 - an `IwaCircle` ABI exposing a helper-replacement setter
 - deploying without `--confirm-send`

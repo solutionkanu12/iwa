@@ -4,7 +4,7 @@ import styles from "./LandingDock.module.css";
 // the bottom of the viewport, floating over content, the bottom bookend to the
 // fixed top nav. Left: cowrie glyph, name, descriptor. Right: the network tag
 // and an iris CTA. Matched to design/iwa-prototype.html. The network tag reads
-// "Stellar testnet", matching the FAQ and litepaper: the contracts are real
+// "Starknet mainnet", matching the FAQ and litepaper: the contracts are real
 // and live, but on testnet while they are finished.
 // Nav, hero, and earlier sections, the footer, app, app nav, and seams are
 // untouched.
@@ -33,7 +33,7 @@ export function LandingDock({
         <span className={styles.tag}>savings circles, private proof</span>
       </div>
       <div className={styles.r}>
-        <span className={styles.net}>Stellar testnet</span>
+        <span className={styles.net}>Starknet mainnet</span>
         <a
           className={styles.cta}
           href="/app"

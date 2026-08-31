@@ -7,19 +7,19 @@ import {
   has_contributed,
   join_circle,
   pay_contribution,
-} from "../lib/iwaContract.ts";
+} from "../lib/iwaStarknet.ts";
 import {
   connectWallet,
   deriveMemberCommitment,
   disconnectWallet,
   WalletCancelledError,
-} from "../lib/wallet.ts";
-import type { MemberCommitment } from "../lib/wallet.ts";
+} from "../lib/starknetWallet.ts";
+import type { MemberCommitment } from "../lib/starknetWallet.ts";
 import {
   DEMO_CIRCLE_ID,
   tokenSymbol,
   tokenDecimals,
-} from "../lib/stellarConfig.ts";
+} from "../lib/starknetConfig.ts";
 import { formatAmount } from "../lib/amount.ts";
 import { generateProof } from "../lib/zk.ts";
 import type { SnarkProof } from "../lib/convert.ts";
@@ -722,7 +722,7 @@ export function CircleView({
         </div>
         <h2 className={`${styles.h2} ${styles.connectH2}`}>Join the circle</h2>
         <p className={styles.connectLede}>
-          Connect your Stellar wallet to see the circle and claim your spot.
+          Connect your Starknet wallet to see the circle and claim your spot.
         </p>
         <div className={styles.stack}>
           <Button onClick={handleConnect} disabled={connecting}>
@@ -730,7 +730,7 @@ export function CircleView({
           </Button>
         </div>
         <p className={`${styles.mono} ${styles.connectNote}`}>
-          Stellar testnet · Stellar Wallets Kit
+          Starknet mainnet · private contributions
         </p>
       </Island>
     );
@@ -742,7 +742,7 @@ export function CircleView({
     body = (
       <Island className={styles.card}>
         <h2 className={styles.h2}>Loading your circle</h2>
-        <p className={styles.meta}>Reading the circle from Stellar</p>
+        <p className={styles.meta}>Reading the circle from Starknet</p>
       </Island>
     );
   } else if (screen === "contribute") {
@@ -1048,7 +1048,7 @@ export function CircleView({
       />
       {body}
       <p className={`${styles.mono} ${styles.protoNote}`}>
-        Reads, proof, and writes live on Stellar testnet
+        Live on Starknet mainnet · contributions settle privately
       </p>
       {commitment ? (
         <p className={`${styles.mono} ${styles.protoNote}`}>

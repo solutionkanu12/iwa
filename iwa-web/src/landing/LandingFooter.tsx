@@ -10,7 +10,7 @@ import styles from "./LandingFooter.module.css";
 // sections, app, app nav, and seams are untouched.
 
 const GITHUB_URL = "https://github.com/solutionkanu12/iwa";
-const STELLAR_URL = "https://stellar.org";
+const STARKNET_URL = "https://starknet.io";
 const X_URL = "https://x.com/joinIwa";
 
 // A footer link is one of: external (new tab), internal (same-site nav), a
@@ -45,9 +45,9 @@ const COLUMNS: { heading: string; links: FooterLink[] }[] = [
   {
     heading: "built on",
     links: [
-      { label: "Stellar", href: STELLAR_URL, external: true },
+      { label: "Starknet", href: STARKNET_URL, external: true },
       // No real destination yet, so inert rather than jumping to top.
-      { label: "Soroban", inert: true },
+      { label: "STRK20 privacy", inert: true },
       { label: "Zero-knowledge proofs", inert: true },
     ],
   },
@@ -161,7 +161,7 @@ export function LandingFooter() {
               </svg>
             </a>
           </div>
-          <span className={styles.copy}>Iwa · Stellar Hacks, Real-World ZK</span>
+          <span className={styles.copy}>Iwa · Private savings on Starknet</span>
         </div>
       </div>
     </footer>

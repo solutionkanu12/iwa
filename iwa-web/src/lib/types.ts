@@ -1,6 +1,6 @@
 // Shared seam types. The UI imports these and the two seam modules only.
 // Return shapes here match PRD sections 11 and 13 so the real Soroban + ZK
-// backend drops in behind lib/iwaContract.ts and lib/zk.ts with no UI changes.
+// backend drops in behind lib/iwaStarknet.ts and lib/zk.ts with no UI changes.
 
 import type { SnarkProof } from "./convert";
 

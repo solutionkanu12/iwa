@@ -20,5 +20,8 @@
   "setup_authority": "REPLACE_ME_WITH_SETUP_AUTHORITY_ADDRESS",
 
   "_deployer_account": "sncast account name used to sign declare/deploy/invoke. Only needed for the gated `deploy` subcommand.",
-  "deployer_account": "REPLACE_ME_WITH_SNCAST_ACCOUNT_NAME"
+  "deployer_account": "REPLACE_ME_WITH_SNCAST_ACCOUNT_NAME",
+
+  "_salt": "OPTIONAL. Non-zero hex felt used as the UDC salt for every deploy in a run. The abandoned deployment used salt 0x0 and occupies those addresses; recovery must use a fresh salt. Leave empty to let the tool generate, print, and deliberately pass a fresh random salt.",
+  "salt": ""
 }

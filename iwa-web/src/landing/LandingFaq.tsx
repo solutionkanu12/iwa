@@ -16,11 +16,11 @@ import styles from "./LandingFaq.module.css";
 const FAQS = [
   {
     q: "What is a savings circle",
-    a: "A savings circle, or ajo, is a group who each put in a fixed amount every round and take turns collecting the whole pot. Iwa runs this on Stellar, so the turns and the payments are handled for you.",
+    a: "A savings circle, or ajo, is a group who each put in a fixed amount every round and take turns collecting the whole pot. Iwa runs this on Starknet, so the turns and the payments are handled for you.",
   },
   {
     q: "Do I need a bank account",
-    a: "No. You need a Stellar wallet and a phone. Iwa is built for people the banks cannot see, so a bank account is never the starting point.",
+    a: "No. You need a Starknet wallet and a phone. Iwa is built for people the banks cannot see, so a bank account is never the starting point.",
   },
   {
     q: "What does my proof show a lender",
@@ -37,7 +37,7 @@ const FAQS = [
   },
   {
     q: "How safe is my money",
-    a: "Contributions and payouts run through a smart contract on Stellar, so no single person holds the pot. This build runs on testnet while the contracts are finished.",
+    a: "Contributions and payouts run through a smart contract on Starknet, so no single person holds the pot. Contributions are private: the amounts and who paid them are hidden, while your good standing stays provable.",
   },
   {
     q: "What if someone in my circle does not pay",

@@ -1,0 +1,26 @@
+{
+  "_comment": "IWA Starknet MAINNET deployment configuration. Working copy — not a template. Two values are deliberately unset and must be supplied by the project owner before anything can run; the validator rejects the placeholders, so this file cannot deploy as it stands.",
+
+  "_verified": "network, pool, USDC and STRK were re-verified read-only against SN_MAIN on 2026-08-29. Re-run `./iwa-deploy.sh validate deploy.config.json` immediately before deploying.",
+
+  "network": "mainnet",
+  "rpc_url": "https://api.cartridge.gg/x/starknet/mainnet",
+
+  "_privacy_pool": "VERIFIED. StarkWare STRK20 privacy pool. class 0x67dddd89d80fedadc06b6f160798f94800a4a70164e5a24301cd0d6076b554d, get_version()=0x322e30 ('2.0'), answers is_open_note_depositor_blocked. IWA integrates with this and must NEVER declare or deploy it.",
+  "privacy_pool": "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a",
+
+  "_usdc_token": "VERIFIED. Circle native USDC on Starknet. symbol=USDC, decimals=6. NOT bridged USDC.e (0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8).",
+  "usdc_token": "0x033068F6539f8e6e6b131e6B2B814e6c34A5224bC66947c47DaB9dFeE93b35fb",
+
+  "_strk_token": "VERIFIED. symbol=STRK, decimals=18, name='Starknet Token'. Also the token the pool collects its fee in.",
+  "strk_token": "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d",
+
+  "_surplus_sink": "OWNER INPUT REQUIRED. Immutable 5th constructor argument of IwaStrk20Helper; there is no setter and no admin. Receives unaccounted tokens sent to the helper, moved only by the permissionless normalize_surplus. Must be a dedicated IWA Starknet treasury multisig. Must NOT be: the setup authority / deployer, the privacy pool, USDC, STRK, the deployed IwaCircle, or the helper itself. Choosing this wrongly cannot be corrected after deployment.",
+  "surplus_sink": "0x043d08F5B0D621eF22f91B954e719d7C0a5a8c6ed89308bA05f36FAe42F2d804",
+
+  "_setup_authority": "OWNER INPUT REQUIRED. The funded Starknet deployer account address. Its only power is calling initialize_settlement_helper exactly once; IwaCircle clears it to zero in that same call. Temporary by construction.",
+  "setup_authority": "0x04099B8eBD6e6c642B4B31BFD27A9c781AB9b41D7f66F80d5C04CC51c0977E85",
+
+  "_deployer_account": "OWNER INPUT REQUIRED. The sncast account NAME (from `sncast account list`) that signs declare/deploy/invoke. Must correspond to the same address given as setup_authority, and must hold STRK for gas.",
+  "deployer_account": "iwa-deployer-standard"
+}

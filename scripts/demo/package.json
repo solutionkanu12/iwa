@@ -1,0 +1,24 @@
+{
+  "name": "iwa-strk20-demo",
+  "private": true,
+  "type": "module",
+  "description": "IWA STRK20 mainnet demo tooling (read-only preflight + gated execution).",
+  "scripts": {
+    "preflight": "node lib/preflight.mjs",
+    "preflight:offline": "node lib/preflight.mjs --offline",
+    "vectors": "node 00_vectors.mjs",
+    "prepare:circle": "node 00_prepare.mjs",
+    "deposit": "node 04_deposit.mjs",
+    "contribute": "node 05_contribute.mjs",
+    "payout": "node 06_payout.mjs",
+    "verify": "node 07_verify.mjs",
+    "strk20json": "node 08_strk20_json.mjs",
+    "check": "node --check 00_vectors.mjs && node --check 00_prepare.mjs && node --check 04_deposit.mjs && node --check 05_contribute.mjs && node --check 06_payout.mjs && node --check 07_verify.mjs && node --check 08_strk20_json.mjs && node --check lib/iwa.mjs && node --check lib/parity.mjs && node --check lib/chain.mjs && node --check lib/preflight.mjs && node --check lib/secrets.mjs && node --check lib/sdk-loader.mjs && node --check lib/circle.mjs && node --check lib/params.mjs && node --check lib/funding.mjs && node --check lib/members.mjs && node --check lib/run.mjs"
+  },
+  "dependencies": {
+    "@starknet-io/types-js": "~0.10.2",
+    "ohttp-ts": "^0.3.0",
+    "starknet": "10.5.0",
+    "zod": "^3.24.0"
+  }
+}

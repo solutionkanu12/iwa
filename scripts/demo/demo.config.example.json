@@ -1,0 +1,37 @@
+{
+  "_comment": "Read-only configuration for the IWA STRK20 demo preflight. Copy to demo.config.json. This file drives verification only; no key material and no account belong here.",
+
+  "network": "mainnet",
+  "rpc_url": "https://api.cartridge.gg/x/starknet/mainnet",
+
+  "_iwa_circle": "Production IwaCircle, deployed and verified.",
+  "iwa_circle": "0x01f81497b09aa702a38715c0ec149d7672cd557c0caea480714d4802ff6f81be",
+  "_iwa_circle_class": "REQUIRED. Class hash the circle address must run. The preflight fails closed if the on-chain class differs, so an address that was upgraded or replaced can never pass unnoticed.",
+  "iwa_circle_class": "REPLACE_ME_WITH_IWA_CIRCLE_CLASS_HASH",
+
+  "_iwa_helper": "Production IwaStrk20Helper, deployed and verified.",
+  "iwa_helper": "0x04cac02dcc7ca8c46c0b6f32985f17bf24d99557222e60c6881d147e13fafbbb",
+  "_iwa_helper_class": "REQUIRED. Class hash the helper address must run.",
+  "iwa_helper_class": "REPLACE_ME_WITH_IWA_HELPER_CLASS_HASH",
+
+  "_privacy_pool": "VERIFIED StarkWare STRK20 privacy pool. IWA integrates with it and must never declare or deploy it.",
+  "privacy_pool": "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a",
+  "privacy_pool_class": "0x67dddd89d80fedadc06b6f160798f94800a4a70164e5a24301cd0d6076b554d",
+
+  "_usdc_token": "VERIFIED Circle native USDC on Starknet (symbol USDC, decimals 6). NOT bridged USDC.e.",
+  "usdc_token": "0x033068F6539f8e6e6b131e6B2B814e6c34A5224bC66947c47DaB9dFeE93b35fb",
+
+  "_strk_token": "VERIFIED STRK (decimals 18). Also the token the pool collects its fee in.",
+  "strk_token": "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d",
+
+  "_surplus_sink": "Immutable 5th constructor argument of the deployed IwaStrk20Helper. The preflight asserts the on-chain helper still reports exactly this address.",
+  "surplus_sink": "0x043d08F5B0D621eF22f91B954e719d7C0a5a8c6ed89308bA05f36FAe42F2d804",
+
+  "_circle": "Demo circle terms. memberLimit >= 2 is a contract rule (create_circle rejects 1). contributionAmount is in USDC base units (6 decimals): 1000000 = 1.00 USDC.",
+  "circle": {
+    "contributionAmount": "1000000",
+    "memberLimit": 2,
+    "cadenceSeconds": 604800,
+    "gracePeriodSeconds": 86400
+  }
+}

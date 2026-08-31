@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Island } from "../components/Island.tsx";
-import { listCircles } from "../lib/iwaContract.ts";
-import type { CircleSummary } from "../lib/iwaContract.ts";
-import { tokenSymbol, tokenDecimals } from "../lib/stellarConfig.ts";
+import { listCircles } from "../lib/iwaStarknet.ts";
+import type { CircleSummary } from "../lib/iwaStarknet.ts";
+import { tokenSymbol, tokenDecimals } from "../lib/starknetConfig.ts";
 import { formatAmount } from "../lib/amount.ts";
 import styles from "./CircleView.module.css";
 
@@ -50,11 +50,11 @@ export function BrowseCirclesView({ onView }: { onView: (id: number) => void }) 
     <Island className={styles.card}>
       <h2 className={styles.h2}>Browse circles</h2>
       <p className={styles.meta}>
-        Circles on Stellar. Open ones you can join, active ones in progress.
+        Circles on Starknet. Open ones you can join, active ones in progress.
       </p>
 
       {loading ? (
-        <p className={styles.meta}>Scanning circles on Stellar</p>
+        <p className={styles.meta}>Scanning circles on Starknet</p>
       ) : sorted.length === 0 ? (
         <p className={styles.meta}>No circles yet. Create the first one.</p>
       ) : (
