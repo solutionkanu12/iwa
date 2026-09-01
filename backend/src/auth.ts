@@ -17,8 +17,9 @@
 // No private key ever reaches this service. A signature is a public artefact.
 
 import { randomBytes } from "node:crypto";
-import { RpcProvider, typedData as snTypedData } from "starknet";
+import { RpcProvider } from "starknet";
 
+import { authorizationHash, type AuthorizationBinding } from "./authBinding.js";
 import { SN_MAIN, normalizeFelt } from "./validation.js";
 
 /** Challenges are short-lived: long enough to sign, short enough to be useless if leaked. */
@@ -31,30 +32,9 @@ export interface Challenge {
   expiresAt: number;
 }
 
-/** SNIP-12 payload the wallet displays and signs. Contains no secret. */
-export function challengeTypedData(nonce: string, chainId: string) {
-  return {
-    domain: { name: "Iwa", version: "1", chainId },
-    types: {
-      StarkNetDomain: [
-        { name: "name", type: "felt" },
-        { name: "version", type: "felt" },
-        { name: "chainId", type: "felt" },
-      ],
-      Authorization: [
-        { name: "purpose", type: "felt" },
-        { name: "nonce", type: "felt" },
-      ],
-    },
-    primaryType: "Authorization",
-    message: { purpose: "Iwa organizer action", nonce },
-  };
-}
-
-/** The hash the account is asked to have signed. */
-export function challengeHash(nonce: string, chainId: string, address: string): string {
-  return snTypedData.getMessageHash(challengeTypedData(nonce, chainId), address);
-}
+// The message a wallet signs lives in authBinding.ts, because what it says is
+// the security property: it names the exact operation being authorized. A
+// challenge here is only the nonce that message consumes.
 
 export interface SignatureVerifier {
   /** True when `address` really signed `messageHash`. */
@@ -184,8 +164,19 @@ export interface AuthCredentials {
 }
 
 /** Verifies a credential set. Every failure path burns the nonce. */
+/**
+ * Verifies that this wallet authorized THIS operation.
+ *
+ * `operation` is derived by the server from the request it is actually
+ * handling: the action the route declares, the method, the path, and the hash
+ * of the parsed body. Nothing in it comes from a client claim, so there is no
+ * asserted binding to compare and nothing to be fooled by. A caller who signed
+ * a different operation produces a different message hash, and the account's
+ * own signature check fails.
+ */
 export async function verifyCredentials(
   credentials: AuthCredentials,
+  operation: Omit<AuthorizationBinding, "nonce" | "chainId">,
   challenges: ChallengeStore,
   verifier: SignatureVerifier,
 ): Promise<{ ok: true; address: string } | { ok: false; reason: AuthFailure }> {
@@ -204,9 +195,8 @@ export async function verifyCredentials(
     return { ok: false, reason: map[consumed.reason] };
   }
 
-  const hash = challengeHash(
-    consumed.challenge.nonce,
-    consumed.challenge.chainId,
+  const hash = authorizationHash(
+    { ...operation, nonce: consumed.challenge.nonce, chainId: consumed.challenge.chainId },
     consumed.challenge.address,
   );
   const valid = await verifier.verify(consumed.challenge.address, hash, credentials.signature);

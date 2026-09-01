@@ -11,10 +11,10 @@ import type { Express } from "express";
 import { createApp } from "../src/app.js";
 import { MemoryStore } from "../src/store.js";
 import { SN_MAIN } from "../src/validation.js";
+import { AUTH_ACTIONS, authorizationHash, hashBody, hashResource } from "../src/authBinding.js";
 import {
   CHALLENGE_TTL_MS,
   ChallengeStore,
-  challengeHash,
   verifyCredentials,
   type SignatureVerifier,
 } from "../src/auth.js";
@@ -62,8 +62,10 @@ describe("challenge issuance", () => {
     const res = await request(app).post("/api/auth/challenge").send({ address: ORGANIZER }).expect(200);
     expect(res.body.nonce).toMatch(/^0x[0-9a-f]{32}$/);
     expect(new Date(res.body.expiresAt).getTime()).toBeGreaterThan(Date.now());
-    expect(res.body.typedData.primaryType).toBe("Authorization");
-    expect(res.body.typedData.message.nonce).toBe(res.body.nonce);
+    // No payload comes back. What the signature will authorize is decided when
+    // the client signs, from the call it is about to make, and is recomputed by
+    // the server from the request it actually receives.
+    expect(res.body).not.toHaveProperty("typedData");
   });
 
   it("issues a different nonce every time", async () => {
@@ -198,6 +200,18 @@ describe("organizer routes reject everything but a valid signed challenge", () =
   });
 });
 
+/** One operation, used wherever these tests only care about the lifecycle. */
+const OPERATION = {
+  action: AUTH_ACTIONS.draftsList,
+  method: "POST",
+  resourceHash: hashResource("/api/drafts/mine"),
+  bodyHash: hashBody({}),
+};
+
+/** The hash the account is asked to have signed, for that operation. */
+const hashFor = (nonce: string, chainId: string, address: string) =>
+  authorizationHash({ ...OPERATION, nonce, chainId }, address);
+
 describe("challenge expiry", () => {
   it("rejects a nonce past its lifetime, and burns it", async () => {
     let clock = 1_000_000;
@@ -207,6 +221,7 @@ describe("challenge expiry", () => {
     clock += CHALLENGE_TTL_MS + 1;
     const expired = await verifyCredentials(
       { address: ORGANIZER, nonce: issued.nonce, chainId: SN_MAIN, signature: [`signed-by:${ORGANIZER}`] },
+      OPERATION,
       store,
       new StubVerifier(),
     );
@@ -216,6 +231,7 @@ describe("challenge expiry", () => {
     clock = 1_000_001;
     const retry = await verifyCredentials(
       { address: ORGANIZER, nonce: issued.nonce, chainId: SN_MAIN, signature: [`signed-by:${ORGANIZER}`] },
+      OPERATION,
       store,
       new StubVerifier(),
     );
@@ -229,6 +245,7 @@ describe("challenge expiry", () => {
 
     const first = await verifyCredentials(
       { address: ORGANIZER, nonce: issued.nonce, chainId: SN_MAIN, signature: ["wrong"] },
+      OPERATION,
       store,
       verifier,
     );
@@ -236,6 +253,7 @@ describe("challenge expiry", () => {
 
     const second = await verifyCredentials(
       { address: ORGANIZER, nonce: issued.nonce, chainId: SN_MAIN, signature: [`signed-by:${ORGANIZER}`] },
+      OPERATION,
       store,
       verifier,
     );
@@ -256,9 +274,32 @@ describe("challenge expiry", () => {
 
 describe("challenge hash", () => {
   it("binds the nonce, the chain and the account together", () => {
-    const a = challengeHash("0x1", SN_MAIN, ORGANIZER);
-    expect(challengeHash("0x2", SN_MAIN, ORGANIZER)).not.toBe(a);
-    expect(challengeHash("0x1", SEPOLIA, ORGANIZER)).not.toBe(a);
-    expect(challengeHash("0x1", SN_MAIN, ATTACKER)).not.toBe(a);
+    const a = hashFor("0x1", SN_MAIN, ORGANIZER);
+    expect(hashFor("0x2", SN_MAIN, ORGANIZER)).not.toBe(a);
+    expect(hashFor("0x1", SEPOLIA, ORGANIZER)).not.toBe(a);
+    expect(hashFor("0x1", SN_MAIN, ATTACKER)).not.toBe(a);
+
+    // And now the operation itself, which is what this wave added.
+    expect(
+      authorizationHash(
+        { ...OPERATION, action: AUTH_ACTIONS.draftReorder, nonce: "0x1", chainId: SN_MAIN },
+        ORGANIZER,
+      ),
+    ).not.toBe(a);
+    expect(
+      authorizationHash({ ...OPERATION, method: "GET", nonce: "0x1", chainId: SN_MAIN }, ORGANIZER),
+    ).not.toBe(a);
+    expect(
+      authorizationHash(
+        { ...OPERATION, resourceHash: hashResource("/api/me/circles"), nonce: "0x1", chainId: SN_MAIN },
+        ORGANIZER,
+      ),
+    ).not.toBe(a);
+    expect(
+      authorizationHash(
+        { ...OPERATION, bodyHash: hashBody({ a: 1 }), nonce: "0x1", chainId: SN_MAIN },
+        ORGANIZER,
+      ),
+    ).not.toBe(a);
   });
 });

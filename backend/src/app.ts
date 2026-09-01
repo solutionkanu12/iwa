@@ -13,11 +13,16 @@ import type { Store, CircleDraft } from "./store.js";
 import type { CircleVerifier } from "./chainVerify.js";
 import {
   AUTH_MESSAGES,
-  challengeTypedData,
   ChallengeStore,
   verifyCredentials,
   type SignatureVerifier,
 } from "./auth.js";
+import {
+  AUTH_ACTIONS,
+  hashBody,
+  hashResource,
+  type AuthAction,
+} from "./authBinding.js";
 import {
   acceptInviteSchema,
   isInviteToken,
@@ -309,7 +314,11 @@ export function createApp(options: AppOptions): Express {
    * Proves the caller controls the address they claim. Returns the verified
    * address, or null after already sending the error response.
    */
-  const authenticate = async (req: Request, res: Response): Promise<string | null> => {
+  const authenticate = async (
+    req: Request,
+    res: Response,
+    action: AuthAction,
+  ): Promise<string | null> => {
     const [addressHeader, nonceHeader, chainHeader, signatureHeader] = AUTH_HEADERS;
     const address = req.header(addressHeader);
     const nonce = req.header(nonceHeader);
@@ -331,8 +340,25 @@ export function createApp(options: AppOptions): Express {
       return null;
     }
 
+    // Every bound value is taken from the request being handled, never from
+    // anything the caller said about it. A body that failed to parse is an
+    // empty one here, which is also what the route will see.
+    let bodyHash: string;
+    try {
+      bodyHash = hashBody(req.body);
+    } catch {
+      res.status(400).json({ error: "invalid_request", message: "That request could not be read." });
+      return null;
+    }
+
     const result = await verifyCredentials(
       { address, nonce, chainId, signature },
+      {
+        action,
+        method: req.method,
+        resourceHash: hashResource(req.path),
+        bodyHash,
+      },
       challenges,
       verifier,
     );
@@ -364,12 +390,13 @@ export function createApp(options: AppOptions): Express {
       return res.status(400).json({ error: "invalid_request", message: "address must be a felt" });
     }
     const challenge = challenges.issue(address);
+    // A nonce and the chain it is good for. The message that will consume it
+    // names the operation, and the client builds that from the call it is about
+    // to make, so nothing here needs to know or to be trusted about it.
     res.json({
       nonce: challenge.nonce,
       chainId: challenge.chainId,
       expiresAt: new Date(challenge.expiresAt).toISOString(),
-      // The exact payload the wallet must sign.
-      typedData: challengeTypedData(challenge.nonce, challenge.chainId),
     });
   });
 
@@ -380,7 +407,7 @@ export function createApp(options: AppOptions): Express {
     const parsed = createDraftSchema.safeParse(req.body);
     if (!parsed.success) return badRequest(res, parsed.error.issues);
     try {
-      const caller = await authenticate(req, res);
+      const caller = await authenticate(req, res, AUTH_ACTIONS.draftCreate);
       if (caller === null) return;
       if (caller !== parsed.data.organizerAddress) {
         return res.status(403).json({ error: "not_organizer", message: "Sign in with the wallet that will organize this circle." });
@@ -417,7 +444,7 @@ export function createApp(options: AppOptions): Express {
       if (id === null) return;
       const draft = await store.getDraft(id);
       if (draft === null) return res.status(404).json({ error: "not_found" });
-      const caller = await authenticate(req, res);
+      const caller = await authenticate(req, res, AUTH_ACTIONS.draftReadOrganizer);
       if (caller === null) return;
       if (caller !== draft.organizerAddress) {
         return res.status(403).json({ error: "not_organizer", message: "Only the organizer can see the invitations." });
@@ -431,7 +458,7 @@ export function createApp(options: AppOptions): Express {
   app.post("/api/drafts/mine", async (req, res, next) => {
     if (!mutate(req, res)) return;
     try {
-      const caller = await authenticate(req, res);
+      const caller = await authenticate(req, res, AUTH_ACTIONS.draftsList);
       if (caller === null) return;
       const drafts = await store.listDraftsByOrganizer(caller);
       res.json(drafts.map((d) => draftFor(d, "organizer")));
@@ -505,7 +532,7 @@ export function createApp(options: AppOptions): Express {
       if (id === null) return;
       const draft = await store.getDraft(id);
       if (draft === null) return res.status(404).json({ error: "not_found" });
-      const caller = await authenticate(req, res);
+      const caller = await authenticate(req, res, AUTH_ACTIONS.draftReorder);
       if (caller === null) return;
       if (draft.organizerAddress !== caller) {
         return res.status(403).json({ error: "not_organizer" });
@@ -530,7 +557,7 @@ export function createApp(options: AppOptions): Express {
       if (id === null) return;
       const draft = await store.getDraft(id);
       if (draft === null) return res.status(404).json({ error: "not_found" });
-      const caller = await authenticate(req, res);
+      const caller = await authenticate(req, res, AUTH_ACTIONS.draftMarkCreated);
       if (caller === null) return;
       if (draft.organizerAddress !== caller) {
         return res.status(403).json({ error: "not_organizer" });
@@ -585,7 +612,7 @@ export function createApp(options: AppOptions): Express {
       if (id === null) return;
       const draft = await store.getDraft(id);
       if (draft === null) return res.status(404).json({ error: "not_found" });
-      const caller = await authenticate(req, res);
+      const caller = await authenticate(req, res, AUTH_ACTIONS.draftReconcile);
       if (caller === null) return;
       if (draft.organizerAddress !== caller) {
         return res.status(403).json({ error: "not_organizer" });
@@ -623,7 +650,7 @@ export function createApp(options: AppOptions): Express {
   app.post("/api/me/circles", async (req, res, next) => {
     if (!mutate(req, res)) return;
     try {
-      const caller = await authenticate(req, res);
+      const caller = await authenticate(req, res, AUTH_ACTIONS.associationsList);
       if (caller === null) return;
       res.json(await store.listAssociationsForAddress(caller));
     } catch (e) {
@@ -639,7 +666,7 @@ export function createApp(options: AppOptions): Express {
   app.post("/api/me/invitations", async (req, res, next) => {
     if (!mutate(req, res)) return;
     try {
-      const caller = await authenticate(req, res);
+      const caller = await authenticate(req, res, AUTH_ACTIONS.invitationsList);
       if (caller === null) return;
       const all = await store.listAssociationsForAddress(caller);
       res.json(all.filter((a) => a.accepted));

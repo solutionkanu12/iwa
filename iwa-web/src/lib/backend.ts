@@ -9,6 +9,14 @@
 // If this service is unavailable, contributing to an existing circle still
 // works — that path talks to the chain and the wallet directly.
 
+import {
+  AUTH_ACTIONS,
+  authorizationTypedData,
+  hashBody,
+  hashResource,
+  type AuthAction,
+} from "./authBinding";
+
 const BASE_URL = (import.meta.env.VITE_BACKEND_URL ?? "http://localhost:8080").replace(/\/$/, "");
 
 export class BackendError extends Error {
@@ -188,15 +196,45 @@ export interface CreateDraftInput {
  */
 export type WalletSigner = (typedData: unknown) => Promise<string[]>;
 
-async function organizerHeaders(
+/** One authenticated call: what it does, where, and with what. */
+interface SignedCall {
+  action: AuthAction;
+  method: "POST";
+  path: string;
+  body?: unknown;
+}
+
+/**
+ * Signs exactly one operation and returns the headers for it.
+ *
+ * The only place auth headers are built. A signature commits to the action, the
+ * method, the resource and the body, so one obtained for a harmless read cannot
+ * be spent on a reorder, and the wallet shows which of those the person is
+ * approving instead of a sentence that fits anything.
+ *
+ * The service derives all of that from the request it receives and compares
+ * nothing this sends: a call signed for something else simply fails to verify.
+ */
+async function signedHeaders(
   address: string,
   sign: WalletSigner,
+  op: SignedCall,
 ): Promise<Record<string, string>> {
-  const challenge = await call<{ nonce: string; chainId: string; typedData: unknown }>(
-    "/api/auth/challenge",
-    { method: "POST", body: JSON.stringify({ address }) },
-  );
-  const signature = await sign(challenge.typedData);
+  const challenge = await call<{ nonce: string; chainId: string }>("/api/auth/challenge", {
+    method: "POST",
+    body: JSON.stringify({ address }),
+  });
+
+  const typedData = authorizationTypedData({
+    action: op.action,
+    method: op.method,
+    resourceHash: hashResource(op.path),
+    bodyHash: hashBody(op.body),
+    nonce: challenge.nonce,
+    chainId: challenge.chainId,
+  });
+
+  const signature = await sign(typedData);
   return {
     "x-iwa-address": address,
     "x-iwa-nonce": challenge.nonce,
@@ -205,14 +243,30 @@ async function organizerHeaders(
   };
 }
 
+/**
+ * Signs and sends one authenticated call.
+ *
+ * The body is serialised once and both signed and sent, so what was approved
+ * and what arrives cannot drift apart.
+ */
+async function signedCall<T>(address: string, sign: WalletSigner, op: SignedCall): Promise<T> {
+  const body = op.body ?? {};
+  const headers = await signedHeaders(address, sign, { ...op, body });
+  return call<T>(op.path, { method: op.method, headers, body: JSON.stringify(body) });
+}
+
 export const backend = {
   async health(): Promise<{ status: string; database: string }> {
     return call("/health");
   },
 
   async createDraft(input: CreateDraftInput, sign: WalletSigner): Promise<DraftView> {
-    const headers = await organizerHeaders(input.organizerAddress, sign);
-    return call("/api/drafts", { method: "POST", headers, body: JSON.stringify(input) });
+    return signedCall(input.organizerAddress, sign, {
+      action: AUTH_ACTIONS.draftCreate,
+      method: "POST",
+      path: "/api/drafts",
+      body: input,
+    });
   },
 
   /** Public view: terms and progress. Never includes invitation links. */
@@ -226,17 +280,19 @@ export const backend = {
     organizerAddress: string,
     sign: WalletSigner,
   ): Promise<DraftView> {
-    const headers = await organizerHeaders(organizerAddress, sign);
-    return call(`/api/drafts/${id}/organizer-view`, {
+    return signedCall(organizerAddress, sign, {
+      action: AUTH_ACTIONS.draftReadOrganizer,
       method: "POST",
-      headers,
-      body: JSON.stringify({}),
+      path: `/api/drafts/${id}/organizer-view`,
     });
   },
 
   async listDrafts(organizerAddress: string, sign: WalletSigner): Promise<DraftView[]> {
-    const headers = await organizerHeaders(organizerAddress, sign);
-    return call("/api/drafts/mine", { method: "POST", headers, body: JSON.stringify({}) });
+    return signedCall(organizerAddress, sign, {
+      action: AUTH_ACTIONS.draftsList,
+      method: "POST",
+      path: "/api/drafts/mine",
+    });
   },
 
   /**
@@ -247,14 +303,20 @@ export const backend = {
    * needed, only the same wallet.
    */
   async myCircles(address: string, sign: WalletSigner): Promise<CircleAssociation[]> {
-    const headers = await organizerHeaders(address, sign);
-    return call("/api/me/circles", { method: "POST", headers, body: JSON.stringify({}) });
+    return signedCall(address, sign, {
+      action: AUTH_ACTIONS.associationsList,
+      method: "POST",
+      path: "/api/me/circles",
+    });
   },
 
   /** The invitations this wallet accepted. */
   async myInvitations(address: string, sign: WalletSigner): Promise<CircleAssociation[]> {
-    const headers = await organizerHeaders(address, sign);
-    return call("/api/me/invitations", { method: "POST", headers, body: JSON.stringify({}) });
+    return signedCall(address, sign, {
+      action: AUTH_ACTIONS.invitationsList,
+      method: "POST",
+      path: "/api/me/invitations",
+    });
   },
 
   async getInvite(token: string): Promise<InviteView> {
@@ -282,11 +344,11 @@ export const backend = {
     order: string[],
     sign: WalletSigner,
   ): Promise<DraftView> {
-    const headers = await organizerHeaders(organizerAddress, sign);
-    return call(`/api/drafts/${id}/order`, {
+    return signedCall(organizerAddress, sign, {
+      action: AUTH_ACTIONS.draftReorder,
       method: "POST",
-      headers,
-      body: JSON.stringify({ organizerAddress, order }),
+      path: `/api/drafts/${id}/order`,
+      body: { organizerAddress, order },
     });
   },
 
@@ -302,11 +364,11 @@ export const backend = {
     organizerAddress: string,
     sign: WalletSigner,
   ): Promise<DraftView> {
-    const headers = await organizerHeaders(organizerAddress, sign);
-    return call(`/api/drafts/${id}/reconcile`, {
+    return signedCall(organizerAddress, sign, {
+      action: AUTH_ACTIONS.draftReconcile,
       method: "POST",
-      headers,
-      body: JSON.stringify({ organizerAddress }),
+      path: `/api/drafts/${id}/reconcile`,
+      body: { organizerAddress },
     });
   },
 
@@ -317,11 +379,11 @@ export const backend = {
     txHash: string,
     sign: WalletSigner,
   ): Promise<DraftView> {
-    const headers = await organizerHeaders(organizerAddress, sign);
-    return call(`/api/drafts/${id}/created`, {
+    return signedCall(organizerAddress, sign, {
+      action: AUTH_ACTIONS.draftMarkCreated,
       method: "POST",
-      headers,
-      body: JSON.stringify({ organizerAddress, circleId, txHash }),
+      path: `/api/drafts/${id}/created`,
+      body: { organizerAddress, circleId, txHash },
     });
   },
 };
