@@ -12,7 +12,8 @@
 // settlement authorization with the member's own key.
 
 import type { SnarkProof } from "./convert";
-import type { Circle, CircleStatus, Reputation } from "./types";
+import type { Circle, CircleStatus } from "./types";
+import type { Standing } from "./standing";
 import {
   DEMO_CIRCLE_ID,
   IWA_CIRCLE,
@@ -33,6 +34,7 @@ import {
   makeProvider,
 } from "../chains/strk20/publicReads";
 import { memberSlots, potFor } from "../chains/strk20/circleState";
+import { standingFrom, type ObligationOutcome } from "./standing";
 import { buildContributionActions } from "../chains/strk20/strk20Actions";
 import { submit as submitPoolTx, toStrk20Error } from "../chains/strk20/iwaStrk20Client";
 import {
@@ -41,6 +43,7 @@ import {
   feltHex,
   signChecked,
 } from "../chains/strk20/iwaSigning";
+import { CREDENTIAL_VERIFICATION, POT_COLLECTION } from "./features";
 import { hash as snhash } from "starknet";
 
 const provider = makeProvider(RPC_URL);
@@ -229,41 +232,28 @@ export async function has_contributed(
 }
 
 /**
- * The member's own standing. Derived from their obligations across completed
- * rounds — private to them, and never shown to anyone else.
+ * The member's own record in one circle, counted from the obligations the
+ * contract holds. Private to them, and shown to nobody else.
  */
 export async function get_reputation(
   circleId: number,
   memberCommitment: Uint8Array,
-): Promise<Reputation> {
+): Promise<Standing> {
   const ref = feltHex(bytes32ToFelt(memberCommitment));
-  let completedCycles = 0;
-  let onTime = 0;
-  let defaults = 0;
+  const outcomes: ObligationOutcome[] = [];
 
   const view = await readCircle(provider, circleId);
   for (let round = 1; round <= view.currentRound; round += 1) {
     try {
       const o = await getContributionObligation(provider, circleId, round, ref);
-      if (o.status === "OnTime") {
-        onTime += 1;
-        completedCycles += 1;
-      } else if (o.status === "LateWithinGrace") {
-        completedCycles += 1;
-      } else if (o.status === "MissedDefault") {
-        defaults += 1;
-        completedCycles += 1;
-      }
+      outcomes.push(o.status as ObligationOutcome);
     } catch {
-      // No obligation for this round; nothing to score.
+      // No obligation for this round. An absent round is not an outcome, and
+      // counting it as one would invent a record.
     }
   }
 
-  return {
-    completedCycles,
-    onTimeRate: completedCycles === 0 ? 100 : Math.round((onTime / completedCycles) * 100),
-    defaultCount: defaults,
-  };
+  return standingFrom(outcomes);
 }
 
 export async function is_member(circleId: number, memberCommitment: Uint8Array): Promise<boolean> {
@@ -516,9 +506,7 @@ export async function collect_pot(
   _memberCommitment: Uint8Array,
   _address: string,
 ): Promise<{ ok: boolean; amount: number; txHash: string }> {
-  throw new ContractCallError(
-    "Payouts are not open yet. Your contributions and standing are recorded and safe.",
-  );
+  throw new ContractCallError(POT_COLLECTION.reason);
 }
 
 /**
@@ -529,9 +517,7 @@ export async function verify_proof(
   _proof: SnarkProof,
   _publicSignals: string[],
 ): Promise<{ verified: boolean; reference: string }> {
-  throw new ContractCallError(
-    "Sharing a proof on chain is not open yet. You can still generate and review it here.",
-  );
+  throw new ContractCallError(CREDENTIAL_VERIFICATION.reason);
 }
 
 export { DEMO_CIRCLE_ID };

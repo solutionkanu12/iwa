@@ -89,9 +89,8 @@ export function RoadmapPage() {
           <p className={styles.eyebrow}>roadmap · v1.0</p>
           <h1 className={styles.title}>Where Iwa is going</h1>
           <p className={styles.subhead}>
-            Iwa is built for Stellar Hacks, Real-World ZK, and runs on Stellar
-            testnet today. This roadmap lays out what is already working and the
-            steady, specific steps that come next.
+            Iwa runs on Starknet mainnet today. This roadmap lays out what is already
+            working and the steady, specific steps that come next.
           </p>
           <dl className={styles.meta}>
             {META.map((m) => (
@@ -106,20 +105,19 @@ export function RoadmapPage() {
         <section className={styles.section}>
           <h2 className={styles.h2}>Where things stand</h2>
           <p className={styles.p}>
-            Iwa already proves the core idea end to end on Stellar testnet. A
-            member can save in a circle, build a private record of reliability,
-            and prove their good standing with a zero-knowledge proof that anyone
-            can verify on-chain. The work from here is to widen what can be
-            proven and where the credential can travel, without changing that
-            foundation.
+            Iwa runs the core idea end to end on Starknet mainnet. A member can be
+            invited into a circle, join it, and contribute privately through the
+            STRK20 pool, and the record of who paid on time is kept on chain.
+            Proving that record to someone outside the circle is the part still
+            to come, and it is what the Portable Trust Credential is for.
           </p>
         </section>
 
         <section className={styles.section}>
           <h2 className={styles.h2}>Now, shipped</h2>
           <p className={styles.p}>
-            Everything below runs on Stellar testnet today, with on-chain checks
-            passing.
+            Everything below runs on Starknet mainnet today, with contributions
+            settling privately through the STRK20 pool.
           </p>
           <PhaseList items={NOW} />
         </section>
@@ -159,9 +157,10 @@ export function RoadmapPage() {
         <section className={styles.section}>
           <h2 className={styles.h2}>A note on this roadmap</h2>
           <p className={styles.note}>
-            This roadmap is indicative. Scope and timing may change as the
-            project grows, and the contract addresses described elsewhere run on
-            Stellar testnet for now.
+            This roadmap is indicative. Scope and timing may change as the project
+            grows. The contracts described elsewhere run on Starknet mainnet,
+            which is Iwa's current integration rather than its permanent
+            boundary.
           </p>
         </section>
         <p className={styles.docFooter}>

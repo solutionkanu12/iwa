@@ -13,6 +13,8 @@ import {
   tokenDecimals,
 } from "../lib/starknetConfig.ts";
 import { formatAmount } from "../lib/amount.ts";
+import { standingFrom, standingSummary } from "../lib/standing.ts";
+import { CREDENTIAL_VERIFICATION, POT_COLLECTION } from "../lib/features.ts";
 import type { Route } from "../lib/router.ts";
 import { useWallet } from "../app/WalletProvider.tsx";
 import { ConnectPrompt } from "./ConnectPrompt.tsx";
@@ -179,7 +181,10 @@ function StandingCard({
   onGenerate: () => void;
 }) {
   const cycles = useCountUp(reputation.completedCycles, 600);
-  const onTime = useCountUp(reputation.onTimeRate, 750);
+  // No completed round means no rate. Counting up to nothing would show a
+  // figure that the record does not support.
+  const onTime = useCountUp(reputation.onTimeRate ?? 0, 750);
+  const hasRecord = reputation.completedCycles > 0;
   const noDefaults = reputation.defaultCount === 0;
   const fullyOnTime = reputation.onTimeRate === 100;
   return (
@@ -194,31 +199,34 @@ function StandingCard({
         <span className={styles.bignumU}>cycles completed</span>
       </div>
 
-      <div className={styles.statline}>
-        <div className={styles.stat}>
-          <div
-            className={`${styles.statN} ${fullyOnTime ? styles.statGood : ""}`}
-          >
-            {onTime}%
+      {hasRecord ? (
+        <div className={styles.statline}>
+          <div className={styles.stat}>
+            <div className={`${styles.statN} ${fullyOnTime ? styles.statGood : ""}`}>
+              {onTime}%
+            </div>
+            <div className={styles.statL}>on time</div>
           </div>
-          <div className={styles.statL}>on time</div>
-        </div>
-        <div className={styles.stat}>
-          <div className={`${styles.statN} ${noDefaults ? styles.statGood : ""}`}>
-            {reputation.defaultCount}
+          <div className={styles.stat}>
+            <div className={`${styles.statN} ${noDefaults ? styles.statGood : ""}`}>
+              {reputation.defaultCount}
+            </div>
+            <div className={styles.statL}>defaults</div>
           </div>
-          <div className={styles.statL}>defaults</div>
         </div>
-      </div>
+      ) : null}
 
       <p className={`${styles.mono} ${styles.standingSummary}`}>
-        {reputation.completedCycles} cycles · {reputation.onTimeRate}% on time ·{" "}
-        {reputation.defaultCount} defaults
+        {standingSummary(reputation)}
       </p>
 
-      <div className={styles.stack}>
-        <Button onClick={onGenerate}>Generate proof</Button>
-      </div>
+      {CREDENTIAL_VERIFICATION.available ? (
+        <div className={styles.stack}>
+          <Button onClick={onGenerate}>Generate proof</Button>
+        </div>
+      ) : (
+        <p className={styles.meta}>{CREDENTIAL_VERIFICATION.reason}</p>
+      )}
     </Island>
   );
 }
@@ -371,7 +379,7 @@ export function CircleView({
     setScreen("standing");
     if (reputation !== null) return;
     if (circle === null || commitment === null) {
-      setReputation({ completedCycles: 0, onTimeRate: 0, defaultCount: 0 });
+      setReputation(standingFrom([]));
       return;
     }
     setReputation(await get_reputation(circle.id, commitment.commitmentBytes));
@@ -692,7 +700,7 @@ export function CircleView({
               </span>
               Pot collected privately
             </div>
-          ) : yourTurn ? (
+          ) : yourTurn && POT_COLLECTION.available ? (
             <Button
               variant="ghost"
               onClick={collect}
@@ -700,6 +708,11 @@ export function CircleView({
             >
               {collectStatus === "working" ? "Collecting" : "Collect the pot"}
             </Button>
+          ) : null}
+          {yourTurn && !POT_COLLECTION.available && collectStatus !== "done" ? (
+            <p className={styles.meta}>
+              It is your turn to collect. {POT_COLLECTION.reason}
+            </p>
           ) : null}
         </div>
         {joinError ? (

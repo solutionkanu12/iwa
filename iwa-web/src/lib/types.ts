@@ -62,8 +62,7 @@ export interface ProofResult {
 // The saver's own reputation record (PRD section 12.2). on_time / zero defaults
 // are the good-standing signals. Private to the saver; never shared until they
 // choose to prove it.
-export interface Reputation {
-  completedCycles: number;
-  onTimeRate: number; // percent, 0 to 100
-  defaultCount: number;
-}
+// Superseded by `Standing` in lib/standing.ts, which counts late rounds
+// separately and leaves the rate null when there is nothing to rate. Kept as an
+// alias so the older Soroban seam still compiles against the same shape.
+export type Reputation = import("./standing").Standing;

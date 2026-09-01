@@ -167,8 +167,8 @@ export function LitepaperPage() {
         <section className={styles.section}>
           <h2 className={styles.h2}>What is next</h2>
           <p className={styles.p}>
-            This build was made for Stellar Hacks, Real-World ZK, and runs on
-            testnet. From here the work is steady and specific. More claim types
+            Iwa runs on Starknet mainnet today, where contributions settle privately.
+            From here the work is steady and specific. More claim types
             beyond cycles and defaults, richer circle features for larger and
             longer running groups, and a path to mainnet once the contracts have
             been reviewed. The aim stays narrow. Prove reliability, reveal
@@ -218,9 +218,9 @@ export function LitepaperPage() {
             ))}
           </ol>
           <p className={styles.note}>
-            This litepaper describes Iwa as built for Stellar Hacks, Real-World
-            ZK. The contracts run on Stellar testnet, and details may evolve as
-            the project grows. This document is informational and is not
+            Iwa is a multichain product. Its contracts run today on Starknet mainnet,
+            which is one integration rather than the boundary of the design.
+            Details may evolve as the project grows. This document is informational and is not
             financial, investment, or legal advice.
           </p>
         </section>

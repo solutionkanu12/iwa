@@ -484,16 +484,19 @@ export async function get_reputation(
     ])) as RawReputation;
   } catch (e) {
     if (e instanceof ContractRevert) {
-      return { completedCycles: 0, onTimeRate: 0, defaultCount: 0 };
+      return { completedCycles: 0, onTimeCount: 0, lateCount: 0, defaultCount: 0, onTimeRate: null };
     }
     throw e;
   }
 
   const completed = raw.completed_cycles ?? 0;
   const onTime = raw.on_time_count ?? 0;
-  const onTimeRate = completed > 0 ? Math.round((onTime / completed) * 100) : 0;
+  // Null with no completed round: a rate over nothing is not a record.
+  const onTimeRate = completed > 0 ? Math.round((onTime / completed) * 100) : null;
   return {
     completedCycles: completed,
+    onTimeCount: onTime,
+    lateCount: Math.max(0, completed - onTime - Number(raw.default_count ?? 0)),
     onTimeRate,
     defaultCount: raw.default_count ?? 0,
   };

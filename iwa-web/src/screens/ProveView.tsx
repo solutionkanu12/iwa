@@ -1,17 +1,24 @@
 import { useCallback, useEffect, useState } from "react";
 import { generateProof } from "../lib/zk.ts";
+import { CREDENTIAL_VERIFICATION } from "../lib/features.ts";
 import { verify_proof } from "../lib/iwaStarknet.ts";
 import type { Claim } from "../lib/types.ts";
 import { Island } from "../components/Island.tsx";
 import { Button } from "../components/Button.tsx";
 import styles from "./ProveView.module.css";
 
-// Flow 3: Generate proof, then the Verified moment, then the lender view.
-// generateProof builds a real Groth16 proof on this device from the member's
-// secret, then verify_proof checks it on Stellar (a real, read-only pairing
-// check on the deployed verifier). This is the hero screen, so the verified
-// motion follows the prototype exactly; only the data behind it is real now. If
-// the proof does not verify, an honest failure state shows instead of the mint.
+// Proving a claim about your record, without showing the record.
+//
+// The proof is built on the member's own device from their own secret, so
+// nothing private leaves the tab. What is missing is the other half: something
+// on this network able to check the proof, which is what would make it worth
+// anything to whoever receives it.
+//
+// So the whole flow is gated before any proving starts.
+// Building a proof takes real time on a phone, and spending it on something
+// that can be shown to nobody is worse than saying so plainly. The entry point
+// on the standing card is hidden for the same reason; this check is the second
+// line, for a path that forgets to ask.
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -152,6 +159,13 @@ function ClaimStep({
   const [label, setLabel] = useState("Building proof on this device");
 
   const run = useCallback(async () => {
+    // Checked before proving, never after. Building a proof takes real time on
+    // a phone, and there is nowhere to send this one, so asking for it would
+    // spend somebody's time on something already known to lead nowhere.
+    if (!CREDENTIAL_VERIFICATION.available) {
+      setFailed(true);
+      return;
+    }
     if (secret === null) {
       // No secret means the wallet could not sign; a real proof is impossible.
       setFailed(true);
@@ -187,7 +201,9 @@ function ClaimStep({
         reference: v.reference,
       });
     } catch (e) {
-      console.warn("proof flow failed", e);
+      // Only the reason, never the error object: a proving failure can carry
+      // witness data, and none of it belongs in a log.
+      console.warn("proof flow failed:", e instanceof Error ? e.message : "unknown");
       setProving(false);
       setFailed(true);
     }
