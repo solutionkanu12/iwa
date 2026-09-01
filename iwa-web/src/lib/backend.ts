@@ -23,6 +23,12 @@ export class BackendError extends Error {
 }
 
 export interface DraftSlotView {
+  /**
+   * Stable identity for this place. slotIndex is a position and is renumbered
+   * by every reorder, so it must never be used to decide which invite link or
+   * which member belongs to a row.
+   */
+  slotId: string;
   slotIndex: number;
   accepted: boolean;
   memberRef: string | null;
@@ -80,7 +86,17 @@ const FRIENDLY: Record<string, string> = {
   bad_signature: "Your wallet signature could not be verified.",
   forbidden_field: "Something went wrong preparing that request.",
   not_found: "We could not find that circle.",
+  already_created: "This circle has already been created.",
+  verification_unavailable:
+    "We could not reach Starknet to confirm this. Nothing is lost, please try again in a moment.",
+  unverified_creation: "Starknet does not show that circle as belonging to this draft.",
+  no_circle_yet: "No circle for this draft exists on Starknet yet.",
 };
+
+/** True when the failure is worth retrying rather than reporting as final. */
+export function isRetryable(err: unknown): boolean {
+  return err instanceof BackendError && (err.status === 0 || err.status === 503);
+}
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
@@ -210,10 +226,11 @@ export const backend = {
     return call("/api/invites/accept", { method: "POST", body: JSON.stringify(input) });
   },
 
+  /** `order` names every slot id of the draft exactly once, in the new payout order. */
   async reorder(
     id: string,
     organizerAddress: string,
-    order: number[],
+    order: string[],
     sign: WalletSigner,
   ): Promise<DraftView> {
     const headers = await organizerHeaders(organizerAddress, sign);
@@ -221,6 +238,26 @@ export const backend = {
       method: "POST",
       headers,
       body: JSON.stringify({ organizerAddress, order }),
+    });
+  },
+
+  /**
+   * Recovers a circle that was created on chain but never recorded here.
+   *
+   * The circle id is not supplied: the service finds it from the chain by
+   * matching this draft's payout order. Safe to call at any time, and safe to
+   * call twice.
+   */
+  async reconcile(
+    id: string,
+    organizerAddress: string,
+    sign: WalletSigner,
+  ): Promise<DraftView> {
+    const headers = await organizerHeaders(organizerAddress, sign);
+    return call(`/api/drafts/${id}/reconcile`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ organizerAddress }),
     });
   },
 

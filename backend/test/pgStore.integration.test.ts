@@ -154,16 +154,22 @@ suite("PgStore against a real Postgres", () => {
     await store.acceptInvite({ inviteToken: draft.slots[0].inviteToken, memberRef: MEMBER_A, authPublicKey: KEY_A, address: ORGANIZER });
     await store.acceptInvite({ inviteToken: draft.slots[1].inviteToken, memberRef: MEMBER_B, authPublicKey: KEY_B, address: "0x123" });
 
-    const reordered = await store.reorderSlots(draft.id, [1, 0]);
+    const ids = draft.slots.map((s) => s.slotId);
+    const reordered = await store.reorderSlots(draft.id, [ids[1], ids[0]]);
     expect(reordered?.slots.map((s) => s.slotIndex)).toEqual([0, 1]);
+    expect(reordered?.slots.map((s) => s.slotId)).toEqual([ids[1], ids[0]]);
     expect(reordered?.slots[0].memberRef).toBe(MEMBER_B);
     expect(reordered?.slots[1].memberRef).toBe(MEMBER_A);
+    // The invite token belongs to the place, not to its position.
+    expect(reordered?.slots[0].inviteToken).toBe(draft.slots[1].inviteToken);
   });
 
   it("refuses an order that repeats or drops a place", async () => {
     const draft = await store.createDraft(DRAFT);
-    expect(await store.reorderSlots(draft.id, [0, 0])).toBeNull();
-    expect(await store.reorderSlots(draft.id, [0])).toBeNull();
+    const ids = draft.slots.map((s) => s.slotId);
+    expect(await store.reorderSlots(draft.id, [ids[0], ids[0]])).toBeNull();
+    expect(await store.reorderSlots(draft.id, [ids[0]])).toBeNull();
+    expect(await store.reorderSlots(draft.id, [ids[0], randomUUID()])).toBeNull();
   });
 
   it("marks a draft created and then refuses further acceptances", async () => {

@@ -12,6 +12,7 @@ import { RpcProvider } from "starknet";
 import { createApp } from "./app.js";
 import { MemoryStore } from "./store.js";
 import { OnChainSignatureVerifier } from "./auth.js";
+import { OnChainCircleVerifier } from "./chainVerify.js";
 
 const PORT = Number(process.env.PORT ?? 8080);
 const RPC = process.env.STARKNET_RPC_URL ?? "https://api.cartridge.gg/x/starknet/mainnet";
@@ -20,10 +21,16 @@ const ORIGINS = (process.env.CORS_ORIGINS ?? "http://localhost:5173")
   .map((s) => s.trim())
   .filter(Boolean);
 
+/** The deployed accounting contract, the same one production verifies against. */
+const IWA_CIRCLE = "0x01f81497b09aa702a38715c0ec149d7672cd557c0caea480714d4802ff6f81be";
+
+const provider = new RpcProvider({ nodeUrl: RPC });
+
 const app = createApp({
   store: new MemoryStore(),
   corsOrigins: ORIGINS,
-  verifier: new OnChainSignatureVerifier(new RpcProvider({ nodeUrl: RPC })),
+  verifier: new OnChainSignatureVerifier(provider),
+  circleVerifier: new OnChainCircleVerifier(provider, IWA_CIRCLE),
 });
 
 app.listen(PORT, () => {

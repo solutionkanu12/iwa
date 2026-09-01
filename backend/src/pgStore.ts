@@ -35,6 +35,7 @@ interface DraftRow {
 }
 
 interface SlotRow {
+  id: string;
   slot_index: number;
   invite_token: string;
   member_ref: string | null;
@@ -45,6 +46,7 @@ interface SlotRow {
 
 function toSlot(r: SlotRow): DraftSlot {
   return {
+    slotId: r.id,
     slotIndex: r.slot_index,
     inviteToken: r.invite_token,
     memberRef: r.member_ref,
@@ -232,7 +234,7 @@ export class PgStore implements Store {
     }
   }
 
-  async reorderSlots(id: string, order: number[]): Promise<CircleDraft | null> {
+  async reorderSlots(id: string, order: string[]): Promise<CircleDraft | null> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -244,22 +246,24 @@ export class PgStore implements Store {
         await client.query("ROLLBACK");
         return null;
       }
-      const byIndex = new Map(current.rows.map((r) => [r.slot_index, r]));
+      const bySlotId = new Map(current.rows.map((r) => [r.id, r]));
       const isPermutation =
         new Set(order).size === order.length &&
         order.length === current.rowCount &&
-        order.every((i) => byIndex.has(i));
+        order.every((slotId) => bySlotId.has(slotId));
       if (!isPermutation) {
         await client.query("ROLLBACK");
         return null;
       }
       // Two passes via a temporary offset: slot_index is unique per draft, so
-      // writing the new order directly would collide mid-update.
+      // writing the new order directly would collide mid-update. The slot id
+      // addresses the row, so the invite token and any accepted member travel
+      // with the place rather than with its old position.
       const OFFSET = 100;
-      for (const [target, source] of order.entries()) {
+      for (const [target, slotId] of order.entries()) {
         await client.query(
-          "UPDATE draft_slots SET slot_index = $1 WHERE draft_id = $2 AND slot_index = $3",
-          [target + OFFSET, id, source],
+          "UPDATE draft_slots SET slot_index = $1 WHERE draft_id = $2 AND id = $3",
+          [target + OFFSET, id, slotId],
         );
       }
       await client.query(
@@ -276,7 +280,7 @@ export class PgStore implements Store {
     }
   }
 
-  async markCreated(id: string, circleId: number, txHash: string): Promise<CircleDraft | null> {
+  async markCreated(id: string, circleId: number, txHash: string | null): Promise<CircleDraft | null> {
     const r = await this.pool.query(
       `UPDATE circle_drafts
           SET circle_id = $1, created_tx = $2, status = 'created', updated_at = now()

@@ -11,6 +11,7 @@ import { createApp } from "../src/app.js";
 import { MemoryStore } from "../src/store.js";
 import { SN_MAIN } from "../src/validation.js";
 import { ChallengeStore, type SignatureVerifier } from "../src/auth.js";
+import type { CircleVerifier, DiscoveryOutcome, VerifyOutcome } from "../src/chainVerify.js";
 import { AUTH_HEADERS } from "../src/app.js";
 
 /**
@@ -21,6 +22,17 @@ import { AUTH_HEADERS } from "../src/app.js";
 class StubVerifier implements SignatureVerifier {
   async verify(address: string, _hash: string, signature: string[]): Promise<boolean> {
     return signature.length === 1 && signature[0] === `signed-by:${address}`;
+  }
+}
+
+// Creation evidence is covered in creation.test.ts; here it simply passes so
+// the coordination routes can be exercised on their own.
+class AlwaysVerifies implements CircleVerifier {
+  async verifyCreated(): Promise<VerifyOutcome> {
+    return { status: "verified" };
+  }
+  async findCircleForDraft(): Promise<DiscoveryOutcome> {
+    return { status: "absent" };
   }
 }
 
@@ -66,6 +78,7 @@ beforeEach(() => {
     corsOrigins: ["http://localhost:5173"],
     rateLimit: { windowMs: 60_000, max: 500 },
     verifier: new StubVerifier(),
+    circleVerifier: new AlwaysVerifies(),
   });
 });
 
@@ -249,9 +262,16 @@ describe("organizer actions", () => {
     const res = await request(app)
       .post(`/api/drafts/${draft.id}/order`)
       .set(await authHeaders(app, ORGANIZER))
-      .send({ organizerAddress: ORGANIZER, order: [1, 0] })
+      .send({
+        organizerAddress: ORGANIZER,
+        order: [draft.slots[1].slotId, draft.slots[0].slotId],
+      })
       .expect(200);
     expect(res.body.slots.map((s: { slotIndex: number }) => s.slotIndex)).toEqual([0, 1]);
+    expect(res.body.slots.map((s: { slotId: string }) => s.slotId)).toEqual([
+      draft.slots[1].slotId,
+      draft.slots[0].slotId,
+    ]);
   });
 
   it("refuses reordering by anyone but the organizer", async () => {
@@ -259,7 +279,10 @@ describe("organizer actions", () => {
     await request(app)
       .post(`/api/drafts/${draft.id}/order`)
       .set(await authHeaders(app, "0xdead"))
-      .send({ organizerAddress: "0xdead", order: [1, 0] })
+      .send({
+        organizerAddress: "0xdead",
+        order: [draft.slots[1].slotId, draft.slots[0].slotId],
+      })
       .expect(403);
   });
 
@@ -268,7 +291,10 @@ describe("organizer actions", () => {
     await request(app)
       .post(`/api/drafts/${draft.id}/order`)
       .set(await authHeaders(app, ORGANIZER))
-      .send({ organizerAddress: ORGANIZER, order: [0, 0] })
+      .send({
+        organizerAddress: ORGANIZER,
+        order: [draft.slots[0].slotId, draft.slots[0].slotId],
+      })
       .expect(400);
   });
 
@@ -400,5 +426,140 @@ describe("cors preflight", () => {
       .set("Access-Control-Request-Method", "POST");
     expect(res.headers["access-control-allow-headers"]).toBeUndefined();
     expect(res.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+});
+
+// --- Phase 2: organizer reliability -------------------------------------
+
+describe("slot identity survives reordering", () => {
+  // slot_index is a position and gets renumbered on every reorder, so it can
+  // never identify a place. draft_slots.id can: it is assigned once and never
+  // changes, which is what keeps an invite link attached to the person it was
+  // sent to.
+  it("gives every slot a stable id that reordering does not change", async () => {
+    const draft = await newDraft();
+    const before = draft.slots.map((s: { slotId: string }) => s.slotId);
+    expect(new Set(before).size).toBe(before.length);
+    expect(before.every((id: string) => typeof id === "string" && id.length > 0)).toBe(true);
+
+    const res = await request(app)
+      .post(`/api/drafts/${draft.id}/order`)
+      .set(await authHeaders(app, ORGANIZER))
+      .send({ organizerAddress: ORGANIZER, order: [before[1], before[0]] })
+      .expect(200);
+
+    expect(res.body.slots.map((s: { slotId: string }) => s.slotId)).toEqual([before[1], before[0]]);
+    expect(res.body.slots.map((s: { slotIndex: number }) => s.slotIndex)).toEqual([0, 1]);
+  });
+
+  it("keeps each invite token with its own slot across a reorder", async () => {
+    const draft = await newDraft();
+    const tokenOf = new Map<string, string>(
+      draft.slots.map((s: { slotId: string; inviteToken: string }) => [s.slotId, s.inviteToken]),
+    );
+    const ids = draft.slots.map((s: { slotId: string }) => s.slotId);
+
+    const res = await request(app)
+      .post(`/api/drafts/${draft.id}/order`)
+      .set(await authHeaders(app, ORGANIZER))
+      .send({ organizerAddress: ORGANIZER, order: [ids[1], ids[0]] })
+      .expect(200);
+
+    for (const slot of res.body.slots as { slotId: string; inviteToken: string }[]) {
+      expect(slot.inviteToken).toBe(tokenOf.get(slot.slotId));
+    }
+  });
+
+  it("keeps an accepted member with their own place when a pending place moves", async () => {
+    const draft = await newDraft();
+    const ids = draft.slots.map((s: { slotId: string }) => s.slotId);
+    await request(app)
+      .post("/api/invites/accept")
+      .send({
+        inviteToken: draft.slots[0].inviteToken,
+        memberRef: MEMBER_A,
+        authPublicKey: KEY_A,
+        address: MEMBER_A,
+      })
+      .expect(200);
+
+    const res = await request(app)
+      .post(`/api/drafts/${draft.id}/order`)
+      .set(await authHeaders(app, ORGANIZER))
+      .send({ organizerAddress: ORGANIZER, order: [ids[1], ids[0]] })
+      .expect(200);
+
+    const moved = (res.body.slots as { slotId: string; memberRef: string | null }[]).find(
+      (s) => s.slotId === ids[0],
+    );
+    const pending = (res.body.slots as { slotId: string; memberRef: string | null }[]).find(
+      (s) => s.slotId === ids[1],
+    );
+    expect(moved?.memberRef).toBe(MEMBER_A);
+    expect(pending?.memberRef).toBeNull();
+  });
+
+  it("survives repeated reorders without losing identity", async () => {
+    const draft = await newDraft();
+    const ids = draft.slots.map((s: { slotId: string }) => s.slotId);
+    let current = ids;
+    for (let i = 0; i < 4; i += 1) {
+      const res = await request(app)
+        .post(`/api/drafts/${draft.id}/order`)
+        .set(await authHeaders(app, ORGANIZER))
+        .send({ organizerAddress: ORGANIZER, order: [current[1], current[0]] })
+        .expect(200);
+      current = res.body.slots.map((s: { slotId: string }) => s.slotId);
+      expect(new Set(current)).toEqual(new Set(ids));
+    }
+  });
+
+  it("refuses an order naming a slot that is not in this draft", async () => {
+    const draft = await newDraft();
+    const other = await newDraft();
+    const ids = draft.slots.map((s: { slotId: string }) => s.slotId);
+    await request(app)
+      .post(`/api/drafts/${draft.id}/order`)
+      .set(await authHeaders(app, ORGANIZER))
+      .send({ organizerAddress: ORGANIZER, order: [ids[0], other.slots[0].slotId] })
+      .expect(400);
+  });
+});
+
+describe("organizer draft recovery", () => {
+  it("lists this organizer's drafts and no one else's", async () => {
+    const mine = await newDraft();
+    await request(app)
+      .post("/api/drafts")
+      .set(await authHeaders(app, MEMBER_B))
+      .send({ ...DRAFT, organizerAddress: MEMBER_B })
+      .expect(201);
+
+    const res = await request(app)
+      .post("/api/drafts/mine")
+      .set(await authHeaders(app, ORGANIZER))
+      .send({})
+      .expect(200);
+
+    expect(res.body.map((d: { id: string }) => d.id)).toEqual([mine.id]);
+  });
+
+  it("restores the invite links through the organizer view after a reload", async () => {
+    const draft = await newDraft();
+    const listed = await request(app)
+      .post("/api/drafts/mine")
+      .set(await authHeaders(app, ORGANIZER))
+      .send({})
+      .expect(200);
+
+    const recovered = await request(app)
+      .post(`/api/drafts/${listed.body[0].id}/organizer-view`)
+      .set(await authHeaders(app, ORGANIZER))
+      .send({})
+      .expect(200);
+
+    expect(recovered.body.slots.map((s: { inviteToken: string }) => s.inviteToken)).toEqual(
+      draft.slots.map((s: { inviteToken: string }) => s.inviteToken),
+    );
   });
 });

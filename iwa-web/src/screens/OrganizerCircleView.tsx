@@ -13,6 +13,7 @@ import { backend, inviteLink, BackendError, type DraftView, type WalletSigner } 
 import { connectWallet, currentWallet, disconnectWallet } from "../lib/starknetWallet";
 import { create_circle_from_order } from "../lib/iwaStarknet";
 import { circleHref } from "../lib/appRoute";
+import { mergeTokens, moveInOrder, orderOf } from "../lib/draftOrder";
 import { CHAIN_ID, MAX_MEMBERS, MIN_MEMBERS, USDC_DECIMALS, USDC_TOKEN } from "../lib/starknetConfig";
 import { formatUnits, parseUnits } from "../chains/strk20/funding";
 
@@ -54,9 +55,20 @@ export function OrganizerCircleView() {
   const [cadence, setCadence] = useState(CADENCE_CHOICES[0].seconds);
   const [grace, setGrace] = useState(GRACE_CHOICES[0].seconds);
 
+  // The draft as the service holds it. The service is authoritative for every
+  // field here: places, invite links, who accepted, the payout order and the
+  // circle it became. This is a view of that, never a second copy of it.
   const [draft, setDraft] = useState<DraftView | null>(null);
-  const [copied, setCopied] = useState<number | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
   const [createdCircleId, setCreatedCircleId] = useState<number | null>(null);
+
+  // The order the organizer is arranging, as slot ids. Local until they save
+  // it, so moving a place does not cost a wallet signature per click.
+  const [pendingOrder, setPendingOrder] = useState<string[] | null>(null);
+
+  // A circle that exists on chain but is not recorded yet. Kept so a failed or
+  // interrupted hand-off is a state the organizer can finish, not a dead end.
+  const [unrecorded, setUnrecorded] = useState<{ circleId: number; txHash: string } | null>(null);
 
   const run = useCallback(async (label: string, fn: () => Promise<void>) => {
     setError(null);
@@ -70,12 +82,29 @@ export function OrganizerCircleView() {
     }
   }, []);
 
+  /**
+   * Picks up where the organizer left off.
+   *
+   * Invite links are handed out once and cannot be regenerated, so losing them
+   * on a refresh would strand everyone who has not accepted yet. They live in
+   * the service; this asks for them back rather than keeping a copy that a
+   * reload would destroy.
+   */
+  const recoverDraft = useCallback(async (organizer: string) => {
+    const mine = await backend.listDrafts(organizer, walletSigner());
+    const open = mine.find((d) => d.status !== "created" && d.status !== "abandoned") ?? mine[0];
+    if (open === undefined) return;
+    setDraft(await backend.getDraftAsOrganizer(open.id, organizer, walletSigner()));
+  }, []);
+
   const onConnect = useCallback(
     () =>
       run("Connecting your wallet", async () => {
-        setAddress(await connectWallet());
+        const addr = await connectWallet();
+        setAddress(addr);
+        await recoverDraft(addr);
       }),
-    [run],
+    [run, recoverDraft],
   );
 
   const potPerRound = useMemo(() => {
@@ -116,31 +145,42 @@ export function OrganizerCircleView() {
   );
 
   // Acceptances arrive while the organizer waits, so the public view is polled.
+  //
+  // The interval depends on the draft id alone, not on the draft: an effect
+  // that both reads and writes the draft would tear down and rebuild its timer
+  // on every single response.
+  const draftId = draft?.id ?? null;
+  const pollable = draft !== null && draft.status !== "created" && draft.status !== "abandoned";
   useEffect(() => {
-    if (draft === null || draft.status === "created") return;
-    const id = window.setInterval(() => {
+    if (draftId === null || !pollable) return;
+    const timer = window.setInterval(() => {
       void backend
-        .getDraft(draft.id)
+        .getDraft(draftId)
         .then((fresh) => {
-          setDraft((current) =>
-            current === null
-              ? current
-              : // Keep the invite links the organizer already holds; the public
-                // view does not include them.
-                { ...fresh, slots: fresh.slots.map((s, i) => ({ ...s, inviteToken: current.slots[i]?.inviteToken })) },
-          );
+          setDraft((current) => {
+            if (current === null || current.id !== fresh.id) return current;
+            // The public view carries no invite links, so each place keeps the
+            // link the organizer already holds. Matched by slot id: matching by
+            // position would hand a place somebody else's link the moment the
+            // order changed.
+            const tokenBySlot = new Map(current.slots.map((s) => [s.slotId, s.inviteToken]));
+            return {
+              ...fresh,
+              slots: fresh.slots.map((s) => ({ ...s, inviteToken: tokenBySlot.get(s.slotId) })),
+            };
+          });
         })
         .catch(() => {
           // A transient poll failure is not worth interrupting the screen for.
         });
     }, 6000);
-    return () => window.clearInterval(id);
-  }, [draft]);
+    return () => window.clearInterval(timer);
+  }, [draftId, pollable]);
 
-  const onCopy = useCallback(async (slotIndex: number, token: string) => {
+  const onCopy = useCallback(async (slotId: string, token: string) => {
     try {
       await navigator.clipboard.writeText(inviteLink(token));
-      setCopied(slotIndex);
+      setCopied(slotId);
       window.setTimeout(() => setCopied(null), 2000);
     } catch {
       setError("Could not copy. Long-press the link to copy it manually.");
@@ -159,36 +199,72 @@ export function OrganizerCircleView() {
           // The share sheet was dismissed; fall through to copying.
         }
       }
-      await onCopy(-1, token);
+      await onCopy("", token);
     },
     [onCopy],
   );
 
-  const move = useCallback(
-    (from: number, to: number) =>
-      run("Saving the turn order", async () => {
-        if (draft === null || address === null) return;
-        const order = draft.slots.map((s) => s.slotIndex);
-        if (to < 0 || to >= order.length) return;
-        [order[from], order[to]] = [order[to], order[from]];
-        const updated = await backend.reorder(draft.id, address, order, walletSigner());
-        setDraft((current) =>
-          current === null
-            ? updated
-            : { ...updated, slots: updated.slots.map((s, i) => ({ ...s, inviteToken: current.slots[i]?.inviteToken })) },
-        );
-      }),
-    [run, draft, address],
+  /** The order on screen: what the organizer is arranging, or what is saved. */
+  const shownOrder = useMemo(
+    () => pendingOrder ?? orderOf(draft),
+    [pendingOrder, draft],
   );
+
+  /**
+   * Moves a place, locally.
+   *
+   * Saving each arrow press would ask the wallet to sign again every time,
+   * which is a confirmation prompt for something nobody has committed to yet.
+   * The order is arranged here and saved once, deliberately.
+   */
+  const move = useCallback(
+    (from: number, to: number) => {
+      const next = moveInOrder(shownOrder, from, to);
+      if (next !== shownOrder) setPendingOrder(next);
+    },
+    [shownOrder],
+  );
+
+  const saveOrder = useCallback(
+    () =>
+      run("Saving the turn order", async () => {
+        if (draft === null || address === null || pendingOrder === null) return;
+        const updated = await backend.reorder(draft.id, address, pendingOrder, walletSigner());
+        // The saved order comes back from the service. Only once it has is the
+        // local arrangement dropped, so a refusal leaves the organizer looking
+        // at what they arranged rather than at a change that never happened.
+        setDraft((current) => mergeTokens(updated, current));
+        setPendingOrder(null);
+      }),
+    [run, draft, address, pendingOrder],
+  );
+
+  const discardOrder = useCallback(() => setPendingOrder(null), []);
+
+  /** The places in the order currently on screen, saved or being arranged. */
+  const orderedSlots = useMemo(() => {
+    if (draft === null) return [];
+    const bySlot = new Map(draft.slots.map((s) => [s.slotId, s]));
+    const arranged = shownOrder.map((id) => bySlot.get(id)).filter((s) => s !== undefined);
+    // Anything the arrangement does not name still belongs on screen.
+    return arranged.length === draft.slots.length ? arranged : draft.slots;
+  }, [draft, shownOrder]);
 
   const onCreateCircle = useCallback(
     () =>
       run("Creating your circle", async () => {
         if (draft === null || address === null) return;
+        if (pendingOrder !== null) {
+          throw new Error("Save the turn order before starting the circle.");
+        }
         const payoutOrder = draft.slots.map((s) => s.memberRef);
         if (payoutOrder.some((r) => r === null)) {
           throw new Error("Everyone needs to accept before the circle can start.");
         }
+
+        // The transaction is the irreversible half. Once it lands the circle
+        // exists whatever happens next, so it is recorded locally before the
+        // service is told, and the hand-off is allowed to fail on its own.
         const { circleId, txHash } = await create_circle_from_order(
           payoutOrder as string[],
           draft.contributionAmount,
@@ -196,8 +272,44 @@ export function OrganizerCircleView() {
           draft.graceSeconds,
         );
         setCreatedCircleId(circleId);
-        await backend.markCreated(draft.id, address, circleId, txHash, walletSigner());
-        setDraft((d) => (d === null ? d : { ...d, status: "created", circleId, createdTx: txHash }));
+        setUnrecorded({ circleId, txHash });
+
+        try {
+          const updated = await backend.markCreated(
+            draft.id,
+            address,
+            circleId,
+            txHash,
+            walletSigner(),
+          );
+          setDraft((current) => mergeTokens(updated, current));
+          setUnrecorded(null);
+        } catch (e) {
+          // The circle is real either way. Say what is true, and leave a way to
+          // finish rather than implying it has to be created again.
+          throw new Error(
+            `Your circle was created on Starknet, but Iwa could not record it yet. ${humanError(e)}`,
+          );
+        }
+      }),
+    [run, draft, address, pendingOrder],
+  );
+
+  /**
+   * Finishes a creation the service never recorded.
+   *
+   * The circle id is not sent: the service finds the circle from the chain by
+   * matching this draft's payout order, so this cannot point a draft at
+   * somebody else's circle and cannot create a second one.
+   */
+  const onFinishSetup = useCallback(
+    () =>
+      run("Finding your circle on Starknet", async () => {
+        if (draft === null || address === null) return;
+        const updated = await backend.reconcile(draft.id, address, walletSigner());
+        setDraft((current) => mergeTokens(updated, current));
+        if (updated.circleId !== null) setCreatedCircleId(updated.circleId);
+        setUnrecorded(null);
       }),
     [run, draft, address],
   );
@@ -331,9 +443,9 @@ export function OrganizerCircleView() {
               />
             </div>
 
-            {draft.slots.map((slot, position) => (
+            {orderedSlots.map((slot, position) => (
               <div
-                key={slot.slotIndex}
+                key={slot.slotId}
                 className={`${styles.slot} ${slot.accepted ? styles.accepted : styles.pending}`}
               >
                 <span className={styles.slotNum}>{position + 1}</span>
@@ -344,7 +456,7 @@ export function OrganizerCircleView() {
                   <div className={styles.slotMeta}>
                     {slot.accepted
                       ? "Accepted"
-                      : copied === slot.slotIndex
+                      : copied === slot.slotId
                         ? "Link copied"
                         : "Waiting for them to accept"}
                   </div>
@@ -355,7 +467,7 @@ export function OrganizerCircleView() {
                       type="button"
                       className={styles.iconBtn}
                       aria-label={`Copy invitation for place ${position + 1}`}
-                      onClick={() => void onCopy(slot.slotIndex, slot.inviteToken as string)}
+                      onClick={() => void onCopy(slot.slotId, slot.inviteToken as string)}
                     >
                       Copy
                     </button>
@@ -384,7 +496,7 @@ export function OrganizerCircleView() {
                       type="button"
                       className={styles.iconBtn}
                       aria-label={`Move member ${position + 1} later`}
-                      disabled={position === draft.slots.length - 1 || busy !== null}
+                      disabled={position === orderedSlots.length - 1 || busy !== null}
                       onClick={() => void move(position, position + 1)}
                     >
                       ↓
@@ -398,7 +510,37 @@ export function OrganizerCircleView() {
               The order above is the order people collect the pot. You can change it until the
               circle starts, and never after.
             </p>
+
+            {pendingOrder !== null && (
+              <>
+                <p className={styles.hint}>This new turn order is not saved yet.</p>
+                <div className={styles.actions}>
+                  <Button onClick={() => void saveOrder()} disabled={busy !== null}>
+                    Save turn order
+                  </Button>
+                  <Button variant="ghost" onClick={discardOrder} disabled={busy !== null}>
+                    Undo changes
+                  </Button>
+                </div>
+              </>
+            )}
           </section>
+
+          {unrecorded !== null && (
+            <section className={styles.card}>
+              <p className={styles.cardTitle}>Your circle was created</p>
+              <p className={styles.hint}>
+                Circle {unrecorded.circleId} exists on Starknet. Iwa has not finished recording it
+                yet, so it may not appear everywhere. Nothing is lost, and starting the circle
+                again is neither needed nor possible.
+              </p>
+              <div className={styles.actions}>
+                <Button onClick={() => void onFinishSetup()} disabled={busy !== null}>
+                  Finish setting up
+                </Button>
+              </div>
+            </section>
+          )}
 
           <section className={styles.card}>
             <p className={styles.cardTitle}>Start the circle</p>

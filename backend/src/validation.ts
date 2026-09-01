@@ -130,9 +130,15 @@ export const acceptInviteSchema = z.object({
 
 export const reorderSchema = z.object({
   organizerAddress: nonZeroFelt,
-  /** Slot indexes in the desired payout order. Must be a permutation. */
+  /**
+   * Slot IDS in the desired payout order, every place of the draft exactly
+   * once. Ids and not positions: a position is renumbered by each reorder, so
+   * an order expressed in positions is applied against whatever arrangement
+   * the server happens to hold, which is not necessarily the one the organizer
+   * was looking at.
+   */
   order: z
-    .array(z.number().int().min(0).max(31))
+    .array(z.string().uuid())
     .min(2)
     .max(32)
     .refine((o) => new Set(o).size === o.length, "each place may appear only once"),

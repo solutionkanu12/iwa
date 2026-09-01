@@ -8,6 +8,7 @@ import { loadConfig } from "./config.js";
 import { PgStore } from "./pgStore.js";
 import { CircleIndexer } from "./indexer/events.js";
 import { OnChainSignatureVerifier } from "./auth.js";
+import { OnChainCircleVerifier } from "./chainVerify.js";
 import { SN_MAIN } from "./validation.js";
 
 const IWA_CIRCLE = "0x01f81497b09aa702a38715c0ec149d7672cd557c0caea480714d4802ff6f81be";
@@ -23,6 +24,7 @@ async function main(): Promise<void> {
     store,
     corsOrigins: config.corsOrigins,
     verifier: new OnChainSignatureVerifier(provider),
+    circleVerifier: new OnChainCircleVerifier(provider, IWA_CIRCLE),
   });
   const server = app.listen(config.port, () => {
     console.log(`iwa-backend listening on ${config.port} (${config.nodeEnv})`);

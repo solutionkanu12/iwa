@@ -12,6 +12,14 @@ import { randomUUID, randomBytes } from "node:crypto";
 export type DraftStatus = "draft" | "ready" | "created" | "abandoned";
 
 export interface DraftSlot {
+  /**
+   * Stable identity for this place, assigned once and never changed.
+   *
+   * slot_index is a POSITION and is renumbered by every reorder, so it can
+   * never identify a place. This id is what keeps an invite link, and the
+   * person it was sent to, attached to the same seat however the order moves.
+   */
+  slotId: string;
   slotIndex: number;
   inviteToken: string;
   memberRef: string | null;
@@ -87,8 +95,9 @@ export interface Store {
   getDraftByInviteToken(token: string): Promise<CircleDraft | null>;
   listDraftsByOrganizer(address: string): Promise<CircleDraft[]>;
   acceptInvite(input: AcceptInput): Promise<AcceptResult>;
-  reorderSlots(id: string, order: number[]): Promise<CircleDraft | null>;
-  markCreated(id: string, circleId: number, txHash: string): Promise<CircleDraft | null>;
+  /** `order` lists every slot id of the draft exactly once, in the new payout order. */
+  reorderSlots(id: string, order: string[]): Promise<CircleDraft | null>;
+  markCreated(id: string, circleId: number, txHash: string | null): Promise<CircleDraft | null>;
   abandonDraft(id: string): Promise<CircleDraft | null>;
 
   upsertIndexedCircle(circle: Omit<IndexedCircle, "updatedAt">): Promise<void>;
@@ -131,6 +140,7 @@ export class MemoryStore implements Store {
       createdTx: null,
       createdAt: new Date().toISOString(),
       slots: Array.from({ length: input.memberCount }, (_, slotIndex) => ({
+        slotId: randomUUID(),
         slotIndex,
         inviteToken: newInviteToken(),
         memberRef: null,
@@ -184,17 +194,22 @@ export class MemoryStore implements Store {
     return { ok: false, reason: "unknown_invite" };
   }
 
-  async reorderSlots(id: string, order: number[]): Promise<CircleDraft | null> {
+  async reorderSlots(id: string, order: string[]): Promise<CircleDraft | null> {
     const draft = this.drafts.get(id);
     if (!draft) return null;
+    // Every place of this draft, exactly once. Anything else is refused rather
+    // than partially applied: a payout order is not something to guess at.
     if (new Set(order).size !== order.length) return null;
-    const reordered = order.map((i) => draft.slots.find((s) => s.slotIndex === i));
+    if (order.length !== draft.slots.length) return null;
+    const reordered = order.map((slotId) => draft.slots.find((s) => s.slotId === slotId));
     if (reordered.some((s) => s === undefined)) return null;
+    // Positions are rewritten; identity, invite token and member travel with
+    // the slot itself.
     draft.slots = (reordered as DraftSlot[]).map((s, idx) => ({ ...s, slotIndex: idx }));
     return structuredClone(draft);
   }
 
-  async markCreated(id: string, circleId: number, txHash: string): Promise<CircleDraft | null> {
+  async markCreated(id: string, circleId: number, txHash: string | null): Promise<CircleDraft | null> {
     const draft = this.drafts.get(id);
     if (!draft) return null;
     draft.circleId = circleId;

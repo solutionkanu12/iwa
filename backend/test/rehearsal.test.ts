@@ -15,6 +15,16 @@ import { createApp } from "../src/app.js";
 import { MemoryStore } from "../src/store.js";
 import { SN_MAIN } from "../src/validation.js";
 import type { SignatureVerifier } from "../src/auth.js";
+import type { CircleVerifier, DiscoveryOutcome, VerifyOutcome } from "../src/chainVerify.js";
+
+class AlwaysVerifies implements CircleVerifier {
+  async verifyCreated(): Promise<VerifyOutcome> {
+    return { status: "verified" };
+  }
+  async findCircleForDraft(): Promise<DiscoveryOutcome> {
+    return { status: "absent" };
+  }
+}
 
 const ORGANIZER = "0x4099b8ebd6e6c642b4b31bfd27a9c781ab9b41d7f66f80d5c04cc51c0977e85";
 const ALICE_ADDR = "0xa11ce";
@@ -43,6 +53,7 @@ describe("organizer -> invite -> accept -> reorder -> ready", () => {
       corsOrigins: ["http://localhost:5173"],
       rateLimit: { windowMs: 60_000, max: 500 },
       verifier: new StubVerifier(),
+      circleVerifier: new AlwaysVerifies(),
     });
 
     const signIn = async (address: string) => {
@@ -117,7 +128,11 @@ describe("organizer -> invite -> accept -> reorder -> ready", () => {
     const reordered = await request(app)
       .post(`/api/drafts/${draftId}/order`)
       .set(await signIn(ORGANIZER))
-      .send({ organizerAddress: ORGANIZER, order: [1, 0] })
+      .send({
+        organizerAddress: ORGANIZER,
+        // Slot ids, not positions: the order names the places themselves.
+        order: [review.body.slots[1].slotId, review.body.slots[0].slotId],
+      })
       .expect(200);
     const payoutOrder = reordered.body.slots.map((s: { memberRef: string }) => s.memberRef);
     expect(payoutOrder).toEqual([BOB.memberRef, ALICE.memberRef]);

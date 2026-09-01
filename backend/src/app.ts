@@ -10,6 +10,7 @@
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
 
 import type { Store, CircleDraft } from "./store.js";
+import type { CircleVerifier } from "./chainVerify.js";
 import {
   AUTH_MESSAGES,
   challengeTypedData,
@@ -53,6 +54,8 @@ export interface AppOptions {
   corsOrigins: string[];
   /** Verifies wallet signatures. Injected so routes are testable without RPC. */
   verifier: SignatureVerifier;
+  /** Verifies circle creation against the chain. Injected for the same reason. */
+  circleVerifier: CircleVerifier;
   challenges?: ChallengeStore;
   /** Mutations allowed per window, per client. */
   rateLimit?: { windowMs: number; max: number };
@@ -96,6 +99,7 @@ function publicDraft(draft: CircleDraft, includeTokens: boolean) {
     createdAt: draft.createdAt,
     acceptedCount: draft.slots.filter((s) => s.memberRef !== null).length,
     slots: draft.slots.map((s) => ({
+      slotId: s.slotId,
       slotIndex: s.slotIndex,
       accepted: s.memberRef !== null,
       memberRef: s.memberRef,
@@ -114,6 +118,7 @@ export function createApp(options: AppOptions): Express {
 
   const challenges = options.challenges ?? new ChallengeStore(now);
   const verifier = options.verifier;
+  const circleVerifier = options.circleVerifier;
 
   const app = express();
   app.disable("x-powered-by");
@@ -164,6 +169,17 @@ export function createApp(options: AppOptions): Express {
 
   const badRequest = (res: Response, issues: unknown) =>
     res.status(400).json({ error: "invalid_request", issues });
+
+  /**
+   * The chain could not be reached. Not a verdict on the request: an outage
+   * must never look like a rejection, or an organizer with a real circle is
+   * told their real circle is invalid.
+   */
+  const verificationUnavailable = (res: Response) =>
+    res.status(503).json({
+      error: "verification_unavailable",
+      message: "Could not reach Starknet to confirm this. Please try again shortly.",
+    });
 
   /**
    * Proves the caller controls the address they claim. Returns the verified
@@ -384,11 +400,75 @@ export function createApp(options: AppOptions): Express {
       if (draft.organizerAddress !== caller) {
         return res.status(403).json({ error: "not_organizer" });
       }
+
+      // Already settled. Reporting the same creation again is the normal shape
+      // of a retry, so it succeeds without re-verifying or rewriting anything.
+      // A different circle is a different matter and is refused.
+      if (draft.circleId !== null) {
+        if (draft.circleId === parsed.data.circleId) {
+          return res.json(publicDraft(draft, true));
+        }
+        return res.status(409).json({
+          error: "already_created",
+          message: "This draft is already recorded against a different circle.",
+        });
+      }
+
+      const evidence = await circleVerifier.verifyCreated({
+        draft,
+        circleId: parsed.data.circleId,
+        txHash: parsed.data.txHash,
+      });
+      if (evidence.status === "unavailable") return verificationUnavailable(res);
+      if (evidence.status === "rejected") {
+        return res.status(422).json({
+          error: "unverified_creation",
+          message: `The chain does not support this: ${evidence.reason}.`,
+        });
+      }
+
       const updated = await store.markCreated(
         req.params.id,
         parsed.data.circleId,
         parsed.data.txHash,
       );
+      res.json(publicDraft(updated as CircleDraft, true));
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  /**
+   * Recovers a creation that happened on chain but was never recorded here.
+   *
+   * Creation is irreversible and recording it is a separate step, so a closed
+   * browser or a moment of downtime between the two leaves a real circle with
+   * nothing pointing at it. The chain still knows: a draft's payout order
+   * identifies its circle. Nothing is created here and no claim is taken from
+   * the caller; the circle id is discovered, never supplied.
+   */
+  app.post("/api/drafts/:id/reconcile", async (req, res, next) => {
+    if (!mutate(req, res)) return;
+    try {
+      const draft = await store.getDraft(req.params.id);
+      if (draft === null) return res.status(404).json({ error: "not_found" });
+      const caller = await authenticate(req, res);
+      if (caller === null) return;
+      if (draft.organizerAddress !== caller) {
+        return res.status(403).json({ error: "not_organizer" });
+      }
+      if (draft.circleId !== null) return res.json(publicDraft(draft, true));
+
+      const found = await circleVerifier.findCircleForDraft(draft);
+      if (found.status === "unavailable") return verificationUnavailable(res);
+      if (found.status === "absent") {
+        return res.status(404).json({
+          error: "no_circle_yet",
+          message: "No circle for this draft exists on chain yet.",
+        });
+      }
+
+      const updated = await store.markCreated(req.params.id, found.circleId, draft.createdTx);
       res.json(publicDraft(updated as CircleDraft, true));
     } catch (e) {
       next(e);
