@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   authPublicKey,
+  contributionNonce,
   contributionSettlementHash,
   cureSettlementHash,
   deriveMemberIdentity,
@@ -149,5 +150,55 @@ describe("member identity", () => {
     const sig = signChecked(id, CONTRIB, "contribution settlement");
     expect(sig.r).toBe(SIG_R);
     expect(sig.s).toBe(SIG_S);
+  });
+});
+
+describe("contributionNonce", () => {
+  // The contract consumes contribution nonces under (circle_id, member_ref,
+  // nonce) with no round in the key, so a constant nonce is spent for good the
+  // first time a member settles. Binding it to the round is what keeps every
+  // later round reachable.
+  it("differs between rounds", () => {
+    expect(contributionNonce(1)).not.toBe(contributionNonce(2));
+    expect(contributionNonce(2)).not.toBe(contributionNonce(3));
+  });
+
+  it("is deterministic for the same round", () => {
+    expect(contributionNonce(4)).toBe(contributionNonce(4));
+  });
+
+  it("is a non-zero felt", () => {
+    for (const round of [1, 2, 17, 32]) {
+      expect(BigInt(contributionNonce(round))).toBeGreaterThan(0n);
+    }
+  });
+
+  it("rejects a round that is not a positive integer", () => {
+    for (const bad of [0, -1, 1.5, Number.NaN]) {
+      expect(() => contributionNonce(bad)).toThrow();
+    }
+  });
+});
+
+describe("contribution settlement hash is round-bound", () => {
+  const base = {
+    circleId: 1,
+    memberRef: "0x45325587024dc0326f740bc5268c766620a4a51dbdec04894256480aecbae0f",
+    helper: "0x04cac02dcc7ca8c46c0b6f32985f17bf24d99557222e60c6881d147e13fafbbb",
+    pool: "0x040337b1af3c663e86e333bab5a4b28da8d4652a15a69beee2b677776ffe812a",
+    token: "0x033068f6539f8e6e6b131e6b2b814e6c34a5224bc66947c47dab9dfee93b35fb",
+    amount: 1_000_000n,
+  };
+
+  it("produces a different hash for round 2 than for round 1", () => {
+    const one = contributionSettlementHash({ ...base, round: 1, nonce: contributionNonce(1) });
+    const two = contributionSettlementHash({ ...base, round: 2, nonce: contributionNonce(2) });
+    expect(one).not.toBe(two);
+  });
+
+  it("is stable for the same round", () => {
+    const a = contributionSettlementHash({ ...base, round: 3, nonce: contributionNonce(3) });
+    const b = contributionSettlementHash({ ...base, round: 3, nonce: contributionNonce(3) });
+    expect(a).toBe(b);
   });
 });

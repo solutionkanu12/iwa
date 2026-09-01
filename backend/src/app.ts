@@ -29,6 +29,25 @@ import {
   SN_MAIN,
 } from "./validation.js";
 
+/**
+ * The headers an authenticated organizer request carries, in the order
+ * `authenticate` reads them: address, nonce, chain, signature.
+ *
+ * This is the single source of truth. The CORS preflight advertises exactly
+ * this list and the auth middleware reads exactly this list, because a header
+ * the browser is not told about is a header the browser will not send: the
+ * request never arrives and every server-side test still passes.
+ */
+export const AUTH_HEADERS = [
+  "x-iwa-address",
+  "x-iwa-nonce",
+  "x-iwa-chain",
+  "x-iwa-signature",
+] as const;
+
+/** Request headers the API accepts cross-origin. Nothing beyond what it reads. */
+const ALLOWED_HEADERS = ["content-type", ...AUTH_HEADERS].join(",");
+
 export interface AppOptions {
   store: Store;
   corsOrigins: string[];
@@ -109,7 +128,7 @@ export function createApp(options: AppOptions): Express {
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Vary", "Origin");
       res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "content-type");
+      res.setHeader("Access-Control-Allow-Headers", ALLOWED_HEADERS);
     }
     if (req.method === "OPTIONS") {
       res.status(204).end();
@@ -151,10 +170,11 @@ export function createApp(options: AppOptions): Express {
    * address, or null after already sending the error response.
    */
   const authenticate = async (req: Request, res: Response): Promise<string | null> => {
-    const address = req.header("x-iwa-address");
-    const nonce = req.header("x-iwa-nonce");
-    const chainId = req.header("x-iwa-chain") ?? SN_MAIN;
-    const rawSignature = req.header("x-iwa-signature");
+    const [addressHeader, nonceHeader, chainHeader, signatureHeader] = AUTH_HEADERS;
+    const address = req.header(addressHeader);
+    const nonce = req.header(nonceHeader);
+    const chainId = req.header(chainHeader) ?? SN_MAIN;
+    const rawSignature = req.header(signatureHeader);
 
     if (!address || !nonce || !rawSignature) {
       res.status(401).json({ error: "missing_auth", message: AUTH_MESSAGES.missing_auth });

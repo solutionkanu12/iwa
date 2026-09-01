@@ -12,14 +12,14 @@
 // settlement authorization with the member's own key.
 
 import type { SnarkProof } from "./convert";
-import type { Circle, CircleStatus, MemberSlot, Reputation } from "./types";
+import type { Circle, CircleStatus, Reputation } from "./types";
 import {
   DEMO_CIRCLE_ID,
   IWA_CIRCLE,
   IWA_HELPER,
   PRIVACY_POOL,
   RPC_URL,
-  USDC_DECIMALS,
+
   USDC_TOKEN,
 } from "./starknetConfig";
 import { bytes32ToFelt, currentWallet, deriveMemberCommitment } from "./starknetWallet";
@@ -32,15 +32,18 @@ import {
   isMember as readIsMember,
   makeProvider,
 } from "../chains/strk20/publicReads";
+import { memberSlots, potFor } from "../chains/strk20/circleState";
 import { buildContributionActions } from "../chains/strk20/strk20Actions";
 import { submit as submitPoolTx, toStrk20Error } from "../chains/strk20/iwaStrk20Client";
-import { contributionSettlementHash, feltHex, signChecked } from "../chains/strk20/iwaSigning";
+import {
+  contributionNonce,
+  contributionSettlementHash,
+  feltHex,
+  signChecked,
+} from "../chains/strk20/iwaSigning";
 import { hash as snhash } from "starknet";
 
 const provider = makeProvider(RPC_URL);
-
-/** Per-round contribution nonce. One settlement per member per round. */
-const CONTRIBUTION_NONCE = "1";
 
 export class ContractCallError extends Error {
   constructor(message: string) {
@@ -98,7 +101,7 @@ export function classifyContractError(err: unknown): ContractErrorKind {
 
 // --- Reads ---
 
-const toUnits = (base: bigint): number => Number(base) / 10 ** USDC_DECIMALS;
+
 
 function mapStatus(status: string, joined: number, limit: number): CircleStatus {
   if (status === "Active") return "active";
@@ -125,27 +128,25 @@ export async function get_circle(
   const order = await getPayoutOrder(provider, circleId);
   const mine = memberCommitment ? bytes32ToFelt(memberCommitment) : null;
 
-  const members: MemberSlot[] = order.map((ref, slot) => {
-    let filled = false;
-    try {
-      filled = BigInt(ref) !== 0n;
-    } catch {
-      filled = false;
-    }
-    return {
-      slot,
-      filled,
-      isYou: mine !== null && (() => {
-        try {
-          return BigInt(ref) === mine;
-        } catch {
-          return false;
-        }
-      })(),
-    };
-  });
+  const members = memberSlots(order, mine);
+  const reserved = members.some((m) => m.isYou);
 
-  const amount = toUnits(view.contributionAmount);
+  // A reserved place is not a membership: the payout order is written in full
+  // at creation, so the contract is the only thing that can say whether this
+  // wallet has actually joined.
+  let youJoined = false;
+  if (mine !== null && reserved) {
+    try {
+      youJoined = await readIsMember(provider, circleId, feltHex(mine));
+    } catch {
+      // Unreadable membership stays false: the join attempt itself is
+      // authoritative, and offering it again is safe.
+      youJoined = false;
+    }
+  }
+
+  // Base units, unconverted. formatAmount does the one conversion, at display.
+  const amount = view.contributionAmount;
 
   return {
     id: view.id,
@@ -156,8 +157,11 @@ export async function get_circle(
     size: view.memberLimit,
     current_round: view.currentRound,
     status: mapStatus(view.status, view.joinedCount, view.memberLimit),
-    pot: amount * view.memberLimit,
+    pot: potFor(amount, view.memberLimit),
     members,
+    joinedCount: view.joinedCount,
+    reserved,
+    youJoined,
     yourStreak: 0,
   };
 }
@@ -172,7 +176,8 @@ export async function get_members(circleId: number): Promise<string[]> {
 
 export interface CircleSummary {
   id: number;
-  amount: number;
+  /** Contribution per round in BASE UNITS. */
+  amount: bigint;
   token: string;
   trust_required: boolean;
   size: number;
@@ -196,7 +201,7 @@ export async function listCircles(max = 20): Promise<CircleSummary[]> {
     }
     out.push({
       id: view.id,
-      amount: toUnits(view.contributionAmount),
+      amount: view.contributionAmount,
       token: USDC_TOKEN,
       trust_required: false,
       size: view.memberLimit,
@@ -350,7 +355,11 @@ export async function pay_contribution(
     );
   }
 
-  if (await isContributionNonceConsumed(provider, circleId, ref, CONTRIBUTION_NONCE)) {
+  // One value for this round: the precheck below, the signed hash and the
+  // calldata all read it, so they cannot drift apart.
+  const nonce = contributionNonce(round);
+
+  if (await isContributionNonceConsumed(provider, circleId, ref, nonce)) {
     throw new ContractCallError("You have already contributed this round.");
   }
 
@@ -371,7 +380,7 @@ export async function pay_contribution(
     pool: BigInt(PRIVACY_POOL),
     token: BigInt(USDC_TOKEN),
     amount: obligation.requiredAmount,
-    nonce: CONTRIBUTION_NONCE,
+    nonce,
   });
   const raw = signChecked(commitment.identity, messageHash, "contribution settlement");
 
@@ -381,7 +390,7 @@ export async function pay_contribution(
     memberRef: ref,
     token: USDC_TOKEN,
     amount: obligation.requiredAmount.toString(),
-    nonce: CONTRIBUTION_NONCE,
+    nonce,
     signature: { r: feltHex(raw.r), s: feltHex(raw.s) },
   });
 

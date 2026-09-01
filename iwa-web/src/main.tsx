@@ -8,6 +8,7 @@ import { Strk20ConsoleView } from "./screens/Strk20ConsoleView.tsx";
 import { OrganizerCircleView } from "./screens/OrganizerCircleView.tsx";
 import { AcceptInviteView } from "./screens/AcceptInviteView.tsx";
 import { connectWallet, WalletCancelledError } from "./lib/starknetWallet.ts";
+import { parseCircleId } from "./lib/appRoute.ts";
 
 // The single entry for both the marketing landing page and the app (Circle /
 // Browse / My standing), so a wallet connected on landing carries straight
@@ -37,6 +38,10 @@ function AppRoot() {
   const inviteToken = window.location.pathname.startsWith("/invite/")
     ? decodeURIComponent(window.location.pathname.slice("/invite/".length))
     : "";
+  // Which circle the app opens, carried in the URL so a reload or a shared
+  // link lands on the same one. Absent or malformed means "none chosen", and
+  // the app asks rather than substituting a circle of its own.
+  const circleId = parseCircleId(window.location.search);
   const [address, setAddress] = useState<string | null>(null);
 
   const onEnterCircle = useCallback(async () => {
@@ -59,7 +64,7 @@ function AppRoot() {
   if (view === "strk20" && OPERATOR_CONSOLE_ENABLED) return <Strk20ConsoleView />;
   if (view === "start") return <OrganizerCircleView />;
   if (view === "invite") return <AcceptInviteView token={inviteToken} />;
-  if (view === "app") return <App address={address} />;
+  if (view === "app") return <App address={address} circleId={circleId} />;
   return <LandingPage onEnterCircle={onEnterCircle} />;
 }
 

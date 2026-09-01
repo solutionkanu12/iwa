@@ -35,10 +35,7 @@ import {
   IwaOperation,
 } from "./lib/circle.mjs";
 import { normFelt } from "./lib/chain.mjs";
-import { feltHex } from "./lib/iwa.mjs";
-
-/** Fixed per-purpose nonce. Re-running a settled contribution fails closed on the contract nonce. */
-const CONTRIBUTION_NONCE = 1n;
+import { contributionNonce, feltHex } from "./lib/iwa.mjs";
 
 function argValue(argv, name, fallback) {
   const i = argv.indexOf(name);
@@ -49,7 +46,7 @@ async function main() {
   const argv = process.argv.slice(2);
   const { cfgPath, confirmSend } = parseArgs(argv.filter((a) => a !== argValue(argv, "--member", null)));
   const memberLabel = argValue(argv, "--member", "A");
-  const nonce = BigInt(argValue(argv, "--nonce", String(CONTRIBUTION_NONCE)));
+  const nonceOverride = argValue(argv, "--nonce", null);
 
   banner(`05 CONTRIBUTE — private contribution settlement (member ${memberLabel})`, confirmSend);
 
@@ -73,6 +70,12 @@ async function main() {
   if (circle.asset !== "Usdc") throw new Error(`circle asset is ${circle.asset}; this demo settles USDC`);
 
   const round = circle.currentRound;
+  // The nonce is bound to the round, so every round of a circle is reachable.
+  // --nonce stays available for recovering a run that was interrupted between
+  // signing and submission, and is never the normal path.
+  const nonce = nonceOverride === null ? contributionNonce(round) : BigInt(nonceOverride);
+  console.log(`  contribution nonce for round ${round}: ${feltHex(nonce)}`);
+
   const obligation = await getContributionObligation(
     provider,
     cfg.iwa_circle,

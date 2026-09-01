@@ -47,6 +47,22 @@ export function memberRef(secret, authPublicKey) {
   return iwaHash(DOMAIN.INVITE, secret, authPublicKey);
 }
 
+/**
+ * The contribution nonce for one round. Mirrors
+ * iwa-web/src/chains/strk20/iwaSigning.ts `contributionNonce` exactly, and the
+ * two must stay in step: IwaCircle keys consumed contribution nonces as
+ * (circle_id, member_ref, nonce) with no round in the key, so a fixed nonce is
+ * spent for good on the first settlement and every later round reverts with
+ * NONCE_USED.
+ */
+export function contributionNonce(round) {
+  const n = Number(round);
+  if (!Number.isInteger(n) || n < 1) {
+    throw new Error(`round must be a positive integer, got ${round}`);
+  }
+  return BigInt(n);
+}
+
 export function contributionSettlementHash({
   circleId,
   round,

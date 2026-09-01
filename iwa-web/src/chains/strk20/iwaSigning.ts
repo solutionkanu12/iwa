@@ -73,6 +73,26 @@ export interface SettlementHashArgs {
   nonce: FeltIn;
 }
 
+/**
+ * The contribution nonce for one round. The single source of truth: the
+ * consumed-nonce precheck, the signed settlement hash and the transaction
+ * calldata all take their value from here, so they can never disagree.
+ *
+ * IwaCircle keys consumed contribution nonces as (circle_id, member_ref,
+ * nonce) with no round in the key. A fixed nonce is therefore spent for good
+ * the first time a member settles, and every later round reverts with
+ * NONCE_USED. Using the round itself gives exactly the intended rule, one
+ * settlement per member per round, and nothing weaker: the round is already
+ * bound into the hash, and the obligation's own Pending check still prevents a
+ * second payment inside the same round.
+ */
+export function contributionNonce(round: number): string {
+  if (!Number.isInteger(round) || round < 1) {
+    throw new Error(`round must be a positive integer, got ${round}`);
+  }
+  return String(round);
+}
+
 export function contributionSettlementHash(a: SettlementHashArgs): bigint {
   return iwaHash(
     DOMAIN.CONTRIBUTION_SETTLEMENT,

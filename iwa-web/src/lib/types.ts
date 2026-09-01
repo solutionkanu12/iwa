@@ -23,15 +23,23 @@ export interface MemberSlot {
 // your streak). All identity stays as opaque slots, never names.
 export interface Circle {
   id: number; // circle id (u32 on chain)
-  token: string; // the circle's token (Soroban SAC address); resolves to a symbol
+  token: string; // the circle's token; resolves to a symbol
   trust_required: boolean; // join requires a verified reputation proof
-  amount: number;
+  /** Contribution per round in the token's BASE UNITS. Formatted once, at display. */
+  amount: bigint;
   frequency: number;
-  size: number;
+  size: number; // places in the circle (member_limit on chain)
   current_round: number;
   status: CircleStatus;
-  pot: number; // amount * size, derived
-  members: MemberSlot[];
+  /** amount * size, in base units. */
+  pot: bigint;
+  members: MemberSlot[]; // payout order; `filled` means reserved, not joined
+  /** How many of the reserved places have actually called join_circle. */
+  joinedCount: number;
+  /** A place in the payout order holds the connected wallet's commitment. */
+  reserved: boolean;
+  /** The contract counts the connected wallet as a joined member. */
+  youJoined: boolean;
   yourStreak: number; // on-time streak for the connected member
 }
 

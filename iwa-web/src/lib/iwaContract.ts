@@ -273,13 +273,16 @@ function emptyCircle(circleId: number): Circle {
     id: circleId,
     token: "",
     trust_required: false,
-    amount: 0,
+    amount: 0n,
     frequency: 0,
     size: 0,
     current_round: 0,
     status: "forming",
-    pot: 0,
+    pot: 0n,
     members: [],
+    joinedCount: 0,
+    reserved: false,
+    youJoined: false,
     yourStreak: 0,
   };
 }
@@ -421,7 +424,7 @@ export async function get_circle(
     throw e;
   }
 
-  const amount = Number(raw.amount);
+  const amount = BigInt(raw.amount);
   const size = raw.size;
   const memberHex = await get_members(circleId);
   const yourHex = memberCommitment ? bytesToHex(memberCommitment) : null;
@@ -453,8 +456,12 @@ export async function get_circle(
     size,
     current_round: raw.current_round,
     status: mapStatus(raw.status),
-    pot: amount * size,
+    pot: amount * BigInt(size),
     members,
+    // The Soroban circle had no separate join step: a filled seat was a member.
+    joinedCount: members.filter((m) => m.filled).length,
+    reserved: members.some((m) => m.isYou),
+    youJoined: members.some((m) => m.isYou),
     yourStreak,
   };
 }

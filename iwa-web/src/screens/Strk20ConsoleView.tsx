@@ -47,6 +47,7 @@ import {
 import {
   deriveMemberIdentity,
   feltHex,
+  contributionNonce,
   contributionSettlementHash,
   signChecked,
   type MemberIdentity,
@@ -87,7 +88,7 @@ import {
 } from "../chains/strk20/publicReads";
 
 const RPC_URL = "https://api.cartridge.gg/x/starknet/mainnet";
-const CONTRIBUTION_NONCE = "1";
+
 const MEMBER_LIMIT = 2;
 const CONTRIBUTION_AMOUNT = 1_000_000n; // 1.00 USDC, six decimals
 const NOTE_MATURITY_BLOCKS = 10;
@@ -649,6 +650,10 @@ export function Strk20ConsoleView() {
       if (!circle) throw new Error("load the circle first");
       if (circle.status !== "Active") throw new Error(`circle is ${circle.status}, not Active`);
 
+      // Same source of truth as the app seam: one nonce per round, shared by
+      // the precheck, the signed hash and the calldata.
+      const nonce = contributionNonce(circle.currentRound);
+
       const ob = await getContributionObligation(
         provider,
         id,
@@ -659,9 +664,9 @@ export function Strk20ConsoleView() {
         throw new Error(`member ${m.label} obligation is ${ob.status}, not Pending`);
       }
       if (
-        await isContributionNonceConsumed(provider, id, feltHex(m.memberRef), CONTRIBUTION_NONCE)
+        await isContributionNonceConsumed(provider, id, feltHex(m.memberRef), nonce)
       ) {
-        throw new Error(`contribution nonce ${CONTRIBUTION_NONCE} already consumed for ${m.label}`);
+        throw new Error(`contribution nonce ${nonce} already consumed for ${m.label}`);
       }
       const surplus = await helperSurplus(provider, STARKNET_MAINNET.usdcToken);
       if (surplus !== 0n) {
@@ -679,7 +684,7 @@ export function Strk20ConsoleView() {
         pool: BigInt(STARKNET_MAINNET.privacyPool),
         token: BigInt(STARKNET_MAINNET.usdcToken),
         amount: ob.requiredAmount,
-        nonce: CONTRIBUTION_NONCE,
+        nonce,
       });
       const raw = signChecked(m, messageHash, "contribution settlement");
       const sig: IwaSignature = { r: feltHex(raw.r), s: feltHex(raw.s) };
@@ -691,7 +696,7 @@ export function Strk20ConsoleView() {
           memberRef: feltHex(m.memberRef),
           token: STARKNET_MAINNET.usdcToken,
           amount: ob.requiredAmount.toString(),
-          nonce: CONTRIBUTION_NONCE,
+          nonce,
           signature: sig,
         }),
         hash: messageHash,

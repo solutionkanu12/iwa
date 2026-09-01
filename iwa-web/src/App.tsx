@@ -7,15 +7,17 @@ import styles from "./App.module.css";
 // skip its own connect prompt.
 export interface AppProps {
   address?: string | null;
+  /** The circle named in the URL, or null when none was named. */
+  circleId?: number | null;
 }
 
-export function App({ address = null }: AppProps = {}) {
+export function App({ address = null, circleId = null }: AppProps = {}) {
   return (
     <main className={styles.appShell}>
       <span className={`${styles.blob} ${styles.blob1}`} aria-hidden="true" />
       <span className={`${styles.blob} ${styles.blob2}`} aria-hidden="true" />
       <div className={styles.appWrap}>
-        <CircleView initialAddress={address} />
+        <CircleView initialAddress={address} circleId={circleId} />
       </div>
     </main>
   );

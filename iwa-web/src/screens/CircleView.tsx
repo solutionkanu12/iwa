@@ -16,19 +16,19 @@ import {
 } from "../lib/starknetWallet.ts";
 import type { MemberCommitment } from "../lib/starknetWallet.ts";
 import {
-  DEMO_CIRCLE_ID,
   tokenSymbol,
   tokenDecimals,
 } from "../lib/starknetConfig.ts";
 import { formatAmount } from "../lib/amount.ts";
+import { circleHref } from "../lib/appRoute.ts";
 import { generateProof } from "../lib/zk.ts";
 import type { SnarkProof } from "../lib/convert.ts";
 import type { Circle, Reputation } from "../lib/types.ts";
 import { Island } from "../components/Island.tsx";
 import { Button } from "../components/Button.tsx";
 import { ProveView, CLAIMS } from "./ProveView.tsx";
-import { CreateCircleView } from "./CreateCircleView.tsx";
 import { BrowseCirclesView } from "./BrowseCirclesView.tsx";
+import { canJoin } from "../chains/strk20/circleState.ts";
 import styles from "./CircleView.module.css";
 
 // Flow 1 (the circle view) and Flow 2 (contribute and collect), matched to
@@ -37,6 +37,9 @@ import styles from "./CircleView.module.css";
 // get_circle. Contribute opens a confirm step that calls pay_contribution;
 // collect calls collect_pot. Connect and the commitment are live; the rest of
 // the chain access still runs on the mocked lib seam this stage.
+
+/** Where a circle is started: the invite flow, which reserves each place. */
+const START_A_CIRCLE = "/start";
 
 const PRIVACY_LINE =
   "Your contributions are private. Only your good standing can be proven, and only by you.";
@@ -444,18 +447,24 @@ type Status = "idle" | "working" | "done";
 
 export function CircleView({
   initialAddress = null,
+  circleId = null,
 }: {
   // Set when the wallet was already connected before this screen mounted
   // (the visitor connected from the landing page). Skips the connect gate
   // and picks up exactly where handleConnect would have left off.
   initialAddress?: string | null;
+  // The circle named in the URL. Null means none was named, and the app opens
+  // Browse to ask rather than choosing a circle on the visitor's behalf.
+  circleId?: number | null;
 } = {}) {
   const [address, setAddress] = useState<string | null>(null);
   const [commitment, setCommitment] = useState<MemberCommitment | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [circle, setCircle] = useState<Circle | null>(null);
 
-  const [screen, setScreen] = useState<Screen>("circle");
+  // With no circle named in the URL there is nothing to open, so the app asks
+  // which circle rather than picking one.
+  const [screen, setScreen] = useState<Screen>(circleId === null ? "browse" : "circle");
   const [contribStatus, setContribStatus] = useState<Status>("idle");
   const [contribTx, setContribTx] = useState<string | null>(null);
   const [contribError, setContribError] = useState<string | null>(null);
@@ -504,9 +513,14 @@ export function CircleView({
       }
 
       // Real read: the circle state, composed from the deployed savings
-      // contract.
+      // contract. Only the circle the URL named: with none named there is
+      // nothing to read, and Browse asks instead of a circle being guessed.
+      if (circleId === null) {
+        setConnecting(false);
+        return;
+      }
       try {
-        const c = await get_circle(DEMO_CIRCLE_ID, mc?.commitmentBytes);
+        const c = await get_circle(circleId, mc?.commitmentBytes);
         setCircle(c);
         await loadPaidStatus(c, mc?.commitmentBytes);
       } catch (err) {
@@ -515,7 +529,7 @@ export function CircleView({
         setConnecting(false);
       }
     },
-    [loadPaidStatus],
+    [loadPaidStatus, circleId],
   );
 
   const handleConnect = useCallback(async () => {
@@ -636,7 +650,10 @@ export function CircleView({
 
   const goProve = useCallback(() => setScreen("prove"), []);
   const backToStanding = useCallback(() => setScreen("standing"), []);
-  const goCreate = useCallback(() => setScreen("create"), []);
+  // Starting a circle is the invite flow at /start: places are reserved for
+  // named people before the circle exists, so there is no separate create form
+  // to duplicate here. A plain navigation until the app routes properly.
+  const goCreate = useCallback(() => window.location.assign(START_A_CIRCLE), []);
   const goBrowse = useCallback(() => setScreen("browse"), []);
 
   // Load and switch to a circle by id (used after creating one). Resets the
@@ -654,6 +671,9 @@ export function CircleView({
       setCollectTx(null);
       setCollectError(null);
       setReputation(null);
+      // The circle goes into the URL, so a reload comes back to this circle
+      // and the link can be shared.
+      window.history.pushState(null, "", circleHref(id));
       try {
         const c = await get_circle(id, commitment?.commitmentBytes);
         setCircle(c);
@@ -738,11 +758,27 @@ export function CircleView({
     // Discovery does not depend on the demo circle, so it renders before the
     // circle-loading gate.
     body = <BrowseCirclesView onView={goToCircle} />;
-  } else if (!circle) {
+  } else if (!circle && connecting) {
     body = (
       <Island className={styles.card}>
         <h2 className={styles.h2}>Loading your circle</h2>
         <p className={styles.meta}>Reading the circle from Starknet</p>
+      </Island>
+    );
+  } else if (!circle) {
+    // The circle named in the link could not be read. Say so, and offer the
+    // list, rather than leaving a spinner or quietly opening another circle.
+    body = (
+      <Island className={styles.card}>
+        <h2 className={styles.h2}>That circle could not be opened</h2>
+        <p className={styles.meta}>
+          {circleId === null
+            ? "No circle was chosen."
+            : `Circle ${circleId} could not be read from Starknet.`}
+        </p>
+        <div className={styles.stack}>
+          <Button onClick={goBrowse}>Browse circles</Button>
+        </div>
       </Island>
     );
   } else if (screen === "contribute") {
@@ -841,14 +877,6 @@ export function CircleView({
         secret={commitment?.secret ?? null}
       />
     );
-  } else if (screen === "create") {
-    body = (
-      <CreateCircleView
-        address={address}
-        onBack={backToCircle}
-        onCreated={goToCircle}
-      />
-    );
   } else {
     const collectorSlot = collectorSlotOf(circle);
     const yourTurn = circle.members.some(
@@ -856,9 +884,16 @@ export function CircleView({
     );
     const sym = tokenSymbol(circle.token);
     const decimals = tokenDecimals(circle.token);
-    const isMember = circle.members.some((m) => m.isYou);
-    const hasOpenSlot = circle.members.some((m) => !m.filled);
-    const canJoin = !isMember && hasOpenSlot;
+    // A seat in the payout order is a place reserved for you, not proof you
+    // joined. Every seat is reserved the moment the circle is created, so the
+    // join offer has to come from the contract's own joined count.
+    const showJoin = canJoin({
+      reservedForYou: circle.reserved,
+      youJoined: circle.youJoined,
+      joinedCount: circle.joinedCount,
+      memberLimit: circle.size,
+      status: circle.status,
+    });
     body = (
       <Island className={styles.card}>
         <h2 className={styles.h2}>Weekly circle</h2>
@@ -933,7 +968,7 @@ export function CircleView({
         </div>
 
         <div className={styles.stack}>
-          {canJoin && joinStatus !== "done" ? (
+          {showJoin && joinStatus !== "done" ? (
             <Button
               onClick={join}
               disabled={joinStatus === "working" || !commitment}

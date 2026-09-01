@@ -11,6 +11,7 @@ import { createApp } from "../src/app.js";
 import { MemoryStore } from "../src/store.js";
 import { SN_MAIN } from "../src/validation.js";
 import { ChallengeStore, type SignatureVerifier } from "../src/auth.js";
+import { AUTH_HEADERS } from "../src/app.js";
 
 /**
  * Stands in for the account contract. Accepts a signature only when it is the
@@ -368,5 +369,36 @@ describe("cors", () => {
 
     const bad = await request(app).get("/health").set("Origin", "https://evil.example");
     expect(bad.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+});
+
+describe("cors preflight", () => {
+  // The organizer routes authenticate with custom headers. A preflight that
+  // does not advertise them makes every organizer action fail in a browser
+  // while passing every server-side test, so the header list is asserted here
+  // against the same constant the auth middleware reads.
+  it("advertises every header an authenticated request carries", async () => {
+    const res = await request(app)
+      .options("/api/drafts")
+      .set("Origin", "http://localhost:5173")
+      .set("Access-Control-Request-Method", "POST")
+      .expect(204);
+
+    const advertised = String(res.headers["access-control-allow-headers"] ?? "")
+      .split(",")
+      .map((h) => h.trim().toLowerCase());
+
+    for (const header of ["content-type", ...AUTH_HEADERS]) {
+      expect(advertised).toContain(header);
+    }
+  });
+
+  it("advertises nothing to a disallowed origin", async () => {
+    const res = await request(app)
+      .options("/api/drafts")
+      .set("Origin", "https://evil.example")
+      .set("Access-Control-Request-Method", "POST");
+    expect(res.headers["access-control-allow-headers"]).toBeUndefined();
+    expect(res.headers["access-control-allow-origin"]).toBeUndefined();
   });
 });

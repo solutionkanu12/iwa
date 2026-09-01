@@ -12,6 +12,7 @@ import { Button } from "../components/Button";
 import { backend, inviteLink, BackendError, type DraftView, type WalletSigner } from "../lib/backend";
 import { connectWallet, currentWallet, disconnectWallet } from "../lib/starknetWallet";
 import { create_circle_from_order } from "../lib/iwaStarknet";
+import { circleHref } from "../lib/appRoute";
 import { CHAIN_ID, MAX_MEMBERS, MIN_MEMBERS, USDC_DECIMALS, USDC_TOKEN } from "../lib/starknetConfig";
 import { formatUnits, parseUnits } from "../chains/strk20/funding";
 
@@ -213,7 +214,9 @@ export function OrganizerCircleView() {
         </p>
         <div className={styles.success}>Circle {createdCircleId} created.</div>
         <div className={styles.actions}>
-          <Button onClick={() => window.location.assign("/app")}>Go to the circle</Button>
+          <Button onClick={() => window.location.assign(circleHref(createdCircleId))}>
+            Go to the circle
+          </Button>
         </div>
       </div>
     );
