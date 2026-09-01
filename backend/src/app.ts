@@ -20,6 +20,8 @@ import {
 } from "./auth.js";
 import {
   acceptInviteSchema,
+  isInviteToken,
+  isUuid,
   assertNoSecrets,
   createDraftSchema,
   ForbiddenFieldError,
@@ -59,18 +61,52 @@ export interface AppOptions {
   challenges?: ChallengeStore;
   /** Mutations allowed per window, per client. */
   rateLimit?: { windowMs: number; max: number };
+  /**
+   * How many reverse proxies sit in front of this service.
+   *
+   * One in the deployment: Railway's edge, which appends the real client to
+   * X-Forwarded-For. Anything further left in that header is whatever the
+   * client chose to send, so trusting the whole chain lets any client mint a
+   * new identity per request and reset its own rate limit.
+   */
+  trustedProxies?: number;
   now?: () => number;
+}
+
+export interface RateLimiter {
+  (key: string): { allowed: boolean; retryAfterMs: number };
+  /** How many clients are currently remembered. For tests. */
+  size(): number;
 }
 
 /**
  * Fixed-window limiter for mutating routes. In-process by design: one replica
  * is the deployment shape, and a shared limiter would be a dependency this
  * service does not need yet.
+ *
+ * It forgets a client as soon as their window has closed. Without that it
+ * remembers every client it has ever seen, which is a slow leak on its own and
+ * a fast one against anything that can present a new identity per request.
+ *
+ * The sweep is opportunistic rather than scheduled: it runs at most once per
+ * window, on a request that was arriving anyway. A timer would keep the process
+ * awake and would have to be torn down; this has no lifecycle to get wrong.
  */
-function createRateLimiter(windowMs: number, max: number, now: () => number) {
+export function createRateLimiter(windowMs: number, max: number, now: () => number): RateLimiter {
   const hits = new Map<string, { count: number; resetAt: number }>();
-  return (key: string): { allowed: boolean; retryAfterMs: number } => {
+  let nextSweepAt = now() + windowMs;
+
+  const sweep = (t: number) => {
+    for (const [key, entry] of hits) {
+      if (t >= entry.resetAt) hits.delete(key);
+    }
+    nextSweepAt = t + windowMs;
+  };
+
+  const limiter = (key: string): { allowed: boolean; retryAfterMs: number } => {
     const t = now();
+    if (t >= nextSweepAt) sweep(t);
+
     const entry = hits.get(key);
     if (entry === undefined || t >= entry.resetAt) {
       hits.set(key, { count: 1, resetAt: t + windowMs });
@@ -80,6 +116,9 @@ function createRateLimiter(windowMs: number, max: number, now: () => number) {
     entry.count += 1;
     return { allowed: true, retryAfterMs: 0 };
   };
+
+  limiter.size = () => hits.size;
+  return limiter;
 }
 
 /** Slots as the frontend needs them. Invite tokens are never listed publicly. */
@@ -122,9 +161,9 @@ export function createApp(options: AppOptions): Express {
 
   const app = express();
   app.disable("x-powered-by");
-  app.set("trust proxy", true);
-  app.use(express.json({ limit: "32kb" }));
-
+  // Exactly the hops that are really there. Not `true`, which trusts the
+  // entire forwarding chain including the part the client wrote.
+  app.set("trust proxy", options.trustedProxies ?? 1);
   // Exact-origin CORS. No wildcard, and no credentials: the API is
   // origin-restricted but not cookie-authenticated.
   app.use((req: Request, res: Response, next: NextFunction) => {
@@ -140,6 +179,33 @@ export function createApp(options: AppOptions): Express {
       return;
     }
     next();
+  });
+
+  app.use(express.json({ limit: "32kb" }));
+
+  /**
+   * The body parser's own refusals.
+   *
+   * Both are the client's doing and both used to arrive at the catch-all as an
+   * unhandled error, which answered a bad request with a server error. Neither
+   * carries anything the client needs beyond the fact of the refusal.
+   */
+  app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
+    if (err === null || typeof err !== "object") return next(err);
+    const e = err as { type?: string; status?: number };
+    if (e.type === "entity.too.large") {
+      return res.status(413).json({
+        error: "payload_too_large",
+        message: "That request was too large.",
+      });
+    }
+    if (e.type === "entity.parse.failed" || e.type === "encoding.unsupported") {
+      return res.status(400).json({
+        error: "invalid_request",
+        message: "That request could not be read.",
+      });
+    }
+    return next(err);
   });
 
   // No client may send key material, even by accident. Rejected loudly.
@@ -169,6 +235,22 @@ export function createApp(options: AppOptions): Express {
 
   const badRequest = (res: Response, issues: unknown) =>
     res.status(400).json({ error: "invalid_request", issues });
+
+  /**
+   * The draft id from the path, or null after answering.
+   *
+   * A path parameter is written by whoever followed the link, and draft ids are
+   * a uuid column. An id that is not one reached Postgres, failed the cast, and
+   * came back as a server error: a stranger could turn a mistyped link into a
+   * 500 and a logged exception. Checked here, an unknown id is simply not
+   * found, which is also what it is.
+   */
+  const draftIdOf = (req: Request, res: Response): string | null => {
+    const id = req.params.id;
+    if (typeof id === "string" && isUuid(id)) return id;
+    res.status(404).json({ error: "not_found" });
+    return null;
+  };
 
   /**
    * The chain could not be reached. Not a verdict on the request: an outage
@@ -272,7 +354,9 @@ export function createApp(options: AppOptions): Express {
   // Public read: terms and progress, never invite tokens.
   app.get("/api/drafts/:id", async (req, res, next) => {
     try {
-      const draft = await store.getDraft(req.params.id);
+      const id = draftIdOf(req, res);
+      if (id === null) return;
+      const draft = await store.getDraft(id);
       if (draft === null) return res.status(404).json({ error: "not_found" });
       res.json(publicDraft(draft, false));
     } catch (e) {
@@ -287,7 +371,9 @@ export function createApp(options: AppOptions): Express {
   app.post("/api/drafts/:id/organizer-view", async (req, res, next) => {
     if (!mutate(req, res)) return;
     try {
-      const draft = await store.getDraft(req.params.id);
+      const id = draftIdOf(req, res);
+      if (id === null) return;
+      const draft = await store.getDraft(id);
       if (draft === null) return res.status(404).json({ error: "not_found" });
       const caller = await authenticate(req, res);
       if (caller === null) return;
@@ -317,6 +403,9 @@ export function createApp(options: AppOptions): Express {
   /** What an invited member sees before accepting. Never leaks other tokens. */
   app.get("/api/invites/:token", async (req, res, next) => {
     try {
+      if (!isInviteToken(req.params.token)) {
+        return res.status(404).json({ error: "unknown_invite" });
+      }
       const draft = await store.getDraftByInviteToken(req.params.token);
       if (draft === null) return res.status(404).json({ error: "unknown_invite" });
       const slot = draft.slots.find((s) => s.inviteToken === req.params.token);
@@ -370,7 +459,9 @@ export function createApp(options: AppOptions): Express {
     const parsed = reorderSchema.safeParse(req.body);
     if (!parsed.success) return badRequest(res, parsed.error.issues);
     try {
-      const draft = await store.getDraft(req.params.id);
+      const id = draftIdOf(req, res);
+      if (id === null) return;
+      const draft = await store.getDraft(id);
       if (draft === null) return res.status(404).json({ error: "not_found" });
       const caller = await authenticate(req, res);
       if (caller === null) return;
@@ -380,7 +471,7 @@ export function createApp(options: AppOptions): Express {
       if (draft.status === "created") {
         return res.status(409).json({ error: "already_created", message: "This circle already exists." });
       }
-      const updated = await store.reorderSlots(req.params.id, parsed.data.order);
+      const updated = await store.reorderSlots(id, parsed.data.order);
       if (updated === null) return badRequest(res, "order must list every existing slot exactly once");
       res.json(publicDraft(updated, true));
     } catch (e) {
@@ -393,7 +484,9 @@ export function createApp(options: AppOptions): Express {
     const parsed = markCreatedSchema.safeParse(req.body);
     if (!parsed.success) return badRequest(res, parsed.error.issues);
     try {
-      const draft = await store.getDraft(req.params.id);
+      const id = draftIdOf(req, res);
+      if (id === null) return;
+      const draft = await store.getDraft(id);
       if (draft === null) return res.status(404).json({ error: "not_found" });
       const caller = await authenticate(req, res);
       if (caller === null) return;
@@ -427,11 +520,7 @@ export function createApp(options: AppOptions): Express {
         });
       }
 
-      const updated = await store.markCreated(
-        req.params.id,
-        parsed.data.circleId,
-        parsed.data.txHash,
-      );
+      const updated = await store.markCreated(id, parsed.data.circleId, parsed.data.txHash);
       res.json(publicDraft(updated as CircleDraft, true));
     } catch (e) {
       next(e);
@@ -450,7 +539,9 @@ export function createApp(options: AppOptions): Express {
   app.post("/api/drafts/:id/reconcile", async (req, res, next) => {
     if (!mutate(req, res)) return;
     try {
-      const draft = await store.getDraft(req.params.id);
+      const id = draftIdOf(req, res);
+      if (id === null) return;
+      const draft = await store.getDraft(id);
       if (draft === null) return res.status(404).json({ error: "not_found" });
       const caller = await authenticate(req, res);
       if (caller === null) return;
@@ -468,7 +559,7 @@ export function createApp(options: AppOptions): Express {
         });
       }
 
-      const updated = await store.markCreated(req.params.id, found.circleId, draft.createdTx);
+      const updated = await store.markCreated(id, found.circleId, draft.createdTx);
       res.json(publicDraft(updated as CircleDraft, true));
     } catch (e) {
       next(e);

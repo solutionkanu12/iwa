@@ -117,6 +117,26 @@ export const createDraftSchema = z.object({
 });
 
 /**
+ * A canonical uuid, as the database stores draft and slot ids.
+ *
+ * Checked before any lookup so an id that cannot exist is answered as not
+ * found rather than being handed to Postgres, which rejects the cast and turns
+ * a mistyped link into a server error.
+ */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function isUuid(value: string): boolean {
+  return UUID.test(value);
+}
+
+/** The shape newInviteToken produces: 24 random bytes, base64url. */
+const INVITE_TOKEN = /^[A-Za-z0-9_-]{16,128}$/;
+
+export function isInviteToken(value: string): boolean {
+  return INVITE_TOKEN.test(value);
+}
+
+/**
  * An acceptance carries only public data: the member's commitment and the
  * public x-coordinate of their settlement key. Both are written to the circle
  * contract when it is created. Nothing private is asked for or accepted.
