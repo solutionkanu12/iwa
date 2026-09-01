@@ -377,6 +377,12 @@ export function createApp(options: AppOptions): Express {
       status: dbOk ? "ok" : "degraded",
       database: dbOk ? "up" : "down",
       custody: "none",
+      // Outstanding challenges live in this process and nowhere else, which
+      // means this service must run as exactly one replica. Reported here so
+      // the constraint is observable from outside rather than only true in a
+      // comment: if this says "in-process" and the service is scaled, roughly
+      // half of all organizer actions will fail to authenticate.
+      challenges: "in-process",
       time: new Date(now()).toISOString(),
     });
   });

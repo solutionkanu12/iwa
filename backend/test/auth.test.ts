@@ -303,3 +303,39 @@ describe("challenge hash", () => {
     ).not.toBe(a);
   });
 });
+
+// Outstanding challenges live in this process. Nothing in the code can stop
+// somebody scaling the service, so the constraint is made observable instead:
+// stated at boot, reported by health, and pinned here.
+describe("the single-replica constraint", () => {
+  it("reports where challenges live, so an operator can see it", async () => {
+    const res = await request(app).get("/health").expect(200);
+    expect(res.body.challenges).toBe("in-process");
+  });
+
+  it("does not share challenges between instances, which is why one replica", () => {
+    const first = new ChallengeStore();
+    const second = new ChallengeStore();
+    const issued = first.issue(ORGANIZER, SN_MAIN);
+
+    // The same nonce against another instance is simply unknown to it.
+    expect(second.consume(issued.nonce, ORGANIZER, SN_MAIN)).toEqual({
+      ok: false,
+      reason: "unknown",
+    });
+    // And it is still good on the instance that issued it.
+    expect(first.consume(issued.nonce, ORGANIZER, SN_MAIN).ok).toBe(true);
+  });
+
+  it("loses outstanding challenges on restart, which is safe", () => {
+    const before = new ChallengeStore();
+    const issued = before.issue(ORGANIZER, SN_MAIN);
+    // A restart is a new store. The client asks for another challenge and
+    // continues; nothing is corrupted and nothing is retried wrongly.
+    const after = new ChallengeStore();
+    expect(after.consume(issued.nonce, ORGANIZER, SN_MAIN)).toEqual({
+      ok: false,
+      reason: "unknown",
+    });
+  });
+});

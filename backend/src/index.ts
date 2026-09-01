@@ -28,6 +28,13 @@ async function main(): Promise<void> {
   });
   const server = app.listen(config.port, () => {
     console.log(`iwa-backend listening on ${config.port} (${config.nodeEnv})`);
+    // Said out loud on every boot, because it is an operational constraint that
+    // nothing in the process can enforce. Authentication challenges are held in
+    // memory: a second replica does not share them, so a challenge issued by
+    // one instance cannot be consumed by the other and the organizer sees an
+    // authentication failure they cannot act on. Restarting is safe, since an
+    // outstanding challenge is simply reissued.
+    console.log("challenges are in-process: run exactly one replica of this service");
   });
 
   let timer: NodeJS.Timeout | undefined;
