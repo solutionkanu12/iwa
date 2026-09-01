@@ -103,7 +103,7 @@
 }
 
 /* On the narrowest phones the network tag no longer fits next to the CTA, so
- * it hides too, leaving the essentials: brand and "Enter the circle". */
+ * it hides too, leaving the essentials: brand and "Enter Iwa". */
 @media (max-width: 400px) {
   .net {
     display: none;

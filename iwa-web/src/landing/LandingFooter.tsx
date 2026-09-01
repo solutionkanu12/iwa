@@ -30,7 +30,7 @@ const COLUMNS: { heading: string; links: FooterLink[] }[] = [
     links: [
       { label: "How it works", scrollTo: "how" },
       { label: "Roadmap", href: "/roadmap.html" }, // internal, same site
-      { label: "Enter the circle", inert: true },
+      { label: "Enter Iwa", inert: true },
     ],
   },
   {

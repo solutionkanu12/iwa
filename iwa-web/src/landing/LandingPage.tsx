@@ -13,7 +13,7 @@ import styles from "./LandingPage.module.css";
 // 7 footer, 8 dock (fixed glass).
 export interface LandingPageProps {
   // Opens the same Starknet wallet connect flow the app uses (lib/starknetWallet.ts
-  // connectWallet). Wired to every live "Enter the circle" CTA (nav, hero, dock).
+  // Wired to every live "Enter Iwa" CTA (nav, hero, dock).
   onEnterCircle: () => void;
 }
 

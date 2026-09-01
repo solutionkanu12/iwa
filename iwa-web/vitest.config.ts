@@ -5,6 +5,11 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["src/core/**/*.test.ts", "src/chains/**/*.test.ts", "src/lib/**/*.test.ts"],
+    include: [
+      "src/core/**/*.test.ts",
+      "src/chains/**/*.test.ts",
+      "src/lib/**/*.test.ts",
+      "src/app/**/*.test.ts",
+    ],
   },
 });

@@ -3,7 +3,8 @@ import styles from "./LandingNav.module.css";
 
 // Section 1 of 8: the fixed glass nav. Matched to the prototype's landing nav.
 // "How it works" smooth-scrolls to that section; "Roadmap" goes to the roadmap
-// page. "Enter the circle" opens the real wallet connect flow (onEnterCircle).
+// page. "Enter Iwa" opens the application (onEnterCircle); no wallet is asked
+// for until an action needs one.
 // "Log in" remains a placeholder. The app and its nav are untouched.
 
 // The cowrie glyph, the same lavender mark used elsewhere (inline SVG).
@@ -52,7 +53,7 @@ export function LandingNav({
             onEnterCircle();
           }}
         >
-          Enter the circle
+          Enter Iwa
         </a>
         <span className={styles.gridBtn} aria-hidden="true">
           <span className={styles.gridDots} />

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { circleHref, parseCircleId } from "./appRoute";
+import { parseCircleId } from "./appRoute";
 
-// The circle being viewed belongs in the URL, not in React state. Until the
-// router lands, `/app?circle=<id>` carries it: a reload, a shared link and the
-// hand-off from circle creation all resolve to the same circle.
+// Links in the first phase's query shape are still in the wild. The router
+// reads them and replaces them with the real route, so they must keep parsing
+// exactly as strictly as they did.
 describe("parseCircleId", () => {
   it("reads a circle id from the query string", () => {
     expect(parseCircleId("?circle=7")).toBe(7);
@@ -42,21 +42,3 @@ describe("parseCircleId", () => {
   });
 });
 
-describe("circleHref", () => {
-  it("builds the link a circle is reached by", () => {
-    expect(circleHref(7)).toBe("/app?circle=7");
-  });
-
-  it("round-trips through the parser", () => {
-    for (const id of [1, 2, 31, 4096]) {
-      const href = circleHref(id);
-      expect(parseCircleId(href.slice(href.indexOf("?")))).toBe(id);
-    }
-  });
-
-  it("refuses to build a link to an impossible circle", () => {
-    expect(() => circleHref(0)).toThrow();
-    expect(() => circleHref(-3)).toThrow();
-    expect(() => circleHref(2.5)).toThrow();
-  });
-});

@@ -10,9 +10,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import styles from "./CircleSetup.module.css";
 import { Button } from "../components/Button";
 import { backend, inviteLink, BackendError, type DraftView, type WalletSigner } from "../lib/backend";
-import { connectWallet, currentWallet, disconnectWallet } from "../lib/starknetWallet";
+import { currentWallet } from "../lib/starknetWallet";
 import { create_circle_from_order } from "../lib/iwaStarknet";
-import { circleHref } from "../lib/appRoute";
+import { circlePath, type Route } from "../lib/router";
+import { useWallet } from "../app/WalletProvider";
 import { mergeTokens, moveInOrder, orderOf } from "../lib/draftOrder";
 import { CHAIN_ID, MAX_MEMBERS, MIN_MEMBERS, USDC_DECIMALS, USDC_TOKEN } from "../lib/starknetConfig";
 import { formatUnits, parseUnits } from "../chains/strk20/funding";
@@ -45,8 +46,13 @@ function humanError(e: unknown): string {
   return "Something went wrong. Please try again.";
 }
 
-export function OrganizerCircleView() {
-  const [address, setAddress] = useState<string | null>(null);
+export function OrganizerCircleView({
+  navigate,
+}: {
+  navigate: (to: string | Route) => void;
+}) {
+  const wallet = useWallet();
+  const address = wallet.address;
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -100,11 +106,11 @@ export function OrganizerCircleView() {
   const onConnect = useCallback(
     () =>
       run("Connecting your wallet", async () => {
-        const addr = await connectWallet();
-        setAddress(addr);
+        const addr = await wallet.connect();
+        if (addr === null) return;
         await recoverDraft(addr);
       }),
-    [run, recoverDraft],
+    [run, recoverDraft, wallet],
   );
 
   const potPerRound = useMemo(() => {
@@ -326,7 +332,7 @@ export function OrganizerCircleView() {
         </p>
         <div className={styles.success}>Circle {createdCircleId} created.</div>
         <div className={styles.actions}>
-          <Button onClick={() => window.location.assign(circleHref(createdCircleId))}>
+          <Button onClick={() => navigate(circlePath(createdCircleId))}>
             Go to the circle
           </Button>
         </div>
@@ -593,18 +599,6 @@ export function OrganizerCircleView() {
             {busy && <p className={styles.busy}>{busy}…</p>}
           </section>
 
-          <div className={styles.actions}>
-            <Button
-              variant="ghost"
-              onClick={() => {
-                void disconnectWallet();
-                setAddress(null);
-                setDraft(null);
-              }}
-            >
-              Sign out
-            </Button>
-          </div>
         </>
       )}
     </div>

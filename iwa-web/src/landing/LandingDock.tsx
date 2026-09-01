@@ -42,7 +42,7 @@ export function LandingDock({
             onEnterCircle();
           }}
         >
-          Enter the circle
+          Enter Iwa
         </a>
       </div>
     </div>

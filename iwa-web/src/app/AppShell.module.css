@@ -1,0 +1,441 @@
+/*
+ * Application shell: sidebar on desktop, bottom navigation on mobile.
+ *
+ * Every value comes from styles/tokens.css. No new colours, no new radii, no
+ * new shadows. The sidebar is the same soft lavender surface the rest of Iwa
+ * uses, sitting quietly beside the content rather than framing it.
+ */
+
+.shell {
+  min-height: 100dvh;
+  background: var(--mist);
+  color: var(--ink);
+  display: flex;
+}
+
+/* Ambient orbs, matching the app background the screens already sit on. */
+.blob {
+  position: fixed;
+  border-radius: 50%;
+  filter: blur(60px);
+  opacity: 0.42;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.blob1 {
+  width: 380px;
+  height: 380px;
+  background: var(--lav);
+  top: -120px;
+  right: -80px;
+}
+
+.blob2 {
+  width: 300px;
+  height: 300px;
+  background: var(--lav2);
+  bottom: -100px;
+  left: 40px;
+}
+
+/* --- Sidebar (desktop) --- */
+
+.sidebar {
+  display: none;
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  height: 100dvh;
+  width: 248px;
+  flex: 0 0 248px;
+  padding: 22px 16px;
+  box-sizing: border-box;
+  background: var(--cloud);
+  border-right: 1px solid var(--brd);
+  z-index: 2;
+}
+
+.sidebarInner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 22px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px;
+  text-decoration: none;
+  color: inherit;
+  border-radius: var(--radius-control);
+}
+
+.brand:focus-visible {
+  outline: 2px solid var(--iris);
+  outline-offset: 2px;
+}
+
+.brandName {
+  font-family: var(--font-display);
+  font-size: 22px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.navGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.navLabel {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mut);
+  padding: 14px 12px 6px;
+}
+
+.navItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
+  border: 0;
+  background: transparent;
+  color: var(--mut);
+  font-family: var(--font-body);
+  font-size: 15px;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.navItem:hover {
+  background: var(--mist);
+  color: var(--ink);
+}
+
+.navItem:focus-visible {
+  outline: 2px solid var(--iris);
+  outline-offset: 1px;
+}
+
+.navItemActive {
+  background: var(--mist);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* The active marker: a soft lavender bead, not a hard rail. */
+.navDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: transparent;
+  flex: 0 0 6px;
+}
+
+.navItemActive .navDot {
+  background: var(--iris);
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+/* --- Wallet / account --- */
+
+.account {
+  border-top: 1px solid var(--brd);
+  padding-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.accountRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius-control);
+  background: var(--mist);
+}
+
+.walletDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--mint);
+  flex: 0 0 8px;
+}
+
+.walletAddr {
+  font-family: var(--font-data);
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.accountAction {
+  border: 0;
+  background: transparent;
+  color: var(--mut);
+  font-family: var(--font-body);
+  font-size: 13px;
+  text-align: left;
+  padding: 6px 12px;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+
+.accountAction:hover {
+  color: var(--ink);
+  background: var(--mist);
+}
+
+.accountAction:focus-visible {
+  outline: 2px solid var(--iris);
+  outline-offset: 1px;
+}
+
+.connectBtn {
+  width: 100%;
+  padding: 11px 14px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--iris);
+  color: #fff;
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 140ms ease;
+}
+
+.connectBtn:hover:not(:disabled) {
+  background: var(--iris-dk);
+}
+
+.connectBtn:disabled {
+  opacity: 0.62;
+  cursor: default;
+}
+
+.connectBtn:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.walletError {
+  font-size: 12px;
+  color: var(--mut);
+  padding: 0 12px;
+}
+
+/* --- Content --- */
+
+.main {
+  flex: 1 1 auto;
+  min-width: 0;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: center;
+  /* Room for the mobile bar, plus the home indicator on phones that have one. */
+  padding: 18px 16px calc(84px + env(safe-area-inset-bottom, 0px));
+  box-sizing: border-box;
+}
+
+.content {
+  width: 100%;
+  max-width: 560px;
+}
+
+/* --- Mobile top bar: brand plus the wallet control --- */
+
+.mobileBar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--glass-fill);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border-bottom: 1px solid var(--brd);
+}
+
+.mobileBrand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.mobileConnect {
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--iris);
+  color: #fff;
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mobileConnect:disabled {
+  opacity: 0.62;
+}
+
+.mobileAddr {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--brd);
+  background: var(--cloud);
+  font-family: var(--font-data);
+  font-size: 12px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+/* --- Bottom navigation (mobile) --- */
+
+.bottomNav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  display: flex;
+  justify-content: space-around;
+  align-items: stretch;
+  gap: 2px;
+  padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+  background: var(--glass-fill);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border-top: 1px solid var(--brd);
+}
+
+.bottomTab {
+  flex: 1 1 0;
+  min-width: 0;
+  /* Comfortably tappable at the smallest supported width. */
+  min-height: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 6px 2px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--mut);
+  font-family: var(--font-body);
+  font-size: 11px;
+  line-height: 1.2;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.bottomTab:focus-visible {
+  outline: 2px solid var(--iris);
+  outline-offset: -2px;
+}
+
+.bottomTabActive {
+  color: var(--iris);
+  font-weight: 600;
+}
+
+.bottomDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.bottomTabActive .bottomDot {
+  background: var(--iris);
+}
+
+/* --- Not found --- */
+
+.missing {
+  background: var(--cloud);
+  border: 1px solid var(--brd);
+  border-radius: var(--radius-island);
+  box-shadow: var(--shadow-soft);
+  padding: 28px 22px;
+  text-align: center;
+}
+
+.missingTitle {
+  font-family: var(--font-display);
+  font-size: 20px;
+  margin: 0 0 8px;
+  color: var(--ink);
+}
+
+.missingText {
+  font-size: 14px;
+  color: var(--mut);
+  margin: 0 0 18px;
+}
+
+/* --- Breakpoints --- */
+
+@media (min-width: 900px) {
+  .sidebar {
+    display: block;
+  }
+
+  .mobileBar,
+  .bottomNav {
+    display: none;
+  }
+
+  .main {
+    padding: 34px 32px 48px;
+    justify-content: flex-start;
+  }
+
+  .content {
+    max-width: 640px;
+    margin: 0 auto;
+  }
+}
+
+@media (min-width: 1400px) {
+  .content {
+    max-width: 720px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .navItem {
+    transition: none;
+  }
+}

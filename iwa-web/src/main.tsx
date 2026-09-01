@@ -1,71 +1,46 @@
 import "./lib/polyfills.ts";
-import { StrictMode, useCallback, useState } from "react";
+import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles/global.css";
 import { App } from "./App.tsx";
 import { LandingPage } from "./landing/LandingPage.tsx";
 import { Strk20ConsoleView } from "./screens/Strk20ConsoleView.tsx";
-import { OrganizerCircleView } from "./screens/OrganizerCircleView.tsx";
 import { AcceptInviteView } from "./screens/AcceptInviteView.tsx";
-import { connectWallet, WalletCancelledError } from "./lib/starknetWallet.ts";
-import { parseCircleId } from "./lib/appRoute.ts";
+import { WalletProvider } from "./app/WalletProvider.tsx";
+import { useRoute } from "./lib/router.ts";
 
-// The single entry for both the marketing landing page and the app (Circle /
-// Browse / My standing), so a wallet connected on landing carries straight
-// into the app with no second connect step: same JS module, same
-// wallet connection, same connectWallet() from lib/starknetWallet.ts.
+// The single entry for the marketing landing page and the application alike,
+// so a wallet connected in one carries into the other with no second prompt.
 //
-// "/" shows the landing page. "/app" shows the app; if the visitor lands there
-// directly (no prior connect), the app's own connect gate takes over exactly
-// as before. Litepaper and roadmap remain separate, untouched entries.
-// The operator console is an internal tool: it shows class hashes, funding
-// figures and dry-build internals. It sends nothing without a wallet and holds
-// no secrets, but it is not something a visitor should stumble into. It is on
-// in development, and in production only when explicitly switched on.
+// Three things live outside the application shell, each for its own reason. The
+// landing page has its own navigation and its own design. An invitation is an
+// external entry point, opened by people who may never have seen Iwa. And the
+// operator console is internal tooling.
+//
+// The operator console shows class hashes, funding figures and dry-build
+// internals. It sends nothing without a wallet and holds no secrets, but it is
+// not something a visitor should land on: on in development, and in production
+// only when explicitly switched on. Because the flag resolves at build time, a
+// default production build drops the console entirely rather than hiding it.
 const OPERATOR_CONSOLE_ENABLED =
   import.meta.env.DEV || import.meta.env.VITE_ENABLE_OPERATOR_CONSOLE === "true";
 
 function AppRoot() {
-  const [view, setView] = useState<"landing" | "app" | "strk20" | "start" | "invite">(() => {
-    const path = window.location.pathname;
-    if (path.startsWith("/strk20")) return OPERATOR_CONSOLE_ENABLED ? "strk20" : "landing";
-    if (path.startsWith("/start")) return "start";
-    if (path.startsWith("/invite/")) return "invite";
-    return path.startsWith("/app") ? "app" : "landing";
-  });
-  // The invitation token is the rest of the path. It is a coordination
-  // pointer, never a credential: a member's identity comes from their wallet.
-  const inviteToken = window.location.pathname.startsWith("/invite/")
-    ? decodeURIComponent(window.location.pathname.slice("/invite/".length))
-    : "";
-  // Which circle the app opens, carried in the URL so a reload or a shared
-  // link lands on the same one. Absent or malformed means "none chosen", and
-  // the app asks rather than substituting a circle of its own.
-  const circleId = parseCircleId(window.location.search);
-  const [address, setAddress] = useState<string | null>(null);
+  const { route, navigate } = useRoute();
 
-  const onEnterCircle = useCallback(async () => {
-    try {
-      const addr = await connectWallet();
-      setAddress(addr);
-      setView("app");
-      window.history.pushState(null, "", "/app");
-    } catch (err) {
-      // A cancelled modal or declined connection: stay on the landing page,
-      // no broken state.
-      if (!(err instanceof WalletCancelledError)) {
-        console.warn("wallet connect failed", err);
-      }
-    }
-  }, []);
-
-  // Operator console for the STRK20 mainnet run. Deliberately a separate
-  // route: it does not touch the existing landing or app UI.
-  if (view === "strk20" && OPERATOR_CONSOLE_ENABLED) return <Strk20ConsoleView />;
-  if (view === "start") return <OrganizerCircleView />;
-  if (view === "invite") return <AcceptInviteView token={inviteToken} />;
-  if (view === "app") return <App address={address} circleId={circleId} />;
-  return <LandingPage onEnterCircle={onEnterCircle} />;
+  if (route.name === "landing") {
+    return <LandingPage onEnterCircle={() => navigate({ name: "home" })} />;
+  }
+  if (route.name === "invite") {
+    return <AcceptInviteView token={route.token} />;
+  }
+  if (route.name === "console") {
+    // A disabled console is not a route: it falls through to the application
+    // rather than rendering a shell around nothing.
+    if (OPERATOR_CONSOLE_ENABLED) return <Strk20ConsoleView />;
+    return <App route={{ name: "notFound", path: "/strk20" }} navigate={navigate} />;
+  }
+  return <App route={route} navigate={navigate} />;
 }
 
 const rootEl = document.getElementById("root");
@@ -73,6 +48,8 @@ if (!rootEl) throw new Error("root element not found");
 
 createRoot(rootEl).render(
   <StrictMode>
-    <AppRoot />
+    <WalletProvider>
+      <AppRoot />
+    </WalletProvider>
   </StrictMode>,
 );

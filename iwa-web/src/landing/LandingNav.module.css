@@ -110,7 +110,7 @@
 
 /* Mobile: the secondary links, "Log in", and the decorative grid button don't
  * fit alongside the brand and the primary CTA, so they hide. The essentials
- * (glyph, brand, "Enter the circle") stay on one row, no wrap or overflow. */
+ * (glyph, brand, "Enter Iwa") stay on one row, no wrap or overflow. */
 @media (max-width: 640px) {
   .link {
     display: none;

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   classifyContractError,
   collect_pot,
@@ -9,37 +9,33 @@ import {
   pay_contribution,
 } from "../lib/iwaStarknet.ts";
 import {
-  connectWallet,
-  deriveMemberCommitment,
-  disconnectWallet,
-  WalletCancelledError,
-} from "../lib/starknetWallet.ts";
-import type { MemberCommitment } from "../lib/starknetWallet.ts";
-import {
   tokenSymbol,
   tokenDecimals,
 } from "../lib/starknetConfig.ts";
 import { formatAmount } from "../lib/amount.ts";
-import { circleHref } from "../lib/appRoute.ts";
+import type { Route } from "../lib/router.ts";
+import { useWallet } from "../app/WalletProvider.tsx";
+import { ConnectPrompt } from "./ConnectPrompt.tsx";
 import { generateProof } from "../lib/zk.ts";
 import type { SnarkProof } from "../lib/convert.ts";
 import type { Circle, Reputation } from "../lib/types.ts";
 import { Island } from "../components/Island.tsx";
 import { Button } from "../components/Button.tsx";
 import { ProveView, CLAIMS } from "./ProveView.tsx";
-import { BrowseCirclesView } from "./BrowseCirclesView.tsx";
 import { canJoin } from "../chains/strk20/circleState.ts";
 import styles from "./CircleView.module.css";
 
-// Flow 1 (the circle view) and Flow 2 (contribute and collect), matched to
-// design/iwa-prototype.html. Connect gate first (real Stellar Wallets Kit
-// connect plus member commitment), then the circle screen from mocked
-// get_circle. Contribute opens a confirm step that calls pay_contribution;
-// collect calls collect_pot. Connect and the commitment are live; the rest of
-// the chain access still runs on the mocked lib seam this stage.
-
-/** Where a circle is started: the invite flow, which reserves each place. */
-const START_A_CIRCLE = "/start";
+// One circle: its seats, its round, and what you can do about it.
+//
+// The circle comes from the route and its contents from the chain, so this
+// screen never chooses which circle to show and never holds that choice. It
+// renders for anyone: terms, seats and round are public, and reading them needs
+// no wallet. A connected wallet adds only what is yours, which is why the
+// member identity is derived here rather than at the door.
+//
+// Within the circle it still has its own steps — contribute, your standing,
+// prove — because those belong to this circle and not to the application's
+// navigation, which the shell owns.
 
 const PRIVACY_LINE =
   "Your contributions are private. Only your good standing can be proven, and only by you.";
@@ -110,47 +106,6 @@ function short(s: string): string {
 // members[(round - 1) % size]. It is your turn when that seat is yours.
 function collectorSlotOf(circle: Circle): number {
   return (circle.current_round - 1) % circle.size;
-}
-
-// The small cowrie glyph used as the app mark.
-function NavGlyph() {
-  return (
-    <svg width="22" height="24" viewBox="0 0 60 70" aria-hidden="true">
-      <ellipse cx="30" cy="36" rx="20" ry="26" fill="#B6A6F2" />
-      <ellipse cx="25" cy="29" rx="11" ry="15" fill="#CECBF6" opacity=".8" />
-      <path d="M30 12C34 30 34 42 30 60C26 42 26 30 30 12Z" fill="#F6F4FC" />
-    </svg>
-  );
-}
-
-// The cowrie seal (inline SVG for now, replaced with a polished asset later).
-function CowrieSeal() {
-  return (
-    <svg
-      className={styles.cowrieSvg}
-      viewBox="-24 -20 248 264"
-      width="100%"
-      role="img"
-      aria-label="Cowrie seal"
-    >
-      <ellipse cx="108" cy="132" rx="58" ry="74" fill="#AFA9EC" opacity=".55" />
-      <ellipse cx="100" cy="110" rx="62" ry="80" fill="#B6A6F2" />
-      <ellipse cx="86" cy="90" rx="38" ry="52" fill="#CECBF6" opacity=".75" />
-      <path d="M100 40C110 80 110 140 100 180C90 140 90 80 100 40Z" fill="#F6F4FC" />
-      <g stroke="#8d80c4" strokeWidth="2.4" strokeLinecap="round" opacity=".7">
-        <line x1="93" y1="66" x2="85" y2="66" />
-        <line x1="107" y1="66" x2="115" y2="66" />
-        <line x1="92" y1="86" x2="83" y2="86" />
-        <line x1="108" y1="86" x2="117" y2="86" />
-        <line x1="91" y1="108" x2="82" y2="108" />
-        <line x1="109" y1="108" x2="118" y2="108" />
-        <line x1="92" y1="130" x2="83" y2="130" />
-        <line x1="108" y1="130" x2="117" y2="130" />
-        <line x1="93" y1="152" x2="85" y2="152" />
-        <line x1="107" y1="152" x2="115" y2="152" />
-      </g>
-    </svg>
-  );
 }
 
 function LockIcon() {
@@ -268,174 +223,6 @@ function StandingCard({
   );
 }
 
-function AppNav({
-  address,
-  section,
-  onCircle,
-  onBrowse,
-  onStanding,
-  onCreate,
-  onDisconnect,
-}: {
-  address: string | null;
-  section: "circle" | "browse" | "standing" | "create";
-  onCircle: () => void;
-  onBrowse: () => void;
-  onStanding: () => void;
-  onCreate: () => void;
-  onDisconnect: () => void;
-}) {
-  const enabled = !!address;
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  // Close the wallet menu when clicking anywhere outside it.
-  useEffect(() => {
-    if (!menuOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [menuOpen]);
-
-  return (
-    <>
-      <Island className={styles.appNav}>
-        <div className={styles.navL}>
-          <NavGlyph />
-          <span className={styles.nm}>Iwa</span>
-        </div>
-        <div className={styles.tabs} role="tablist" aria-label="App sections">
-          <button
-            type="button"
-            className={`${styles.tab} ${section === "circle" ? styles.tabActive : ""}`}
-            role="tab"
-            aria-selected={section === "circle"}
-            onClick={onCircle}
-            disabled={!enabled}
-          >
-            Circle
-          </button>
-          <button
-            type="button"
-            className={`${styles.tab} ${section === "browse" ? styles.tabActive : ""}`}
-            role="tab"
-            aria-selected={section === "browse"}
-            onClick={onBrowse}
-            disabled={!enabled}
-          >
-            Browse
-          </button>
-          <button
-            type="button"
-            className={`${styles.tab} ${section === "standing" ? styles.tabActive : ""}`}
-            role="tab"
-            aria-selected={section === "standing"}
-            onClick={onStanding}
-            disabled={!enabled}
-          >
-            My standing
-          </button>
-          <button
-            type="button"
-            className={`${styles.tab} ${section === "create" ? styles.tabActive : ""}`}
-            role="tab"
-            aria-selected={section === "create"}
-            onClick={onCreate}
-            disabled={!enabled}
-          >
-            New circle
-          </button>
-        </div>
-        <div className={styles.walletSlot}>
-          {address ? (
-            <div className={styles.walletMenu} ref={menuRef}>
-              <button
-                type="button"
-                className={styles.wallet}
-                onClick={() => setMenuOpen((v) => !v)}
-                aria-haspopup="menu"
-                aria-expanded={menuOpen}
-              >
-                <span className={styles.walletDot} />
-                <span className={styles.walletAddr}>{short(address)}</span>
-              </button>
-              {menuOpen ? (
-                <div className={styles.dropdown} role="menu">
-                  <button
-                    type="button"
-                    className={styles.dropdownItem}
-                    role="menuitem"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      onDisconnect();
-                    }}
-                  >
-                    Disconnect
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-      </Island>
-
-      {/* Mobile-only bottom tab bar (native-app style). Hidden on desktop via
-          CSS; a separate block from the top bar's tabs above, which are
-          untouched and still render (hidden on mobile by CSS instead). */}
-      <nav
-        className={styles.bottomNav}
-        role="tablist"
-        aria-label="App sections"
-      >
-        <button
-          type="button"
-          className={`${styles.bottomTab} ${section === "circle" ? styles.bottomTabActive : ""}`}
-          role="tab"
-          aria-selected={section === "circle"}
-          onClick={onCircle}
-          disabled={!enabled}
-        >
-          Circle
-        </button>
-        <button
-          type="button"
-          className={`${styles.bottomTab} ${section === "browse" ? styles.bottomTabActive : ""}`}
-          role="tab"
-          aria-selected={section === "browse"}
-          onClick={onBrowse}
-          disabled={!enabled}
-        >
-          Browse
-        </button>
-        <button
-          type="button"
-          className={`${styles.bottomTab} ${section === "standing" ? styles.bottomTabActive : ""}`}
-          role="tab"
-          aria-selected={section === "standing"}
-          onClick={onStanding}
-          disabled={!enabled}
-        >
-          My standing
-        </button>
-        <button
-          type="button"
-          className={`${styles.bottomTab} ${section === "create" ? styles.bottomTabActive : ""}`}
-          role="tab"
-          aria-selected={section === "create"}
-          onClick={onCreate}
-          disabled={!enabled}
-        >
-          New circle
-        </button>
-      </nav>
-    </>
-  );
-}
-
 type Screen =
   | "circle"
   | "contribute"
@@ -446,25 +233,19 @@ type Screen =
 type Status = "idle" | "working" | "done";
 
 export function CircleView({
-  initialAddress = null,
-  circleId = null,
+  circleId,
+  navigate,
 }: {
-  // Set when the wallet was already connected before this screen mounted
-  // (the visitor connected from the landing page). Skips the connect gate
-  // and picks up exactly where handleConnect would have left off.
-  initialAddress?: string | null;
-  // The circle named in the URL. Null means none was named, and the app opens
-  // Browse to ask rather than choosing a circle on the visitor's behalf.
-  circleId?: number | null;
-} = {}) {
-  const [address, setAddress] = useState<string | null>(null);
-  const [commitment, setCommitment] = useState<MemberCommitment | null>(null);
-  const [connecting, setConnecting] = useState(false);
+  /** The circle this screen shows. Comes from the route, never from state. */
+  circleId: number;
+  navigate: (to: string | Route) => void;
+}) {
+  const { ensureIdentity } = useWallet();
+  const { address, identity: commitment } = useWallet();
+  const [loading, setLoading] = useState(true);
   const [circle, setCircle] = useState<Circle | null>(null);
 
-  // With no circle named in the URL there is nothing to open, so the app asks
-  // which circle rather than picking one.
-  const [screen, setScreen] = useState<Screen>(circleId === null ? "browse" : "circle");
+  const [screen, setScreen] = useState<Screen>("circle");
   const [contribStatus, setContribStatus] = useState<Status>("idle");
   const [contribTx, setContribTx] = useState<string | null>(null);
   const [contribError, setContribError] = useState<string | null>(null);
@@ -497,93 +278,44 @@ export function CircleView({
     [],
   );
 
-  // Everything that happens once we have an address, whether it came from a
-  // connect click here or was already connected before this screen mounted.
-  const finishConnect = useCallback(
-    async (addr: string) => {
-      // Derive the member commitment first so the circle read can flag your
-      // slot and your streak. If the wallet cannot sign, the reads still run
-      // without it and the app stays usable.
-      let mc: MemberCommitment | null = null;
-      try {
-        mc = await deriveMemberCommitment(addr);
-        setCommitment(mc);
-      } catch (err) {
-        console.warn("member commitment unavailable", err);
-      }
-
-      // Real read: the circle state, composed from the deployed savings
-      // contract. Only the circle the URL named: with none named there is
-      // nothing to read, and Browse asks instead of a circle being guessed.
-      if (circleId === null) {
-        setConnecting(false);
-        return;
-      }
-      try {
-        const c = await get_circle(circleId, mc?.commitmentBytes);
-        setCircle(c);
-        await loadPaidStatus(c, mc?.commitmentBytes);
-      } catch (err) {
-        console.warn("circle read failed", err);
-      } finally {
-        setConnecting(false);
-      }
-    },
-    [loadPaidStatus, circleId],
-  );
-
-  const handleConnect = useCallback(async () => {
-    setConnecting(true);
-    let addr: string;
-    try {
-      addr = await connectWallet();
-    } catch (err) {
-      // A cancelled modal is expected: stay on the connect gate, no crash.
-      if (!(err instanceof WalletCancelledError)) {
-        console.warn("wallet connect failed", err);
-      }
-      setConnecting(false);
-      return;
-    }
-    setAddress(addr);
-    await finishConnect(addr);
-  }, [finishConnect]);
-
-  // Picked up an already-connected wallet from the landing page: same
-  // connectWallet() seam, already run there, so there is no second connect
-  // prompt here. Runs once.
-  const pickedUpInitialAddress = useRef(false);
+  // Loads the circle named by the route. Runs for everyone: the terms, the
+  // seats and the round are public. A connected wallet additionally marks
+  // which seat is yours, and that needs the member identity, so it is derived
+  // here and nowhere earlier.
   useEffect(() => {
-    if (!initialAddress || pickedUpInitialAddress.current) return;
-    pickedUpInitialAddress.current = true;
-    setConnecting(true);
-    setAddress(initialAddress);
-    void finishConnect(initialAddress);
-  }, [initialAddress, finishConnect]);
-
-  const handleDisconnect = useCallback(async () => {
-    await disconnectWallet();
-    // Clear every piece of per-wallet state so a newly connected wallet is
-    // evaluated fresh, with no stale membership, commitment, or paid status.
-    setAddress(null);
-    setCommitment(null);
+    let live = true;
+    setLoading(true);
     setCircle(null);
-    setConnecting(false);
     setScreen("circle");
+    setReputation(null);
+    setJoinStatus("idle");
+    setJoinTx(null);
+    setJoinError(null);
     setContribStatus("idle");
     setContribTx(null);
     setContribError(null);
-    setContribOnTime(true);
     setAlreadyPaid(false);
     setCollectStatus("idle");
     setCollectTx(null);
     setCollectError(null);
-    setCollectAmount(0);
-    setJoinStatus("idle");
-    setJoinTx(null);
-    setJoinError(null);
-    setReputation(null);
-  }, []);
+    void (async () => {
+      const mine = address === null ? null : await ensureIdentity();
+      if (!live) return;
+      try {
+        const c = await get_circle(circleId, mine?.commitmentBytes);
+        if (!live) return;
+        setCircle(c);
+        await loadPaidStatus(c, mine?.commitmentBytes);
+      } catch (err) {
+        console.warn("circle read failed", err);
+      } finally {
+        if (live) setLoading(false);
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, [circleId, address, ensureIdentity, loadPaidStatus]);
 
   const openContribute = useCallback(() => {
     setContribStatus("idle");
@@ -637,53 +369,16 @@ export function CircleView({
 
   const goStanding = useCallback(async () => {
     setScreen("standing");
-    if (reputation) return;
-    // Real read: your reputation for this circle. Needs your commitment; without
-    // it (wallet could not sign) show an all-zero standing rather than crash.
-    if (!circle || !commitment) {
+    if (reputation !== null) return;
+    if (circle === null || commitment === null) {
       setReputation({ completedCycles: 0, onTimeRate: 0, defaultCount: 0 });
       return;
     }
-    const r = await get_reputation(circle.id, commitment.commitmentBytes);
-    setReputation(r);
+    setReputation(await get_reputation(circle.id, commitment.commitmentBytes));
   }, [reputation, circle, commitment]);
 
   const goProve = useCallback(() => setScreen("prove"), []);
   const backToStanding = useCallback(() => setScreen("standing"), []);
-  // Starting a circle is the invite flow at /start: places are reserved for
-  // named people before the circle exists, so there is no separate create form
-  // to duplicate here. A plain navigation until the app routes properly.
-  const goCreate = useCallback(() => window.location.assign(START_A_CIRCLE), []);
-  const goBrowse = useCallback(() => setScreen("browse"), []);
-
-  // Load and switch to a circle by id (used after creating one). Resets the
-  // transient per-circle state so nothing carries over from another circle.
-  const goToCircle = useCallback(
-    async (id: number) => {
-      setScreen("circle");
-      setJoinStatus("idle");
-      setJoinTx(null);
-      setJoinError(null);
-      setContribStatus("idle");
-      setContribTx(null);
-      setContribError(null);
-      setCollectStatus("idle");
-      setCollectTx(null);
-      setCollectError(null);
-      setReputation(null);
-      // The circle goes into the URL, so a reload comes back to this circle
-      // and the link can be shared.
-      window.history.pushState(null, "", circleHref(id));
-      try {
-        const c = await get_circle(id, commitment?.commitmentBytes);
-        setCircle(c);
-        await loadPaidStatus(c, commitment?.commitmentBytes);
-      } catch (err) {
-        console.warn("circle read failed", err);
-      }
-    },
-    [commitment, loadPaidStatus],
-  );
 
   const pay = useCallback(async () => {
     if (!circle || !commitment || !address) return;
@@ -734,31 +429,9 @@ export function CircleView({
   }, [circle, commitment, address]);
 
   let body;
-  if (!address) {
-    body = (
-      <Island className={`${styles.card} ${styles.cardCenter}`}>
-        <div className={styles.seal}>
-          <CowrieSeal />
-        </div>
-        <h2 className={`${styles.h2} ${styles.connectH2}`}>Join the circle</h2>
-        <p className={styles.connectLede}>
-          Connect your Starknet wallet to see the circle and claim your spot.
-        </p>
-        <div className={styles.stack}>
-          <Button onClick={handleConnect} disabled={connecting}>
-            {connecting ? "Connecting" : "Connect wallet"}
-          </Button>
-        </div>
-        <p className={`${styles.mono} ${styles.connectNote}`}>
-          Starknet mainnet · private contributions
-        </p>
-      </Island>
-    );
-  } else if (screen === "browse") {
-    // Discovery does not depend on the demo circle, so it renders before the
-    // circle-loading gate.
-    body = <BrowseCirclesView onView={goToCircle} />;
-  } else if (!circle && connecting) {
+  if (false) {
+    body = null;
+  } else if (!circle && loading) {
     body = (
       <Island className={styles.card}>
         <h2 className={styles.h2}>Loading your circle</h2>
@@ -777,7 +450,7 @@ export function CircleView({
             : `Circle ${circleId} could not be read from Starknet.`}
         </p>
         <div className={styles.stack}>
-          <Button onClick={goBrowse}>Browse circles</Button>
+          <Button onClick={() => navigate({ name: "explore" })}>Browse circles</Button>
         </div>
       </Island>
     );
@@ -954,12 +627,12 @@ export function CircleView({
               {formatAmount(circle.pot, decimals)} {sym}
             </span>
           </div>
-          <div className={styles.row}>
-            <span className={styles.k}>Your streak</span>
-            <span className={styles.v}>
-              {circle.yourStreak} cycles, always on time
-            </span>
-          </div>
+          {circle.youJoined ? (
+            <div className={styles.row}>
+              <span className={styles.k}>Your place</span>
+              <span className={styles.v}>You are a member of this circle</span>
+            </div>
+          ) : null}
         </div>
 
         <div className={styles.promise}>
@@ -967,7 +640,19 @@ export function CircleView({
           <p className={styles.promiseText}>{PRIVACY_LINE}</p>
         </div>
 
+        {address === null ? (
+          <ConnectPrompt
+            title="Connect to take part"
+            reason="Anyone can read a circle. Joining, contributing and seeing your own standing need your wallet."
+          />
+        ) : null}
+
         <div className={styles.stack}>
+          {address !== null && circle.youJoined ? (
+            <Button variant="ghost" onClick={() => void goStanding()}>
+              Your standing in this circle
+            </Button>
+          ) : null}
           {showJoin && joinStatus !== "done" ? (
             <Button
               onClick={join}
@@ -1061,26 +746,8 @@ export function CircleView({
     );
   }
 
-  const section: "circle" | "browse" | "standing" | "create" =
-    screen === "browse"
-      ? "browse"
-      : screen === "create"
-        ? "create"
-        : screen === "standing" || screen === "prove"
-          ? "standing"
-          : "circle";
-
   return (
     <>
-      <AppNav
-        address={address}
-        section={section}
-        onCircle={backToCircle}
-        onBrowse={goBrowse}
-        onStanding={goStanding}
-        onCreate={goCreate}
-        onDisconnect={handleDisconnect}
-      />
       {body}
       <p className={`${styles.mono} ${styles.protoNote}`}>
         Live on Starknet mainnet · contributions settle privately

@@ -132,7 +132,7 @@ export function LandingHero({
               <path d="M9 12l2 2 4-4" />
               <circle cx="12" cy="12" r="9" />
             </svg>
-            Enter the circle
+            Enter Iwa
           </a>
         </div>
     </section>
