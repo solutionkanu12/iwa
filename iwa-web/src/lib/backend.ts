@@ -31,17 +31,22 @@ export interface DraftSlotView {
   slotId: string;
   slotIndex: number;
   accepted: boolean;
-  memberRef: string | null;
-  authPublicKey: string | null;
-  acceptedAt: string | null;
-  /** Present only when the organizer reads their own draft. */
+  /**
+   * The next four are the organizer's own coordination data and reach only
+   * them. The public view of a draft carries the terms and the progress, so a
+   * stranger holding a draft link never receives the set of people in it.
+   */
+  memberRef?: string | null;
+  authPublicKey?: string | null;
+  acceptedAt?: string | null;
   inviteToken?: string;
 }
 
 export interface DraftView {
   id: string;
   chainId: string;
-  organizerAddress: string;
+  /** Organizer view only. */
+  organizerAddress?: string;
   token: string;
   contributionAmount: string;
   cadenceSeconds: number;
@@ -49,7 +54,8 @@ export interface DraftView {
   memberCount: number;
   status: "draft" | "ready" | "created" | "abandoned";
   circleId: number | null;
-  createdTx: string | null;
+  /** Organizer view only. */
+  createdTx?: string | null;
   createdAt: string;
   acceptedCount: number;
   slots: DraftSlotView[];

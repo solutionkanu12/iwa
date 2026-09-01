@@ -14,7 +14,7 @@ import { currentWallet } from "../lib/starknetWallet";
 import { create_circle_from_order } from "../lib/iwaStarknet";
 import { circlePath, type Route } from "../lib/router";
 import { useWallet } from "../app/WalletProvider";
-import { mergeTokens, moveInOrder, orderOf } from "../lib/draftOrder";
+import { mergePrivate, moveInOrder, orderOf } from "../lib/draftOrder";
 import { CHAIN_ID, MAX_MEMBERS, MIN_MEMBERS, USDC_DECIMALS, USDC_TOKEN } from "../lib/starknetConfig";
 import { formatUnits, parseUnits } from "../chains/strk20/funding";
 
@@ -165,15 +165,9 @@ export function OrganizerCircleView({
         .then((fresh) => {
           setDraft((current) => {
             if (current === null || current.id !== fresh.id) return current;
-            // The public view carries no invite links, so each place keeps the
-            // link the organizer already holds. Matched by slot id: matching by
-            // position would hand a place somebody else's link the moment the
-            // order changed.
-            const tokenBySlot = new Map(current.slots.map((s) => [s.slotId, s.inviteToken]));
-            return {
-              ...fresh,
-              slots: fresh.slots.map((s) => ({ ...s, inviteToken: tokenBySlot.get(s.slotId) })),
-            };
+            // The public view answers with progress only, so the organizer's
+            // own fields are carried across from what they already hold.
+            return mergePrivate(fresh, current);
           });
         })
         .catch(() => {
@@ -239,7 +233,7 @@ export function OrganizerCircleView({
         // The saved order comes back from the service. Only once it has is the
         // local arrangement dropped, so a refusal leaves the organizer looking
         // at what they arranged rather than at a change that never happened.
-        setDraft((current) => mergeTokens(updated, current));
+        setDraft((current) => mergePrivate(updated, current));
         setPendingOrder(null);
       }),
     [run, draft, address, pendingOrder],
@@ -288,7 +282,7 @@ export function OrganizerCircleView({
             txHash,
             walletSigner(),
           );
-          setDraft((current) => mergeTokens(updated, current));
+          setDraft((current) => mergePrivate(updated, current));
           setUnrecorded(null);
         } catch (e) {
           // The circle is real either way. Say what is true, and leave a way to
@@ -313,7 +307,7 @@ export function OrganizerCircleView({
       run("Finding your circle on Starknet", async () => {
         if (draft === null || address === null) return;
         const updated = await backend.reconcile(draft.id, address, walletSigner());
-        setDraft((current) => mergeTokens(updated, current));
+        setDraft((current) => mergePrivate(updated, current));
         if (updated.circleId !== null) setCreatedCircleId(updated.circleId);
         setUnrecorded(null);
       }),

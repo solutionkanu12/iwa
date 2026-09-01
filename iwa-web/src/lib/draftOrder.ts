@@ -23,21 +23,38 @@ export function orderOf(draft: DraftView | null): string[] {
 }
 
 /**
- * Carries invite links from the draft in hand onto a fresh response.
+ * Carries the organizer-only fields from the draft in hand onto a fresh
+ * response.
  *
- * The public draft view has no links in it, so a poll would otherwise blank
- * them. A link the service did supply always wins: it is the authority, and
- * the local copy is only a cache of what it last said.
+ * The public draft view answers with the terms and the progress and nothing
+ * else: no invite link, and no member commitment. That is deliberate, because
+ * the id travels in a link and a stranger holding it should not be handed the
+ * set of people in the circle. It does mean a poll returns less than the
+ * organizer already has, and blanking those fields would leave them unable to
+ * create the circle they just filled.
+ *
+ * So the poll keeps them, matched by slot id. Never by position: a position is
+ * renumbered by every reorder, and matching on it is exactly how a link ends up
+ * attached to the wrong person.
+ *
+ * Anything the service did supply wins. It is the authority, and what is held
+ * here is only a cache of what it last said.
  */
-export function mergeTokens(fresh: DraftView, current: DraftView | null): DraftView {
+export function mergePrivate(fresh: DraftView, current: DraftView | null): DraftView {
   if (current === null) return fresh;
-  const tokenBySlot = new Map(current.slots.map((s) => [s.slotId, s.inviteToken]));
+  const held = new Map(current.slots.map((s) => [s.slotId, s]));
   return {
     ...fresh,
-    slots: fresh.slots.map((s) => ({
-      ...s,
-      inviteToken: s.inviteToken ?? tokenBySlot.get(s.slotId),
-    })),
+    slots: fresh.slots.map((s) => {
+      const mine = held.get(s.slotId);
+      return {
+        ...s,
+        inviteToken: s.inviteToken ?? mine?.inviteToken,
+        memberRef: s.memberRef ?? mine?.memberRef ?? null,
+        authPublicKey: s.authPublicKey ?? mine?.authPublicKey ?? null,
+        acceptedAt: s.acceptedAt ?? mine?.acceptedAt ?? null,
+      };
+    }),
   };
 }
 

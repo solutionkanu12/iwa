@@ -121,12 +121,38 @@ export function createRateLimiter(windowMs: number, max: number, now: () => numb
   return limiter;
 }
 
-/** Slots as the frontend needs them. Invite tokens are never listed publicly. */
-function publicDraft(draft: CircleDraft, includeTokens: boolean) {
-  return {
+/** Who is being answered. The projection follows from this and nothing else. */
+type Audience = "public" | "organizer";
+
+/**
+ * A draft, as the audience is entitled to see it.
+ *
+ * A draft is coordination in progress. The id travels inside a link that can be
+ * forwarded, pasted or logged, and before the circle exists on chain nothing
+ * about who is in it is public. So the public answer carries the terms and the
+ * progress, which is what an invited person needs in order to decide, and
+ * carries nothing that ties people to each other.
+ *
+ * Withheld from the public answer, each for its own reason:
+ *
+ *   memberRef       a member's commitment. Public on chain once the circle is
+ *                   created, but not before, and never together with the rest
+ *                   of the set in one request.
+ *   authPublicKey   the same, for their settlement key.
+ *   acceptedAt      when somebody took their place. Timing is a correlation
+ *                   handle even when the identity is not shown.
+ *   organizerAddress  ties a wallet to the whole member set in one read.
+ *   createdTx       a transaction hash leads back to the organizer's account.
+ *   inviteToken     a coordination pointer for one person only.
+ *
+ * The organizer sees all of it for their own draft: it is their coordination
+ * data, and the flow does not work without it.
+ */
+function draftFor(draft: CircleDraft, audience: Audience) {
+  const acceptedCount = draft.slots.filter((s) => s.memberRef !== null).length;
+  const terms = {
     id: draft.id,
     chainId: draft.chainId,
-    organizerAddress: draft.organizerAddress,
     token: draft.token,
     contributionAmount: draft.contributionAmount,
     cadenceSeconds: draft.cadenceSeconds,
@@ -134,9 +160,25 @@ function publicDraft(draft: CircleDraft, includeTokens: boolean) {
     memberCount: draft.memberCount,
     status: draft.status,
     circleId: draft.circleId,
-    createdTx: draft.createdTx,
     createdAt: draft.createdAt,
-    acceptedCount: draft.slots.filter((s) => s.memberRef !== null).length,
+    acceptedCount,
+  };
+
+  if (audience === "public") {
+    return {
+      ...terms,
+      slots: draft.slots.map((s) => ({
+        slotId: s.slotId,
+        slotIndex: s.slotIndex,
+        accepted: s.memberRef !== null,
+      })),
+    };
+  }
+
+  return {
+    ...terms,
+    organizerAddress: draft.organizerAddress,
+    createdTx: draft.createdTx,
     slots: draft.slots.map((s) => ({
       slotId: s.slotId,
       slotIndex: s.slotIndex,
@@ -144,7 +186,7 @@ function publicDraft(draft: CircleDraft, includeTokens: boolean) {
       memberRef: s.memberRef,
       authPublicKey: s.authPublicKey,
       acceptedAt: s.acceptedAt,
-      ...(includeTokens ? { inviteToken: s.inviteToken } : {}),
+      inviteToken: s.inviteToken,
     })),
   };
 }
@@ -345,7 +387,7 @@ export function createApp(options: AppOptions): Express {
       }
       const draft = await store.createDraft(parsed.data);
       // The organizer alone receives the invite tokens, at creation time.
-      res.status(201).json(publicDraft(draft, true));
+      res.status(201).json(draftFor(draft, "organizer"));
     } catch (e) {
       next(e);
     }
@@ -358,7 +400,7 @@ export function createApp(options: AppOptions): Express {
       if (id === null) return;
       const draft = await store.getDraft(id);
       if (draft === null) return res.status(404).json({ error: "not_found" });
-      res.json(publicDraft(draft, false));
+      res.json(draftFor(draft, "public"));
     } catch (e) {
       next(e);
     }
@@ -380,7 +422,7 @@ export function createApp(options: AppOptions): Express {
       if (caller !== draft.organizerAddress) {
         return res.status(403).json({ error: "not_organizer", message: "Only the organizer can see the invitations." });
       }
-      res.json(publicDraft(draft, true));
+      res.json(draftFor(draft, "organizer"));
     } catch (e) {
       next(e);
     }
@@ -392,7 +434,7 @@ export function createApp(options: AppOptions): Express {
       const caller = await authenticate(req, res);
       if (caller === null) return;
       const drafts = await store.listDraftsByOrganizer(caller);
-      res.json(drafts.map((d) => publicDraft(d, true)));
+      res.json(drafts.map((d) => draftFor(d, "organizer")));
     } catch (e) {
       next(e);
     }
@@ -445,7 +487,7 @@ export function createApp(options: AppOptions): Express {
       }
       res.json({
         slotIndex: result.slotIndex,
-        draft: publicDraft(result.draft, false),
+        draft: draftFor(result.draft, "public"),
       });
     } catch (e) {
       next(e);
@@ -473,7 +515,7 @@ export function createApp(options: AppOptions): Express {
       }
       const updated = await store.reorderSlots(id, parsed.data.order);
       if (updated === null) return badRequest(res, "order must list every existing slot exactly once");
-      res.json(publicDraft(updated, true));
+      res.json(draftFor(updated, "organizer"));
     } catch (e) {
       next(e);
     }
@@ -499,7 +541,7 @@ export function createApp(options: AppOptions): Express {
       // A different circle is a different matter and is refused.
       if (draft.circleId !== null) {
         if (draft.circleId === parsed.data.circleId) {
-          return res.json(publicDraft(draft, true));
+          return res.json(draftFor(draft, "organizer"));
         }
         return res.status(409).json({
           error: "already_created",
@@ -521,7 +563,7 @@ export function createApp(options: AppOptions): Express {
       }
 
       const updated = await store.markCreated(id, parsed.data.circleId, parsed.data.txHash);
-      res.json(publicDraft(updated as CircleDraft, true));
+      res.json(draftFor(updated as CircleDraft, "organizer"));
     } catch (e) {
       next(e);
     }
@@ -548,7 +590,7 @@ export function createApp(options: AppOptions): Express {
       if (draft.organizerAddress !== caller) {
         return res.status(403).json({ error: "not_organizer" });
       }
-      if (draft.circleId !== null) return res.json(publicDraft(draft, true));
+      if (draft.circleId !== null) return res.json(draftFor(draft, "organizer"));
 
       const found = await circleVerifier.findCircleForDraft(draft);
       if (found.status === "unavailable") return verificationUnavailable(res);
@@ -560,7 +602,7 @@ export function createApp(options: AppOptions): Express {
       }
 
       const updated = await store.markCreated(id, found.circleId, draft.createdTx);
-      res.json(publicDraft(updated as CircleDraft, true));
+      res.json(draftFor(updated as CircleDraft, "organizer"));
     } catch (e) {
       next(e);
     }
@@ -623,7 +665,22 @@ export function createApp(options: AppOptions): Express {
       return res.status(400).json({ error: "invalid_request", message: "circle id must be a positive integer" });
     }
     try {
-      res.json(await store.listEventsForCircle(normalizeFelt(SN_MAIN), circleId));
+      const events = await store.listEventsForCircle(normalizeFelt(SN_MAIN), circleId);
+      // The chain publishes these, so nothing here is secret. What this
+      // controls is the cost of correlation: handed a commitment per row,
+      // anyone can assemble one person's whole payment history in a single
+      // request. The activity is public, the identity is left on chain.
+      //
+      // txHash stays on purpose. It is the reference anyone needs to verify a
+      // reported event against the chain itself, and an activity feed that
+      // cannot be checked is worth less than one that can. It does mean the
+      // commitment is still reachable, one lookup at a time, which is the
+      // honest limit of what this change achieves: bulk correlation through
+      // the API is gone, correlation itself is not, and cannot be while the
+      // events are public on chain.
+      //
+      // The indexer's own storage is unchanged; this is the projection only.
+      res.json(events.map(({ memberRef: _memberRef, ...event }) => event));
     } catch (e) {
       next(e);
     }

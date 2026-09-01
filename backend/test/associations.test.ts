@@ -56,6 +56,7 @@ const DRAFT = {
 };
 
 let app: Express;
+let store: MemoryStore;
 
 async function authHeaders(address: string) {
   const res = await request(app).post("/api/auth/challenge").send({ address }).expect(200);
@@ -68,8 +69,9 @@ async function authHeaders(address: string) {
 }
 
 beforeEach(() => {
+  store = new MemoryStore();
   app = createApp({
-    store: new MemoryStore(),
+    store,
     corsOrigins: ["http://localhost:5173"],
     rateLimit: { windowMs: 60_000, max: 500 },
     verifier: new StubVerifier(),
@@ -297,5 +299,168 @@ describe("what an association does not carry", () => {
       acceptedCount: 1,
     });
     expect(entry.draftId).toBe(draft.id);
+  });
+});
+
+// What a stranger learns from a draft id.
+//
+// A draft is coordination in progress. Before the circle exists on chain,
+// nothing about who is in it is public, and the id travels in a link that can
+// be forwarded, pasted or logged. Someone holding it should be able to see the
+// terms and the progress, and nothing that ties people together.
+describe("the public draft view", () => {
+  async function acceptedDraft() {
+    const draft = await newDraft();
+    await accept(draft.slots[0].inviteToken, ALICE, KEY_A, ALICE);
+    return draft;
+  }
+
+  it("carries no member commitment, key, address or timing", async () => {
+    const draft = await acceptedDraft();
+    const res = await request(app).get(`/api/drafts/${draft.id}`).expect(200);
+    const body = JSON.stringify(res.body);
+
+    expect(body).not.toContain(ALICE); // commitment and accepting address alike
+    expect(body).not.toContain(KEY_A); // settlement key
+    expect(body).not.toContain(ORGANIZER); // who is running the circle
+    expect(body).not.toContain(draft.slots[0].inviteToken);
+    expect(res.body.slots[0]).not.toHaveProperty("memberRef");
+    expect(res.body.slots[0]).not.toHaveProperty("authPublicKey");
+    expect(res.body.slots[0]).not.toHaveProperty("acceptedAt");
+    expect(res.body).not.toHaveProperty("organizerAddress");
+    expect(res.body).not.toHaveProperty("createdTx");
+  });
+
+  it("still carries everything needed to show the terms and the progress", async () => {
+    const draft = await acceptedDraft();
+    const res = await request(app).get(`/api/drafts/${draft.id}`).expect(200);
+    expect(res.body).toMatchObject({
+      id: draft.id,
+      contributionAmount: "10000000",
+      cadenceSeconds: 604800,
+      graceSeconds: 86400,
+      memberCount: 2,
+      acceptedCount: 1,
+      status: "draft",
+      circleId: null,
+    });
+    expect(res.body.slots).toHaveLength(2);
+    expect(res.body.slots[0]).toMatchObject({ slotIndex: 0, accepted: true });
+    expect(res.body.slots[1]).toMatchObject({ slotIndex: 1, accepted: false });
+    // The stable identity stays: it is what keeps a place matched to its link.
+    expect(typeof res.body.slots[0].slotId).toBe("string");
+  });
+
+  it("minimises the draft returned when an invitation is accepted", async () => {
+    const draft = await newDraft();
+    const res = await request(app)
+      .post("/api/invites/accept")
+      .send({
+        inviteToken: draft.slots[0].inviteToken,
+        memberRef: ALICE,
+        authPublicKey: KEY_A,
+        address: ALICE,
+      })
+      .expect(200);
+    const body = JSON.stringify(res.body.draft);
+    expect(body).not.toContain(ALICE);
+    expect(body).not.toContain(KEY_A);
+    expect(body).not.toContain(ORGANIZER);
+  });
+
+  it("keeps the organizer's own view complete", async () => {
+    const draft = await acceptedDraft();
+    const res = await request(app)
+      .post(`/api/drafts/${draft.id}/organizer-view`)
+      .set(await authHeaders(ORGANIZER))
+      .send({})
+      .expect(200);
+    const body = JSON.stringify(res.body);
+
+    expect(body).toContain(ALICE);
+    expect(body).toContain(KEY_A);
+    expect(body).toContain(draft.slots[0].inviteToken);
+    expect(res.body.organizerAddress).toBe(ORGANIZER);
+    expect(res.body.slots[0].memberRef).toBe(ALICE);
+  });
+
+  it("still refuses the organizer view to anyone else", async () => {
+    const draft = await acceptedDraft();
+    await request(app)
+      .post(`/api/drafts/${draft.id}/organizer-view`)
+      .set(await authHeaders(BOB))
+      .send({})
+      .expect(403);
+  });
+});
+
+// The chain publishes these events, so this is not a secret. What the endpoint
+// controls is how cheap correlation is: handed a member commitment per row,
+// anyone can assemble one person's whole payment history in a single request.
+describe("the public event feed", () => {
+  it("carries no member commitment", async () => {
+    // Seeded through the store the indexer writes to, so the projection is
+    // exercised against a real row rather than an empty list.
+    await store.recordEvents([
+      {
+        chainId: SN_MAIN,
+        blockNumber: 14160773,
+        txHash: "0xabc",
+        eventIndex: 0,
+        eventName: "ContributionStateUpdated",
+        circleId: 1,
+        round: 1,
+        memberRef: ALICE,
+        status: "OnTime",
+      },
+    ]);
+
+    const res = await request(app).get("/api/circles/1/events").expect(200);
+    expect(res.body).toHaveLength(1);
+    expect(JSON.stringify(res.body)).not.toContain(ALICE);
+    expect(res.body[0]).not.toHaveProperty("memberRef");
+  });
+
+  it("still carries the public activity a circle screen would show", async () => {
+    await store.recordEvents([
+      {
+        chainId: SN_MAIN,
+        blockNumber: 14160773,
+        txHash: "0xabc",
+        eventIndex: 0,
+        eventName: "ContributionStateUpdated",
+        circleId: 1,
+        round: 1,
+        memberRef: ALICE,
+        status: "OnTime",
+      },
+    ]);
+    const res = await request(app).get("/api/circles/1/events").expect(200);
+    expect(res.body[0]).toMatchObject({
+      blockNumber: 14160773,
+      eventName: "ContributionStateUpdated",
+      circleId: 1,
+      round: 1,
+      status: "OnTime",
+    });
+  });
+
+  it("leaves the indexer's own storage untouched", async () => {
+    await store.recordEvents([
+      {
+        chainId: SN_MAIN,
+        blockNumber: 1,
+        txHash: "0xdef",
+        eventIndex: 0,
+        eventName: "ContributionStateUpdated",
+        circleId: 2,
+        round: 1,
+        memberRef: ALICE,
+        status: "OnTime",
+      },
+    ]);
+    // The API minimises; the store still holds what the indexer needs.
+    const stored = await store.listEventsForCircle(SN_MAIN, 2);
+    expect(stored[0].memberRef).toBe(ALICE);
   });
 });
