@@ -70,6 +70,31 @@ export interface InviteView {
   alreadyAccepted: boolean;
 }
 
+/**
+ * One wallet's connection to one circle, as the service reports it.
+ *
+ * A summary by design: the circle's public terms and this wallet's own place.
+ * No invite token, and nobody else's commitment, key or address.
+ */
+export interface CircleAssociation {
+  draftId: string;
+  role: "organizer" | "member";
+  /** This wallet has taken a place in the circle. */
+  accepted: boolean;
+  chainId: string;
+  token: string;
+  /** Base units as a decimal string. Formatted once, at display. */
+  contributionAmount: string;
+  cadenceSeconds: number;
+  graceSeconds: number;
+  memberCount: number;
+  acceptedCount: number;
+  status: DraftView["status"];
+  circleId: number | null;
+  createdAt: string;
+  acceptedAt: string | null;
+}
+
 /** Human copy for the coordination failures a person can actually act on. */
 const FRIENDLY: Record<string, string> = {
   unknown_invite: "This invitation link is not valid. Ask the organizer for a new one.",
@@ -206,6 +231,24 @@ export const backend = {
   async listDrafts(organizerAddress: string, sign: WalletSigner): Promise<DraftView[]> {
     const headers = await organizerHeaders(organizerAddress, sign);
     return call("/api/drafts/mine", { method: "POST", headers, body: JSON.stringify({}) });
+  },
+
+  /**
+   * The circles this wallet is part of, however it got there.
+   *
+   * Scoped by the service to the signed-in wallet. This is what makes an
+   * accepted invitation recoverable after a browser is closed: no token is
+   * needed, only the same wallet.
+   */
+  async myCircles(address: string, sign: WalletSigner): Promise<CircleAssociation[]> {
+    const headers = await organizerHeaders(address, sign);
+    return call("/api/me/circles", { method: "POST", headers, body: JSON.stringify({}) });
+  },
+
+  /** The invitations this wallet accepted. */
+  async myInvitations(address: string, sign: WalletSigner): Promise<CircleAssociation[]> {
+    const headers = await organizerHeaders(address, sign);
+    return call("/api/me/invitations", { method: "POST", headers, body: JSON.stringify({}) });
   },
 
   async getInvite(token: string): Promise<InviteView> {

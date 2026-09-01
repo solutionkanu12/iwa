@@ -7,6 +7,8 @@ import { AppShell, NotFoundView } from "./app/AppShell.tsx";
 import { CircleView } from "./screens/CircleView.tsx";
 import { HomeView } from "./screens/HomeView.tsx";
 import { ExploreView } from "./screens/ExploreView.tsx";
+import { MyCirclesView } from "./screens/MyCirclesView.tsx";
+import { InvitationsView } from "./screens/InvitationsView.tsx";
 import { StandingView } from "./screens/StandingView.tsx";
 import { OrganizerCircleView } from "./screens/OrganizerCircleView.tsx";
 import type { Route } from "./lib/router.ts";
@@ -24,6 +26,12 @@ export function App({ route, navigate }: AppProps) {
       break;
     case "explore":
       screen = <ExploreView navigate={navigate} />;
+      break;
+    case "myCircles":
+      screen = <MyCirclesView navigate={navigate} />;
+      break;
+    case "invitations":
+      screen = <InvitationsView navigate={navigate} />;
       break;
     case "circle":
       // Keyed by id so moving between circles remounts rather than leaving one

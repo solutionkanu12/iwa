@@ -172,6 +172,26 @@ suite("PgStore against a real Postgres", () => {
     expect(await store.reorderSlots(draft.id, [ids[0], randomUUID()])).toBeNull();
   });
 
+it("answers which circles belong to a wallet", async () => {
+    const draft = await store.createDraft(DRAFT);
+    await store.acceptInvite({ inviteToken: draft.slots[0].inviteToken, memberRef: MEMBER_A, authPublicKey: KEY_A, address: MEMBER_A });
+
+    const organizer = await store.listAssociationsForAddress(ORGANIZER);
+    expect(organizer).toHaveLength(1);
+    expect(organizer[0]).toMatchObject({ draftId: draft.id, role: "organizer", accepted: false });
+
+    const member = await store.listAssociationsForAddress(MEMBER_A);
+    expect(member).toHaveLength(1);
+    expect(member[0]).toMatchObject({ draftId: draft.id, role: "member", accepted: true });
+
+    // A wallet with no connection to any draft gets an empty answer.
+    expect(await store.listAssociationsForAddress(MEMBER_B)).toEqual([]);
+
+    // The projection is a summary. No invite token travels with it.
+    const body = JSON.stringify([...organizer, ...member]);
+    for (const slot of draft.slots) expect(body).not.toContain(slot.inviteToken);
+  });
+
   it("marks a draft created and then refuses further acceptances", async () => {
     const draft = await store.createDraft(DRAFT);
     await store.acceptInvite({ inviteToken: draft.slots[0].inviteToken, memberRef: MEMBER_A, authPublicKey: KEY_A, address: ORGANIZER });

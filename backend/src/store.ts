@@ -89,11 +89,44 @@ export type AcceptResult =
   | { ok: true; draft: CircleDraft; slotIndex: number }
   | { ok: false; reason: "unknown_invite" | "already_accepted" | "duplicate_member" | "draft_closed" };
 
+/** How a wallet is connected to a circle. Organizing wins over holding a place. */
+export type AssociationRole = "organizer" | "member";
+
+/**
+ * One wallet's connection to one circle.
+ *
+ * Deliberately a summary and not a draft. It answers "is this mine, what are
+ * the terms, and has it been created yet" and nothing else: no invite token, no
+ * other member's commitment, address or key. A wallet learns about its own
+ * place and the circle's public terms, which is all any screen needs.
+ */
+export interface CircleAssociation {
+  draftId: string;
+  role: AssociationRole;
+  /** This wallet has taken a place. True for an organizer who also joined. */
+  accepted: boolean;
+  chainId: string;
+  token: string;
+  contributionAmount: string;
+  cadenceSeconds: number;
+  graceSeconds: number;
+  memberCount: number;
+  acceptedCount: number;
+  status: DraftStatus;
+  /** Set once creation has been verified against the chain. */
+  circleId: number | null;
+  createdAt: string;
+  /** When this wallet took its place, if it has. */
+  acceptedAt: string | null;
+}
+
 export interface Store {
   createDraft(input: CreateDraftInput): Promise<CircleDraft>;
   getDraft(id: string): Promise<CircleDraft | null>;
   getDraftByInviteToken(token: string): Promise<CircleDraft | null>;
   listDraftsByOrganizer(address: string): Promise<CircleDraft[]>;
+  /** Every circle this wallet organizes or holds a place in. */
+  listAssociationsForAddress(address: string): Promise<CircleAssociation[]>;
   acceptInvite(input: AcceptInput): Promise<AcceptResult>;
   /** `order` lists every slot id of the draft exactly once, in the new payout order. */
   reorderSlots(id: string, order: string[]): Promise<CircleDraft | null>;
@@ -121,6 +154,38 @@ export function deriveStatus(draft: CircleDraft): DraftStatus {
   if (draft.status === "created" || draft.status === "abandoned") return draft.status;
   const accepted = draft.slots.filter((s) => s.memberRef !== null).length;
   return accepted === draft.memberCount ? "ready" : "draft";
+}
+
+/**
+ * One wallet's view of one draft.
+ *
+ * The projection lives here so both stores answer identically, and so the
+ * fields that are deliberately absent are absent in one place: no invite
+ * token, and nobody else's commitment, key or address.
+ */
+export function associationFor(draft: CircleDraft, address: string): CircleAssociation {
+  const mine = draft.slots.find((s) => s.acceptedByAddress === address) ?? null;
+  return {
+    draftId: draft.id,
+    role: draft.organizerAddress === address ? "organizer" : "member",
+    accepted: mine !== null,
+    chainId: draft.chainId,
+    token: draft.token,
+    contributionAmount: draft.contributionAmount,
+    cadenceSeconds: draft.cadenceSeconds,
+    graceSeconds: draft.graceSeconds,
+    memberCount: draft.memberCount,
+    acceptedCount: draft.slots.filter((s) => s.memberRef !== null).length,
+    status: draft.status,
+    circleId: draft.circleId,
+    createdAt: draft.createdAt,
+    acceptedAt: mine?.acceptedAt ?? null,
+  };
+}
+
+/** Newest first, so the circle someone is most likely looking for is at the top. */
+export function byNewestFirst(a: CircleAssociation, b: CircleAssociation): number {
+  return b.createdAt.localeCompare(a.createdAt);
 }
 
 // --- In-memory implementation, used by tests ---
@@ -169,6 +234,17 @@ export class MemoryStore implements Store {
     return [...this.drafts.values()]
       .filter((d) => d.organizerAddress === address)
       .map((d) => structuredClone(d));
+  }
+
+  async listAssociationsForAddress(address: string): Promise<CircleAssociation[]> {
+    return [...this.drafts.values()]
+      .filter(
+        (d) =>
+          d.organizerAddress === address ||
+          d.slots.some((s) => s.acceptedByAddress === address),
+      )
+      .map((d) => associationFor(d, address))
+      .sort(byNewestFirst);
   }
 
   async acceptInvite(input: AcceptInput): Promise<AcceptResult> {

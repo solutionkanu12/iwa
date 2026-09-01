@@ -32,7 +32,7 @@ function AppRoot() {
     return <LandingPage onEnterCircle={() => navigate({ name: "home" })} />;
   }
   if (route.name === "invite") {
-    return <AcceptInviteView token={route.token} />;
+    return <AcceptInviteView token={route.token} navigate={navigate} />;
   }
   if (route.name === "console") {
     // A disabled console is not a route: it falls through to the application

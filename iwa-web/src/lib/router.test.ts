@@ -25,6 +25,17 @@ describe("resolve", () => {
     expect(routeOf("/app/circles/1")).toEqual({ name: "circle", circleId: 1 });
   });
 
+  it("reads the two lists that belong to a wallet", () => {
+    expect(routeOf("/app/circles")).toEqual({ name: "myCircles" });
+    expect(routeOf("/app/circles/")).toEqual({ name: "myCircles" });
+    expect(routeOf("/app/invitations")).toEqual({ name: "invitations" });
+  });
+
+  it("tells the list of circles apart from one circle", () => {
+    expect(routeOf("/app/circles")).toEqual({ name: "myCircles" });
+    expect(routeOf("/app/circles/9")).toEqual({ name: "circle", circleId: 9 });
+  });
+
   it("reads standing and create", () => {
     expect(routeOf("/app/standing")).toEqual({ name: "standing" });
     expect(routeOf("/app/create")).toEqual({ name: "create" });
@@ -46,7 +57,7 @@ describe("resolve", () => {
   // A bad circle id must never resolve to some other circle. Every one of
   // these is "not a circle", which the app answers by saying so.
   it("refuses a circle id that is not a positive whole number", () => {
-    for (const bad of ["0", "-1", "1.5", "abc", "", "0x1", "1e3", "%20", "9".repeat(30)]) {
+    for (const bad of ["0", "-1", "1.5", "abc", "0x1", "1e3", "%20", "9".repeat(30)]) {
       expect(routeOf(`/app/circles/${bad}`).name).toBe("notFound");
     }
   });
@@ -101,6 +112,8 @@ describe("hrefFor", () => {
     expect(hrefFor({ name: "landing" })).toBe("/");
     expect(hrefFor({ name: "home" })).toBe("/app");
     expect(hrefFor({ name: "explore" })).toBe("/app/explore");
+    expect(hrefFor({ name: "myCircles" })).toBe("/app/circles");
+    expect(hrefFor({ name: "invitations" })).toBe("/app/invitations");
     expect(hrefFor({ name: "standing" })).toBe("/app/standing");
     expect(hrefFor({ name: "create" })).toBe("/app/create");
     expect(hrefFor({ name: "circle", circleId: 7 })).toBe("/app/circles/7");
@@ -110,6 +123,8 @@ describe("hrefFor", () => {
     const routes: Route[] = [
       { name: "home" },
       { name: "explore" },
+      { name: "myCircles" },
+      { name: "invitations" },
       { name: "standing" },
       { name: "create" },
       { name: "circle", circleId: 42 },

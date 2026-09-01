@@ -9,12 +9,20 @@
 // open a circle without connecting; connection is asked for by the action that
 // genuinely needs it, or offered here when the visitor wants it.
 
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import styles from "./AppShell.module.css";
 import { useWallet } from "./WalletProvider";
 import { hrefFor, type Route } from "../lib/router";
-import { ACTION_NAV, MOBILE_NAV, PRIMARY_NAV, isActive, type NavEntry } from "./navigation";
+import {
+  ACCOUNT_NAV,
+  ACTION_NAV,
+  MOBILE_NAV,
+  PRIMARY_NAV,
+  isActive,
+  labelFor,
+  type NavEntry,
+} from "./navigation";
 
 /** The cowrie mark, the same lavender glyph the rest of Iwa uses. */
 function CowrieGlyph({ size = 22 }: { size?: number }) {
@@ -40,8 +48,36 @@ export interface AppShellProps {
 
 export function AppShell({ route, navigate, children }: AppShellProps) {
   const wallet = useWallet();
+  // The phone's account menu. Closed by default, and closed again by anything
+  // that happens outside it.
+  const [accountOpen, setAccountOpen] = useState(false);
+  const accountRef = useRef<HTMLDivElement>(null);
 
-  const link = (entry: NavEntry, className: string, activeClassName: string, dot: string) => {
+  useEffect(() => {
+    if (!accountOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (accountRef.current && !accountRef.current.contains(e.target as Node)) {
+        setAccountOpen(false);
+      }
+    };
+    const onEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setAccountOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onEscape);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onEscape);
+    };
+  }, [accountOpen]);
+
+  const link = (
+    entry: NavEntry,
+    className: string,
+    activeClassName: string,
+    dot: string,
+    compact = false,
+  ) => {
     const active = isActive(entry, route);
     return (
       <a
@@ -58,7 +94,7 @@ export function AppShell({ route, navigate, children }: AppShellProps) {
         }}
       >
         <span className={dot} aria-hidden="true" />
-        {entry.label}
+        {labelFor(entry, compact)}
       </a>
     );
   };
@@ -144,15 +180,53 @@ export function AppShell({ route, navigate, children }: AppShellProps) {
                 {wallet.connecting ? "Connecting…" : "Connect"}
               </button>
             ) : (
-              <button
-                type="button"
-                className={styles.mobileAddr}
-                onClick={() => void wallet.disconnect()}
-                aria-label={`Connected as ${short(wallet.address)}. Disconnect.`}
-              >
-                <span className={styles.walletDot} aria-hidden="true" />
-                {short(wallet.address)}
-              </button>
+              <div className={styles.accountMenu} ref={accountRef}>
+                <button
+                  type="button"
+                  className={styles.mobileAddr}
+                  onClick={() => setAccountOpen((v) => !v)}
+                  aria-haspopup="menu"
+                  aria-expanded={accountOpen}
+                  aria-label={`Account, connected as ${short(wallet.address)}`}
+                >
+                  <span className={styles.walletDot} aria-hidden="true" />
+                  {short(wallet.address)}
+                </button>
+                {accountOpen ? (
+                  <div className={styles.dropdown} role="menu">
+                    {ACCOUNT_NAV.map((entry) => (
+                      <a
+                        key={entry.label}
+                        role="menuitem"
+                        className={styles.dropdownItem}
+                        href={hrefFor(entry.route)}
+                        aria-current={isActive(entry, route) ? "page" : undefined}
+                        onClick={(e) => {
+                          if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) {
+                            return;
+                          }
+                          e.preventDefault();
+                          setAccountOpen(false);
+                          navigate(entry.route);
+                        }}
+                      >
+                        {entry.label}
+                      </a>
+                    ))}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className={styles.dropdownItem}
+                      onClick={() => {
+                        setAccountOpen(false);
+                        void wallet.disconnect();
+                      }}
+                    >
+                      Disconnect
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             )}
           </header>
 
@@ -161,7 +235,9 @@ export function AppShell({ route, navigate, children }: AppShellProps) {
       </div>
 
       <nav className={styles.bottomNav} aria-label="Application">
-        {MOBILE_NAV.map((e) => link(e, styles.bottomTab, styles.bottomTabActive, styles.bottomDot))}
+        {MOBILE_NAV.map((e) =>
+          link(e, styles.bottomTab, styles.bottomTabActive, styles.bottomDot, true),
+        )}
       </nav>
     </div>
   );

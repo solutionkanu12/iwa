@@ -318,6 +318,56 @@
   cursor: pointer;
 }
 
+/* The account menu on the phone bar: My standing, then Disconnect. */
+.accountMenu {
+  position: relative;
+}
+
+.dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  min-width: 168px;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  background: var(--cloud);
+  border: 1px solid var(--brd);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-island);
+  z-index: 5;
+}
+
+.dropdownItem {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 14px;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.dropdownItem:hover {
+  background: var(--mist);
+}
+
+.dropdownItem:focus-visible {
+  outline: 2px solid var(--iris);
+  outline-offset: -2px;
+}
+
+.dropdownItem[aria-current="page"] {
+  color: var(--iris);
+  font-weight: 600;
+}
+
 /* --- Bottom navigation (mobile) --- */
 
 .bottomNav {
@@ -340,7 +390,11 @@
 .bottomTab {
   flex: 1 1 0;
   min-width: 0;
-  /* Comfortably tappable at the smallest supported width. */
+  /*
+   * Four destinations share the row. At the narrowest supported width, 320px,
+   * that is 80px per column: a comfortable target, and enough room for one
+   * short word without wrapping or truncation.
+   */
   min-height: 48px;
   display: flex;
   flex-direction: column;
@@ -353,10 +407,11 @@
   background: transparent;
   color: var(--mut);
   font-family: var(--font-body);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.2;
   text-align: center;
   text-decoration: none;
+  white-space: nowrap;
   cursor: pointer;
 }
 

@@ -475,6 +475,46 @@ export function createApp(options: AppOptions): Express {
     }
   });
 
+// --- what belongs to the signed-in wallet ---
+
+  /**
+   * The circles this wallet is part of, as organizer or as a member who took a
+   * place. Answers "where was I?" after a browser is closed, which is what
+   * makes an accepted invitation recoverable without its original link.
+   *
+   * Scoped to the AUTHENTICATED address and never to anything in the body, so
+   * knowing somebody's address buys no access to their coordination data. The
+   * reply is a summary: the circle's public terms and this wallet's own place.
+   * Membership itself is still the chain's answer, not this one.
+   */
+  app.post("/api/me/circles", async (req, res, next) => {
+    if (!mutate(req, res)) return;
+    try {
+      const caller = await authenticate(req, res);
+      if (caller === null) return;
+      res.json(await store.listAssociationsForAddress(caller));
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  /**
+   * Invitations this wallet accepted. The same associations, narrowed to the
+   * ones where a place was actually taken, so organizing a circle does not put
+   * it in your invitations.
+   */
+  app.post("/api/me/invitations", async (req, res, next) => {
+    if (!mutate(req, res)) return;
+    try {
+      const caller = await authenticate(req, res);
+      if (caller === null) return;
+      const all = await store.listAssociationsForAddress(caller);
+      res.json(all.filter((a) => a.accepted));
+    } catch (e) {
+      next(e);
+    }
+  });
+
   // --- indexed public data ---
 
   app.get("/api/circles", async (req, res, next) => {

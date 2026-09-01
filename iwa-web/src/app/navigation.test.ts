@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ACCOUNT_NAV,
   ACTION_NAV,
   MOBILE_NAV,
   PRIMARY_NAV,
   isActive,
+  labelFor,
   needsWallet,
   screenFor,
   type NavEntry,
@@ -21,17 +23,76 @@ describe("the navigation model", () => {
     }
   });
 
-  // My circles and Invitations need a coordination read that is not built.
-  // They are absent rather than present and empty.
-  it("does not offer anything that is not built yet", () => {
+  // These are backed by real coordination reads now, so they are offered.
+  it("offers the places a wallet returns to", () => {
     const labels = ALL.map((e) => e.label);
-    expect(labels).not.toContain("My circles");
-    expect(labels).not.toContain("Invitations");
+    expect(labels).toContain("My circles");
+    expect(labels).toContain("Invitations");
   });
 
-  it("keeps the phone bar small enough for each item to stay tappable", () => {
-    expect(MOBILE_NAV.length).toBeGreaterThan(1);
-    expect(MOBILE_NAV.length).toBeLessThanOrEqual(4);
+  // Four destinations divide the narrowest supported screen, 320px, into 80px
+  // columns. A fifth makes every column cramped, so the bar holds four.
+  it("puts exactly four destinations on the phone bar", () => {
+    expect(MOBILE_NAV).toHaveLength(4);
+  });
+
+  it("puts exactly these four, in this order", () => {
+    expect(MOBILE_NAV.map((e) => labelFor(e, true))).toEqual([
+      "Home",
+      "Explore",
+      "Circles",
+      "Invites",
+    ]);
+  });
+
+  it("gives the phone bar one short word per destination", () => {
+    for (const entry of MOBILE_NAV) {
+      const shown = labelFor(entry, true);
+      expect(shown.split(" ")).toHaveLength(1);
+      // Eight characters at 12px sits well inside an 80px column.
+      expect(shown.length).toBeLessThanOrEqual(8);
+    }
+  });
+
+  it("keeps My standing off the phone bar", () => {
+    expect(MOBILE_NAV.some((e) => e.route.name === "standing")).toBe(false);
+  });
+
+  // Off the bar is not out of reach. One tap on the wallet chip, one tap here.
+  it("keeps My standing reachable from the account control", () => {
+    expect(ACCOUNT_NAV.map((e) => e.label)).toContain("My standing");
+    expect(ACCOUNT_NAV.every((e) => resolve(hrefFor(e.route), "").route.name !== "notFound")).toBe(
+      true,
+    );
+  });
+
+  it("keeps My standing in the desktop navigation", () => {
+    expect(PRIMARY_NAV.map((e) => e.label)).toContain("My standing");
+    const standing = PRIMARY_NAV.find((e) => e.route.name === "standing") as NavEntry;
+    expect(labelFor(standing, false)).toBe("My standing");
+  });
+
+  it("still has a standing route to reach", () => {
+    expect(resolve("/app/standing", "").route).toEqual({ name: "standing" });
+  });
+
+  // Nothing on the bar should look active while standing is open, since
+  // standing is not one of its four destinations.
+  it("lights no phone tab while My standing is open", () => {
+    expect(MOBILE_NAV.some((e) => isActive(e, { name: "standing" }))).toBe(false);
+  });
+
+  it("keeps the full wording in the sidebar", () => {
+    const circles = PRIMARY_NAV.find((e) => e.route.name === "myCircles");
+    expect(circles).toBeDefined();
+    expect(labelFor(circles as NavEntry, false)).toBe("My circles");
+    expect(labelFor(circles as NavEntry, true)).toBe("Circles");
+  });
+
+  // Starting a circle is a deliberate act reached from the sidebar and from
+  // Home. A sixth item would make every phone tab too narrow to read.
+  it("leaves starting a circle out of the phone bar", () => {
+    expect(MOBILE_NAV.some((e) => e.route.name === "create")).toBe(false);
   });
 
   it("names every destination exactly once", () => {
@@ -51,6 +112,8 @@ describe("isActive", () => {
     const routes = [
       { name: "home" },
       { name: "explore" },
+      { name: "myCircles" },
+      { name: "invitations" },
       { name: "standing" },
       { name: "create" },
       { name: "circle", circleId: 3 },
@@ -60,9 +123,21 @@ describe("isActive", () => {
     }
   });
 
-  it("keeps Explore lit while a circle from it is open", () => {
-    expect(isActive(PRIMARY_NAV[1], { name: "circle", circleId: 9 })).toBe(true);
-    expect(isActive(PRIMARY_NAV[0], { name: "circle", circleId: 9 })).toBe(false);
+  // A circle opened on a phone must still light Circles, which is the tab it
+  // sits under.
+  it("lights the Circles tab on the phone bar while a circle is open", () => {
+    const tab = MOBILE_NAV.find((e) => e.route.name === "myCircles") as NavEntry;
+    expect(isActive(tab, { name: "circle", circleId: 4 })).toBe(true);
+    expect(MOBILE_NAV.filter((e) => isActive(e, { name: "circle", circleId: 4 }))).toHaveLength(1);
+  });
+
+  // A circle lives at /app/circles/:id, under My circles. Following the path
+  // gives the same answer however the visitor arrived at it.
+  it("lights My circles while a circle is open", () => {
+    const circles = PRIMARY_NAV.find((e) => e.route.name === "myCircles") as NavEntry;
+    const explore = PRIMARY_NAV.find((e) => e.route.name === "explore") as NavEntry;
+    expect(isActive(circles, { name: "circle", circleId: 9 })).toBe(true);
+    expect(isActive(explore, { name: "circle", circleId: 9 })).toBe(false);
   });
 
   it("lights nothing for a page that is not found", () => {
@@ -100,8 +175,12 @@ describe("what a wallet is needed for", () => {
     }
   });
 
-  it("requires one for private standing", () => {
-    expect(needsWallet("standing")).toBe(true);
+  // Which circles are yours, and which invitations you accepted, are answers
+  // about one wallet. There is nothing to show without knowing which.
+  it("requires one for anything belonging to a wallet", () => {
+    for (const screen of ["standing", "myCircles", "invitations"] as const) {
+      expect(needsWallet(screen)).toBe(true);
+    }
   });
 
   // Creating a circle needs a wallet to sign, but the screen itself explains

@@ -14,6 +14,7 @@ import { connectWallet, deriveMemberCommitment } from "../lib/starknetWallet";
 import { feltHex } from "../chains/strk20/iwaSigning";
 import { USDC_DECIMALS } from "../lib/starknetConfig";
 import { formatUnits } from "../chains/strk20/funding";
+import { circlePath, type Route } from "../lib/router";
 
 const CADENCE_WORDS: Record<number, string> = {
   604800: "every week",
@@ -31,7 +32,14 @@ function humanError(e: unknown): string {
   return "Something went wrong. Please try again.";
 }
 
-export function AcceptInviteView({ token }: { token: string }) {
+export function AcceptInviteView({
+  token,
+  navigate,
+}: {
+  token: string;
+  /** Where to go next. Accepting is a beginning, not an end. */
+  navigate: (to: string | Route) => void;
+}) {
   const [invite, setInvite] = useState<InviteView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -96,9 +104,37 @@ export function AcceptInviteView({ token }: { token: string }) {
         <div className={styles.success}>
           {accepted ? "Place accepted." : "You have already accepted this invitation."}
         </div>
+
+        {invite.circleId !== null ? (
+          <>
+            <p className={styles.hint}>
+              The circle has been created. Opening it is the next step, and joining is
+              confirmed there.
+            </p>
+            <div className={styles.actions}>
+              <Button onClick={() => navigate(circlePath(invite.circleId as number))}>
+                Open the circle
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className={styles.hint}>
+              The circle has not been created yet. Nothing more is needed from you until the
+              organizer starts it.
+            </p>
+            <div className={styles.actions}>
+              <Button onClick={() => navigate({ name: "invitations" })}>
+                Go to my invitations
+              </Button>
+            </div>
+          </>
+        )}
+
         <p className={styles.hint}>
-          Keep using this same wallet. It is how Iwa recognises you — nothing is saved on this
-          device, so there is no code to write down and nothing to lose.
+          Keep using this same wallet. It is how Iwa recognises you, and it is how this
+          invitation is found again. Nothing is saved on this device, so there is no code to
+          write down and nothing to lose.
         </p>
       </div>
     );

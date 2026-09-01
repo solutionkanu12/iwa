@@ -7,10 +7,12 @@
 import { Pool, type PoolClient } from "pg";
 
 import {
+  associationFor,
   deriveStatus,
   newInviteToken,
   type AcceptInput,
   type AcceptResult,
+  type CircleAssociation,
   type CircleDraft,
   type CircleEvent,
   type CreateDraftInput,
@@ -161,6 +163,32 @@ export class PgStore implements Store {
     for (const row of r.rows) {
       const d = await this.loadDraft(this.pool, row.id);
       if (d) out.push(d);
+    }
+    return out;
+  }
+
+  /**
+   * Every circle this wallet organizes or holds a place in.
+   *
+   * Two ways to be connected to a draft, unioned: the organizer address on the
+   * draft, and the accepting address on any of its slots. Both columns already
+   * exist, so this needs no schema change. The projection is shared with the
+   * in-memory store so the two cannot drift.
+   */
+  async listAssociationsForAddress(address: string): Promise<CircleAssociation[]> {
+    const r = await this.pool.query<{ id: string }>(
+      `SELECT DISTINCT d.id, d.created_at
+           FROM circle_drafts d
+           LEFT JOIN draft_slots s ON s.draft_id = d.id
+          WHERE d.organizer_address = $1 OR s.accepted_by_address = $1
+          ORDER BY d.created_at DESC
+          LIMIT 50`,
+      [address],
+    );
+    const out: CircleAssociation[] = [];
+    for (const row of r.rows) {
+      const draft = await this.loadDraft(this.pool, row.id);
+      if (draft !== null) out.push(associationFor(draft, address));
     }
     return out;
   }

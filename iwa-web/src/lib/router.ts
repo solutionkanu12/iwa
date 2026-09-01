@@ -22,6 +22,8 @@ export type Route =
   | { name: "landing" }
   | { name: "home" }
   | { name: "explore" }
+  | { name: "myCircles" }
+  | { name: "invitations" }
   | { name: "circle"; circleId: number }
   | { name: "standing" }
   | { name: "create" }
@@ -72,6 +74,10 @@ export function hrefFor(route: Route): string {
       return "/app";
     case "explore":
       return "/app/explore";
+    case "myCircles":
+      return "/app/circles";
+    case "invitations":
+      return "/app/invitations";
     case "circle":
       return circlePath(route.circleId);
     case "standing":
@@ -135,6 +141,8 @@ export function resolve(pathname: string, search: string): Resolved {
 
   if (parts.length === 2) {
     if (parts[1] === "explore") return { route: { name: "explore" }, redirectTo: null };
+    if (parts[1] === "circles") return { route: { name: "myCircles" }, redirectTo: null };
+    if (parts[1] === "invitations") return { route: { name: "invitations" }, redirectTo: null };
     if (parts[1] === "standing") return { route: { name: "standing" }, redirectTo: null };
     if (parts[1] === "create") return { route: { name: "create" }, redirectTo: null };
     return notFound;
@@ -155,6 +163,8 @@ export function isAppRoute(route: Route): boolean {
   return (
     route.name === "home" ||
     route.name === "explore" ||
+    route.name === "myCircles" ||
+    route.name === "invitations" ||
     route.name === "circle" ||
     route.name === "standing" ||
     route.name === "create" ||
