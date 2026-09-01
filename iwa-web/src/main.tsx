@@ -17,10 +17,17 @@ import { connectWallet, WalletCancelledError } from "./lib/starknetWallet.ts";
 // "/" shows the landing page. "/app" shows the app; if the visitor lands there
 // directly (no prior connect), the app's own connect gate takes over exactly
 // as before. Litepaper and roadmap remain separate, untouched entries.
+// The operator console is an internal tool: it shows class hashes, funding
+// figures and dry-build internals. It sends nothing without a wallet and holds
+// no secrets, but it is not something a visitor should stumble into. It is on
+// in development, and in production only when explicitly switched on.
+const OPERATOR_CONSOLE_ENABLED =
+  import.meta.env.DEV || import.meta.env.VITE_ENABLE_OPERATOR_CONSOLE === "true";
+
 function AppRoot() {
   const [view, setView] = useState<"landing" | "app" | "strk20" | "start" | "invite">(() => {
     const path = window.location.pathname;
-    if (path.startsWith("/strk20")) return "strk20";
+    if (path.startsWith("/strk20")) return OPERATOR_CONSOLE_ENABLED ? "strk20" : "landing";
     if (path.startsWith("/start")) return "start";
     if (path.startsWith("/invite/")) return "invite";
     return path.startsWith("/app") ? "app" : "landing";
@@ -49,7 +56,7 @@ function AppRoot() {
 
   // Operator console for the STRK20 mainnet run. Deliberately a separate
   // route: it does not touch the existing landing or app UI.
-  if (view === "strk20") return <Strk20ConsoleView />;
+  if (view === "strk20" && OPERATOR_CONSOLE_ENABLED) return <Strk20ConsoleView />;
   if (view === "start") return <OrganizerCircleView />;
   if (view === "invite") return <AcceptInviteView token={inviteToken} />;
   if (view === "app") return <App address={address} />;

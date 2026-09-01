@@ -13,3 +13,8 @@ dist-ssr/
 # Editor / OS
 .DS_Store
 *.swp
+
+# Local env overrides. Never commit real values.
+.env
+.env.local
+.env.*.local
