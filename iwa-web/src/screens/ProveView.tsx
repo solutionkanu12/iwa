@@ -19,6 +19,17 @@ import styles from "./ProveView.module.css";
 // that can be shown to nobody is worse than saying so plainly. The entry point
 // on the standing card is hidden for the same reason; this check is the second
 // line, for a path that forgets to ask.
+//
+// WHY THIS SCREEN IS STILL HERE, GIVEN NOBODY CAN REACH IT.
+//
+// It is the credential interface, finished, waiting on a verifier rather than
+// on itself. Deleting it would mean writing it again, and the flag in
+// features.ts is the single switch that opens it: nothing else has to be found
+// and changed. What it used to cost was the whole proving stack in everyone's
+// first download, whether or not they would ever prove anything. That is fixed
+// in lib/zk.ts, which now loads snarkjs and circomlibjs only when a proof is
+// actually being built, so this screen is preserved without anybody paying for
+// it.
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 

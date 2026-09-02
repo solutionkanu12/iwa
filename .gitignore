@@ -25,6 +25,13 @@ stellar-private-payments/
 # Local helper scripts (machine-specific)
 _run/
 
+# TypeScript incremental build cache.
+#
+# `tsc -b` writes one of these beside every tsconfig it builds, in any
+# workspace. iwa-web already ignored its own; this covers the backend and
+# anything added later, so a stray cache cannot be committed by accident.
+*.tsbuildinfo
+
 # OS / editor cruft
 .DS_Store
 *.swp

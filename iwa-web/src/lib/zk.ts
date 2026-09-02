@@ -8,15 +8,45 @@
 // zkey straight from their URLs. Secrets never leave the device; only the proof
 // and its public signals do, and those carry only the claim, never raw numbers.
 
-import * as snarkjs from "snarkjs";
-import { buildPoseidon, type Poseidon } from "circomlibjs";
+// THE PROVING STACK IS LOADED ON DEMAND.
+//
+// snarkjs and circomlibjs together are the largest thing this application could
+// ship, and almost nobody reaches them. Proving happens in two places: a join
+// into a trust-gated circle, and the credential screen, which is not open in
+// this version. Importing them at the top of this file meant every visitor
+// downloaded a prover in order to look at a list of circles.
+//
+// Both call sites were already asynchronous and already awaited this function,
+// so deferring the import changes nothing about when a proof becomes available.
+// It changes who pays to have the code at all. The types are imported for their
+// shapes only and are erased at build time, so they cost nothing.
+
+import type { Groth16Proof } from "snarkjs";
+import type { Poseidon } from "circomlibjs";
 import type { Claim, ProofResult } from "./types";
 import type { SnarkProof } from "./convert";
-import { ZK_ARTIFACTS } from "./stellarConfig";
+
+/**
+ * Where the circuit artifacts are served from.
+ *
+ * Fetched by URL when a proof is actually being built, never bundled: they are
+ * several megabytes and belong to the credential work rather than to the
+ * application everyone loads. They live here now, because the earlier chain's
+ * configuration file that used to carry them has been removed.
+ */
+export const ZK_ARTIFACTS = {
+  circuitWasm: "/zk/reputation.wasm",
+  provingKey: "/zk/rep_final.zkey",
+  verificationKey: "/zk/verification_key.json",
+} as const;
 
 let poseidonPromise: Promise<Poseidon> | null = null;
 function getPoseidon(): Promise<Poseidon> {
-  if (!poseidonPromise) poseidonPromise = buildPoseidon();
+  // Built once and reused. The import resolves to the same module either way,
+  // so the cost is paid by whoever proves first and by nobody else.
+  if (!poseidonPromise) {
+    poseidonPromise = import("circomlibjs").then((m) => m.buildPoseidon());
+  }
   return poseidonPromise;
 }
 
@@ -70,7 +100,7 @@ async function buildInput(
 }
 
 // snarkjs proof -> the (a, b, c) decimal shape convert.ts serialises for Soroban.
-function toSnarkProof(p: snarkjs.Groth16Proof): SnarkProof {
+function toSnarkProof(p: Groth16Proof): SnarkProof {
   return {
     a: [p.pi_a[0], p.pi_a[1]],
     b: [
@@ -92,6 +122,7 @@ export async function generateProof(
   secret: bigint,
 ): Promise<ProofResult> {
   const input = await buildInput(secret, claim.threshold);
+  const snarkjs = await import("snarkjs");
   const { proof, publicSignals } = await snarkjs.groth16.fullProve(
     input,
     ZK_ARTIFACTS.circuitWasm,

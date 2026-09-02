@@ -4,8 +4,9 @@
 // and a sentence written for the old state stays behind, sounding confident.
 // This reads the shipped source and refuses the phrases that were wrong before.
 //
-// Only what reaches a person. The operator console is internal tooling and the
-// preserved Soroban modules are not rendered, so both are out of scope.
+// Only what reaches a person. The operator console is internal tooling and is
+// out of scope; the preserved Soroban modules that used to be excluded here have
+// been removed from the repository, so there is nothing left to exclude.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -14,11 +15,9 @@ import { describe, expect, it } from "vitest";
 
 const SRC = join(process.cwd(), "src");
 
-/** Files not rendered to a person, or deliberately preserved from before. */
+/** Files not rendered to a person. */
 const OUT_OF_SCOPE = [
   "Strk20ConsoleView", // internal operator tooling
-  "stellarConfig", // preserved earlier implementation
-  "iwaContract", // preserved earlier implementation
   ".test.",
 ];
 
