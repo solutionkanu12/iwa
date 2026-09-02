@@ -7,12 +7,36 @@ import { describe, expect, it, beforeEach } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
 
+import { randomBytes } from "node:crypto";
+
 import { createApp } from "../src/app.js";
 import { MemoryStore } from "../src/store.js";
-import { SN_MAIN } from "../src/validation.js";
+import { isInviteToken, SN_MAIN } from "../src/validation.js";
 import { ChallengeStore, type SignatureVerifier } from "../src/auth.js";
 import type { CircleVerifier, DiscoveryOutcome, VerifyOutcome } from "../src/chainVerify.js";
 import { AUTH_HEADERS } from "../src/app.js";
+
+/**
+ * The same invitation token with its last character changed.
+ *
+ * Spelled out rather than done inline, because the obvious inline version was
+ * wrong. Appending a fixed character to `slice(0, -1)` leaves the token
+ * completely unchanged whenever it already ended in that character, and invite
+ * tokens are base64url, whose sixty-four character alphabet contains whatever
+ * fixed character gets picked. So roughly one run in sixty-four handed the
+ * server a perfectly valid invitation, the server correctly accepted it, and a
+ * test asserting a refusal failed for a reason nobody could reproduce on
+ * demand. It was one half of a long-standing intermittent failure.
+ *
+ * The replacement is chosen against what is actually there, and stays inside
+ * the base64url alphabet so the result is still a syntactically valid token.
+ * That matters: the property under test is that an UNKNOWN invitation is
+ * refused, and a malformed one would be refused earlier, by validation, which
+ * would quietly test something weaker.
+ */
+function withLastCharacterChanged(token: string): string {
+  return token.slice(0, -1) + (token.endsWith("A") ? "B" : "A");
+}
 
 /**
  * Stands in for the account contract. Accepts a signature only when it is the
@@ -187,7 +211,14 @@ describe("invitations", () => {
 
   it("rejects an unknown or tampered invitation token", async () => {
     const draft = await newDraft();
-    const tampered = `${draft.slots[0].inviteToken.slice(0, -1)}X`;
+    const real = draft.slots[0].inviteToken;
+    const tampered = withLastCharacterChanged(real);
+    // The tamper has to be a real tamper. Asserted rather than assumed, because
+    // the version of this that assumed it was wrong about one time in sixty-four
+    // and nobody could reproduce it on demand.
+    expect(tampered).not.toBe(real);
+    expect(isInviteToken(tampered)).toBe(true);
+
     for (const inviteToken of ["not-a-real-token-000000", tampered]) {
       const res = await request(app)
         .post("/api/invites/accept")
@@ -195,6 +226,31 @@ describe("invitations", () => {
         .expect(409);
       expect(res.body.error).toBe("unknown_invite");
     }
+  });
+
+  // The guard for the test above. A tamper that silently fails to tamper turns
+  // a negative test into a positive one, and does it rarely enough to look like
+  // an environment problem. Every real token shape is exercised here, so the
+  // collision that used to happen by chance would now fail every run.
+  it("always changes the token it is asked to tamper with", () => {
+    for (let i = 0; i < 2000; i += 1) {
+      // Exactly how src/store.ts mints one.
+      const token = randomBytes(24).toString("base64url");
+      const tampered = withLastCharacterChanged(token);
+      expect(tampered).not.toBe(token);
+      expect(tampered).toHaveLength(token.length);
+      // Still a well-formed token, so the route refuses it for being unknown
+      // rather than for being malformed.
+      expect(isInviteToken(tampered)).toBe(true);
+    }
+  });
+
+  // Both branches of the replacement, named rather than left to chance.
+  it("changes the last character whatever it happens to be", () => {
+    expect(withLastCharacterChanged("aaaaaaaaaaaaaaaaX")).toBe("aaaaaaaaaaaaaaaaA");
+    expect(withLastCharacterChanged("aaaaaaaaaaaaaaaaA")).toBe("aaaaaaaaaaaaaaaaB");
+    expect(withLastCharacterChanged("aaaaaaaaaaaaaaaaB")).toBe("aaaaaaaaaaaaaaaaA");
+    expect(withLastCharacterChanged("aaaaaaaaaaaaaaaa_")).toBe("aaaaaaaaaaaaaaaaA");
   });
 
   it("rejects replaying an invitation that was already used", async () => {
