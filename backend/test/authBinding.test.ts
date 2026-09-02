@@ -579,6 +579,7 @@ describe("fixed vectors shared with the client", () => {
         "draft:reorder",
         "drafts:list",
         "invitations:list",
+        "session:create",
       ].sort(),
     );
   });

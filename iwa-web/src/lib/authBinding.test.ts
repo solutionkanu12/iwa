@@ -103,6 +103,7 @@ describe("the action set", () => {
         "draft:reorder",
         "drafts:list",
         "invitations:list",
+        "session:create",
       ].sort(),
     );
   });

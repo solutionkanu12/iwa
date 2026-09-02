@@ -31,6 +31,12 @@ import { hash as snHash, typedData as snTypedData } from "starknet";
  * fits in a felt short string, which is what lets a wallet display it.
  */
 export const AUTH_ACTIONS = {
+  /**
+   * Mints a read-only session. It is an action like any other and is bound
+   * like any other: a signature that says session:create cannot be spent on a
+   * reorder, and a signature obtained for a read cannot mint a session.
+   */
+  sessionCreate: "session:create",
   draftCreate: "draft:create",
   draftReadOrganizer: "draft:read-organizer",
   draftReorder: "draft:reorder",

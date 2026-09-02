@@ -7,6 +7,7 @@ import { LandingPage } from "./landing/LandingPage.tsx";
 import { Strk20ConsoleView } from "./screens/Strk20ConsoleView.tsx";
 import { AcceptInviteView } from "./screens/AcceptInviteView.tsx";
 import { WalletProvider } from "./app/WalletProvider.tsx";
+import { SessionProvider } from "./app/SessionProvider.tsx";
 import { useRoute } from "./lib/router.ts";
 
 // The single entry for the marketing landing page and the application alike,
@@ -49,7 +50,9 @@ if (!rootEl) throw new Error("root element not found");
 createRoot(rootEl).render(
   <StrictMode>
     <WalletProvider>
-      <AppRoot />
+      <SessionProvider>
+        <AppRoot />
+      </SessionProvider>
     </WalletProvider>
   </StrictMode>,
 );

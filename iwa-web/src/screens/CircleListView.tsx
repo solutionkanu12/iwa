@@ -17,8 +17,8 @@ import { Island } from "../components/Island.tsx";
 import { Button } from "../components/Button.tsx";
 import { ConnectPrompt } from "./ConnectPrompt.tsx";
 import { useWallet } from "../app/WalletProvider.tsx";
-import { backend, BackendError, type CircleAssociation, type WalletSigner } from "../lib/backend.ts";
-import { currentWallet } from "../lib/starknetWallet.ts";
+import { useSession, SignInRequiredError } from "../app/SessionProvider.tsx";
+import { backend, BackendError, type CircleAssociation } from "../lib/backend.ts";
 import { lifecycleOf, type ChainSnapshot, type Lifecycle } from "../lib/lifecycle.ts";
 import { get_circle } from "../lib/iwaStarknet.ts";
 import { formatAmount } from "../lib/amount.ts";
@@ -34,16 +34,6 @@ const CADENCE_WORDS: Record<number, string> = {
 
 function cadenceWords(seconds: number): string {
   return CADENCE_WORDS[seconds] ?? `every ${Math.round(seconds / 86400)} days`;
-}
-
-/** Turns the connected wallet into the signer the API client expects. */
-function walletSigner(): WalletSigner {
-  return async (typedData) => {
-    const wallet = currentWallet();
-    if (wallet === null) throw new Error("Connect your wallet first.");
-    const signature = await wallet.account.signMessage(typedData as never);
-    return Array.isArray(signature) ? signature.map(String) : [String(signature)];
-  };
 }
 
 type Row = { association: CircleAssociation; life: Lifecycle };
@@ -68,6 +58,7 @@ export function CircleListView({
   connectReason,
 }: CircleListViewProps) {
   const { address, ensureIdentity } = useWallet();
+  const { authorizedRead } = useSession();
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -76,10 +67,13 @@ export function CircleListView({
     setError(null);
     setRows(null);
     try {
-      const associations =
-        source === "circles"
-          ? await backend.myCircles(address, walletSigner())
-          : await backend.myInvitations(address, walletSigner());
+      // One sign-in covers this and every other private read in the session,
+      // so moving between circles and invitations no longer asks the wallet
+      // again. What comes back is still scoped by the service to the wallet
+      // that signed in, never to anything sent from here.
+      const associations = await authorizedRead((auth) =>
+        source === "circles" ? backend.myCircles(auth) : backend.myInvitations(auth),
+      );
 
       // The service is asked first because it is cheap and it decides whether
       // there is a circle on chain worth reading at all.
@@ -114,12 +108,16 @@ export function CircleListView({
       setRows(enriched);
     } catch (e) {
       setRows([]);
-      setError(e instanceof BackendError ? e.message : "Could not load your circles.");
+      setError(
+        e instanceof BackendError || e instanceof SignInRequiredError
+          ? e.message
+          : "Could not load your circles.",
+      );
     }
   // Depends on the question, not on the answer. ensureIdentity is stable and
   // the identity arriving no longer changes anything here, so this read runs
   // once per account rather than again as soon as the wallet has signed.
-  }, [address, source, ensureIdentity]);
+  }, [address, source, ensureIdentity, authorizedRead]);
 
   useEffect(() => {
     void load();

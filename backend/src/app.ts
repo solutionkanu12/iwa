@@ -23,6 +23,7 @@ import {
   hashResource,
   type AuthAction,
 } from "./authBinding.js";
+import { SessionStore } from "./session.js";
 import {
   acceptInviteSchema,
   isInviteToken,
@@ -53,8 +54,18 @@ export const AUTH_HEADERS = [
   "x-iwa-signature",
 ] as const;
 
+/**
+ * The header a read-only session travels in.
+ *
+ * Deliberately separate from the x-iwa-* wallet headers. They are different
+ * credentials proving different things — one is a signature over this exact
+ * request, the other a bearer token scoped to reading — and mixing them into
+ * one header would make it easy to write code that stops caring which arrived.
+ */
+export const SESSION_HEADER = "authorization";
+
 /** Request headers the API accepts cross-origin. Nothing beyond what it reads. */
-const ALLOWED_HEADERS = ["content-type", ...AUTH_HEADERS].join(",");
+const ALLOWED_HEADERS = ["content-type", SESSION_HEADER, ...AUTH_HEADERS].join(",");
 
 export interface AppOptions {
   store: Store;
@@ -64,6 +75,7 @@ export interface AppOptions {
   /** Verifies circle creation against the chain. Injected for the same reason. */
   circleVerifier: CircleVerifier;
   challenges?: ChallengeStore;
+  sessions?: SessionStore;
   /** Mutations allowed per window, per client. */
   rateLimit?: { windowMs: number; max: number };
   /**
@@ -203,6 +215,7 @@ export function createApp(options: AppOptions): Express {
   const limiter = createRateLimiter(limit.windowMs, limit.max, now);
 
   const challenges = options.challenges ?? new ChallengeStore(now);
+  const sessions = options.sessions ?? new SessionStore(now);
   const verifier = options.verifier;
   const circleVerifier = options.circleVerifier;
 
@@ -369,6 +382,62 @@ export function createApp(options: AppOptions): Express {
     return result.address;
   };
 
+  /**
+   * The opaque session token, or null when the caller did not present one.
+   *
+   * Only the Bearer scheme. Anything else is not a session and is not treated
+   * as one: the caller falls through to the signature path and is told what is
+   * missing, rather than being handed a confusing session error.
+   */
+  const bearerToken = (req: Request): string | null => {
+    const header = req.header(SESSION_HEADER);
+    if (typeof header !== "string") return null;
+    const match = /^Bearer[ ]+(\S+)$/i.exec(header.trim());
+    return match === null ? null : (match[1] as string);
+  };
+
+  /**
+   * Authenticates a READ.
+   *
+   * Two credentials are accepted here and nowhere else. A read-only session
+   * token, which proves the wallet signed in and authorizes nothing but
+   * reading. Or the full Phase 6C signature, which is strictly stronger and
+   * remains the only credential every other route will take.
+   *
+   * A session, when present, is the whole answer: the address comes from the
+   * session record and no header, body field or claim can influence it. A
+   * caller who presents a bearer token is never silently downgraded to the
+   * signature path, because that would let a bad token become a prompt for a
+   * signature the person did not ask to give.
+   *
+   * THIS FUNCTION IS FOR READS. Applying it to anything that changes state
+   * would let a bearer token authorize a mutation, which is the one thing the
+   * session design exists to prevent.
+   */
+  const authenticateRead = async (
+    req: Request,
+    res: Response,
+    action: AuthAction,
+  ): Promise<string | null> => {
+    const token = bearerToken(req);
+    if (token === null) return authenticate(req, res, action);
+
+    // The chain is the server's, never the caller's: a session minted for
+    // another network must not read this one's coordination data.
+    const result = sessions.validate(token, SN_MAIN);
+    if (!result.ok) {
+      // One code for every failure. Expired, idle, revoked, forged or issued
+      // for another chain all mean the same thing to the person holding it,
+      // and distinguishing them would only tell a guesser how close they are.
+      res.status(401).json({
+        error: "session_invalid",
+        message: "Please sign in to Iwa again.",
+      });
+      return null;
+    }
+    return result.session.address;
+  };
+
   // --- health ---
 
   app.get("/health", async (_req, res) => {
@@ -383,6 +452,10 @@ export function createApp(options: AppOptions): Express {
       // comment: if this says "in-process" and the service is scaled, roughly
       // half of all organizer actions will fail to authenticate.
       challenges: "in-process",
+      // Sessions live here too, and for the same reason: one replica. Scaled
+      // out, a token minted by one process is unknown to the next and every
+      // other private read would ask the person to sign in again.
+      sessions: "in-process",
       time: new Date(now()).toISOString(),
     });
   });
@@ -404,6 +477,61 @@ export function createApp(options: AppOptions): Express {
       chainId: challenge.chainId,
       expiresAt: new Date(challenge.expiresAt).toISOString(),
     });
+  });
+
+  /**
+   * Signs in.
+   *
+   * One action-bound signature is exchanged for a read-only session, so that
+   * looking at your own circles, invitations and standing does not ask you to
+   * approve three separate prompts you have stopped reading.
+   *
+   * The signature is verified exactly as every other Phase 6C signature is,
+   * against this route, this method and this body. The address that comes back
+   * is the verified one, and it is the only thing the session is bound to.
+   */
+  app.post("/api/auth/session", async (req, res, next) => {
+    if (!mutate(req, res)) return;
+    try {
+      const caller = await authenticate(req, res, AUTH_ACTIONS.sessionCreate);
+      if (caller === null) return;
+
+      // Challenges are only ever issued for mainnet and consuming one requires
+      // the header to match, so a verified caller is a mainnet caller. The
+      // session records the chain anyway, because the check that matters is
+      // made when the token is used, not when it is minted.
+      const created = sessions.create(caller, SN_MAIN);
+      if (created === null) {
+        return res.status(503).json({
+          error: "sessions_unavailable",
+          message: "Iwa cannot sign you in right now. Please try again shortly.",
+        });
+      }
+
+      res.json({
+        token: created.token,
+        scope: created.scope,
+        expiresAt: new Date(created.expiresAt).toISOString(),
+      });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  /**
+   * Signs out.
+   *
+   * Presenting the token is the whole authorization: it destroys that one
+   * session and can do nothing else, so possession is proof enough and no
+   * signature is asked for. Always 204, whether or not the token existed —
+   * the caller is dropping their copy either way, and an honest answer here
+   * would only tell a stranger whether a token they found is live.
+   */
+  app.post("/api/auth/session/revoke", (req, res) => {
+    if (!mutate(req, res)) return;
+    const token = bearerToken(req);
+    if (token !== null) sessions.revoke(token);
+    res.status(204).end();
   });
 
   // --- drafts ---
@@ -450,7 +578,7 @@ export function createApp(options: AppOptions): Express {
       if (id === null) return;
       const draft = await store.getDraft(id);
       if (draft === null) return res.status(404).json({ error: "not_found" });
-      const caller = await authenticate(req, res, AUTH_ACTIONS.draftReadOrganizer);
+      const caller = await authenticateRead(req, res, AUTH_ACTIONS.draftReadOrganizer);
       if (caller === null) return;
       if (caller !== draft.organizerAddress) {
         return res.status(403).json({ error: "not_organizer", message: "Only the organizer can see the invitations." });
@@ -464,7 +592,7 @@ export function createApp(options: AppOptions): Express {
   app.post("/api/drafts/mine", async (req, res, next) => {
     if (!mutate(req, res)) return;
     try {
-      const caller = await authenticate(req, res, AUTH_ACTIONS.draftsList);
+      const caller = await authenticateRead(req, res, AUTH_ACTIONS.draftsList);
       if (caller === null) return;
       const drafts = await store.listDraftsByOrganizer(caller);
       res.json(drafts.map((d) => draftFor(d, "organizer")));
@@ -656,7 +784,7 @@ export function createApp(options: AppOptions): Express {
   app.post("/api/me/circles", async (req, res, next) => {
     if (!mutate(req, res)) return;
     try {
-      const caller = await authenticate(req, res, AUTH_ACTIONS.associationsList);
+      const caller = await authenticateRead(req, res, AUTH_ACTIONS.associationsList);
       if (caller === null) return;
       res.json(await store.listAssociationsForAddress(caller));
     } catch (e) {
@@ -672,7 +800,7 @@ export function createApp(options: AppOptions): Express {
   app.post("/api/me/invitations", async (req, res, next) => {
     if (!mutate(req, res)) return;
     try {
-      const caller = await authenticate(req, res, AUTH_ACTIONS.invitationsList);
+      const caller = await authenticateRead(req, res, AUTH_ACTIONS.invitationsList);
       if (caller === null) return;
       const all = await store.listAssociationsForAddress(caller);
       res.json(all.filter((a) => a.accepted));

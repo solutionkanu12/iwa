@@ -20,8 +20,8 @@ import { Island } from "../components/Island.tsx";
 import { Button } from "../components/Button.tsx";
 import { ConnectPrompt } from "./ConnectPrompt.tsx";
 import { useWallet } from "../app/WalletProvider.tsx";
-import { backend, BackendError, type CircleAssociation, type WalletSigner } from "../lib/backend.ts";
-import { currentWallet } from "../lib/starknetWallet.ts";
+import { useSession, SignInRequiredError } from "../app/SessionProvider.tsx";
+import { backend, BackendError, type CircleAssociation } from "../lib/backend.ts";
 import { get_reputation } from "../lib/iwaStarknet.ts";
 import { standingSummary, type Standing } from "../lib/standing.ts";
 import { CREDENTIAL_VERIFICATION } from "../lib/features.ts";
@@ -30,20 +30,11 @@ import { tokenDecimals, tokenSymbol } from "../lib/starknetConfig.ts";
 import { circlePath, type Route } from "../lib/router.ts";
 import styles from "./CircleView.module.css";
 
-/** Turns the connected wallet into the signer the API client expects. */
-function walletSigner(): WalletSigner {
-  return async (typedData) => {
-    const wallet = currentWallet();
-    if (wallet === null) throw new Error("Connect your wallet first.");
-    const signature = await wallet.account.signMessage(typedData as never);
-    return Array.isArray(signature) ? signature.map(String) : [String(signature)];
-  };
-}
-
 type Entry = { association: CircleAssociation; standing: Standing | null };
 
 export function StandingView({ navigate }: { navigate: (to: string | Route) => void }) {
   const { address, ensureIdentity } = useWallet();
+  const { authorizedRead } = useSession();
   const [entries, setEntries] = useState<Entry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,7 +45,9 @@ export function StandingView({ navigate }: { navigate: (to: string | Route) => v
     try {
       // Only circles where this wallet took a place have a record to read.
       // Organizing one is not participating in it.
-      const mine = (await backend.myCircles(address, walletSigner())).filter((a) => a.accepted);
+      const mine = (await authorizedRead((auth) => backend.myCircles(auth))).filter(
+        (a) => a.accepted,
+      );
       const identity = mine.some((a) => a.status === "created")
         ? await ensureIdentity()
         : null;
@@ -82,9 +75,13 @@ export function StandingView({ navigate }: { navigate: (to: string | Route) => v
       setEntries(read);
     } catch (e) {
       setEntries([]);
-      setError(e instanceof BackendError ? e.message : "Could not read your standing.");
+      setError(
+        e instanceof BackendError || e instanceof SignInRequiredError
+          ? e.message
+          : "Could not read your standing.",
+      );
     }
-  }, [address, ensureIdentity]);
+  }, [address, ensureIdentity, authorizedRead]);
 
   useEffect(() => {
     void load();

@@ -123,6 +123,8 @@ const FRIENDLY: Record<string, string> = {
   wrong_address: "That confirmation was signed by a different wallet.",
   wrong_chain: "Please switch your wallet to Starknet mainnet.",
   bad_signature: "Your wallet signature could not be verified.",
+  session_invalid: "Your Iwa sign-in has ended. Please sign in again.",
+  sessions_unavailable: "Iwa could not sign you in just now. Please try again shortly.",
   forbidden_field: "Something went wrong preparing that request.",
   not_found: "We could not find that circle.",
   already_created: "This circle has already been created.",
@@ -255,9 +257,82 @@ async function signedCall<T>(address: string, sign: WalletSigner, op: SignedCall
   return call<T>(op.path, { method: op.method, headers, body: JSON.stringify(body) });
 }
 
+/**
+ * How a private READ proves who is asking.
+ *
+ * Either an opaque read-only session token, obtained once by signing in, or a
+ * full per-request signature. Both are verified; the session is not a weaker
+ * proof, it is the same proof made once instead of every time.
+ *
+ * Only reads take this. Everything that changes state takes an address and a
+ * signer and nothing else, because a session must never be able to authorize
+ * a reorder, a creation record, or anything that moves money.
+ */
+export type ReadAuth = { session: string } | { address: string; sign: WalletSigner };
+
+/**
+ * Sends one authenticated read.
+ *
+ * With a session the address is not sent at all: the service reads it from the
+ * session record. That is the point — a client claim about who is asking has
+ * never been the credential, and with a session there is not even a claim to
+ * ignore.
+ */
+async function readCall<T>(auth: ReadAuth, op: SignedCall): Promise<T> {
+  if ("session" in auth) {
+    return call<T>(op.path, {
+      method: op.method,
+      headers: { authorization: `Bearer ${auth.session}` },
+      body: JSON.stringify(op.body ?? {}),
+    });
+  }
+  return signedCall<T>(auth.address, auth.sign, op);
+}
+
+export interface SessionView {
+  token: string;
+  scope: "read";
+  expiresAt: string;
+}
+
 export const backend = {
   async health(): Promise<{ status: string; database: string }> {
     return call("/health");
+  },
+
+  /**
+   * Signs in: one action-bound signature, exchanged for a read-only session.
+   *
+   * The signature says session:create and is bound to this route and this
+   * empty body, exactly as every other authorized operation is. It authorizes
+   * one thing — the minting of a token that can read this wallet's own
+   * coordination data — and cannot be spent on anything else.
+   */
+  async createSession(address: string, sign: WalletSigner): Promise<SessionView> {
+    return signedCall(address, sign, {
+      action: AUTH_ACTIONS.sessionCreate,
+      method: "POST",
+      path: "/api/auth/session",
+    });
+  },
+
+  /**
+   * Ends a session on the service. Holding the token is the whole
+   * authorization, since it can do nothing but destroy itself.
+   *
+   * Never throws. The copy in memory is dropped by the caller either way, and
+   * that is the part that protects the person; this is the tidy-up.
+   */
+  async revokeSession(token: string): Promise<void> {
+    try {
+      await fetch(`${BASE_URL}/api/auth/session/revoke`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: "{}",
+      });
+    } catch {
+      // Unreachable service. Already forgotten locally.
+    }
   },
 
   async createDraft(input: CreateDraftInput, sign: WalletSigner): Promise<DraftView> {
@@ -274,21 +349,21 @@ export const backend = {
     return call(`/api/drafts/${id}`);
   },
 
-  /** The organizer view, including the invitation links. Requires a signature. */
-  async getDraftAsOrganizer(
-    id: string,
-    organizerAddress: string,
-    sign: WalletSigner,
-  ): Promise<DraftView> {
-    return signedCall(organizerAddress, sign, {
+  /**
+   * The organizer view, including the invitation links. Authenticated: the
+   * service checks the caller really organizes this draft, whichever credential
+   * they presented.
+   */
+  async getDraftAsOrganizer(id: string, auth: ReadAuth): Promise<DraftView> {
+    return readCall(auth, {
       action: AUTH_ACTIONS.draftReadOrganizer,
       method: "POST",
       path: `/api/drafts/${id}/organizer-view`,
     });
   },
 
-  async listDrafts(organizerAddress: string, sign: WalletSigner): Promise<DraftView[]> {
-    return signedCall(organizerAddress, sign, {
+  async listDrafts(auth: ReadAuth): Promise<DraftView[]> {
+    return readCall(auth, {
       action: AUTH_ACTIONS.draftsList,
       method: "POST",
       path: "/api/drafts/mine",
@@ -302,8 +377,8 @@ export const backend = {
    * accepted invitation recoverable after a browser is closed: no token is
    * needed, only the same wallet.
    */
-  async myCircles(address: string, sign: WalletSigner): Promise<CircleAssociation[]> {
-    return signedCall(address, sign, {
+  async myCircles(auth: ReadAuth): Promise<CircleAssociation[]> {
+    return readCall(auth, {
       action: AUTH_ACTIONS.associationsList,
       method: "POST",
       path: "/api/me/circles",
@@ -311,8 +386,8 @@ export const backend = {
   },
 
   /** The invitations this wallet accepted. */
-  async myInvitations(address: string, sign: WalletSigner): Promise<CircleAssociation[]> {
-    return signedCall(address, sign, {
+  async myInvitations(auth: ReadAuth): Promise<CircleAssociation[]> {
+    return readCall(auth, {
       action: AUTH_ACTIONS.invitationsList,
       method: "POST",
       path: "/api/me/invitations",

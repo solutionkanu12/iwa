@@ -14,6 +14,7 @@ import { currentWallet } from "../lib/starknetWallet";
 import { create_circle_from_order } from "../lib/iwaStarknet";
 import { circlePath, type Route } from "../lib/router";
 import { useWallet } from "../app/WalletProvider";
+import { useSession } from "../app/SessionProvider.tsx";
 import { mergePrivate, moveInOrder, orderOf } from "../lib/draftOrder";
 import { CHAIN_ID, MAX_MEMBERS, MIN_MEMBERS, USDC_DECIMALS, USDC_TOKEN } from "../lib/starknetConfig";
 import { formatUnits, parseUnits } from "../chains/strk20/funding";
@@ -53,6 +54,7 @@ export function OrganizerCircleView({
 }) {
   const wallet = useWallet();
   const address = wallet.address;
+  const { authorizedRead } = useSession();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -96,19 +98,25 @@ export function OrganizerCircleView({
    * the service; this asks for them back rather than keeping a copy that a
    * reload would destroy.
    */
-  const recoverDraft = useCallback(async (organizer: string) => {
-    const mine = await backend.listDrafts(organizer, walletSigner());
-    const open = mine.find((d) => d.status !== "created" && d.status !== "abandoned") ?? mine[0];
-    if (open === undefined) return;
-    setDraft(await backend.getDraftAsOrganizer(open.id, organizer, walletSigner()));
-  }, []);
+  const recoverDraft = useCallback(async () => {
+    // Two reads, and before sessions they cost two signatures every time the
+    // organizer opened this page. Both go through one sign-in now. Neither
+    // changes anything; recording a creation, reordering and reconciling all
+    // still ask the wallet for their own signature, every time.
+    await authorizedRead(async (auth) => {
+      const mine = await backend.listDrafts(auth);
+      const open = mine.find((d) => d.status !== "created" && d.status !== "abandoned") ?? mine[0];
+      if (open === undefined) return;
+      setDraft(await backend.getDraftAsOrganizer(open.id, auth));
+    });
+  }, [authorizedRead]);
 
   const onConnect = useCallback(
     () =>
       run("Connecting your wallet", async () => {
         const addr = await wallet.connect();
         if (addr === null) return;
-        await recoverDraft(addr);
+        await recoverDraft();
       }),
     [run, recoverDraft, wallet],
   );
