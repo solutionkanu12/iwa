@@ -67,8 +67,7 @@ export function CircleListView({
   empty,
   connectReason,
 }: CircleListViewProps) {
-  const wallet = useWallet();
-  const address = wallet.address;
+  const { address, ensureIdentity } = useWallet();
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -89,7 +88,7 @@ export function CircleListView({
       // some circle here actually has a place taken by this wallet. An
       // organizer who never took one is not asked to sign for nothing.
       const needsIdentity = associations.some((a) => a.accepted && a.status === "created");
-      const identity = needsIdentity ? await wallet.ensureIdentity() : null;
+      const identity = needsIdentity ? await ensureIdentity() : null;
       const enriched = await Promise.all(
         associations.map(async (association): Promise<Row> => {
           if (association.status !== "created" || association.circleId === null) {
@@ -117,7 +116,10 @@ export function CircleListView({
       setRows([]);
       setError(e instanceof BackendError ? e.message : "Could not load your circles.");
     }
-  }, [address, source, wallet]);
+  // Depends on the question, not on the answer. ensureIdentity is stable and
+  // the identity arriving no longer changes anything here, so this read runs
+  // once per account rather than again as soon as the wallet has signed.
+  }, [address, source, ensureIdentity]);
 
   useEffect(() => {
     void load();

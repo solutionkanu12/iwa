@@ -53,6 +53,12 @@ export class NoPrivacyWalletError extends Error {
   }
 }
 
+/** A change that happened in the wallet rather than in Iwa. */
+export type WalletChange =
+  | { type: "accountsChanged"; accounts: string[] }
+  | { type: "networkChanged"; chainId: string }
+  | { type: "disconnected" };
+
 let connected: ConnectedWallet | null = null;
 
 /** The live connection, or null. Held in memory only. */
@@ -100,6 +106,61 @@ export async function connectWallet(): Promise<string> {
 export async function disconnectWallet(): Promise<void> {
   connected = null;
   cachedIdentity = null;
+}
+
+/**
+ * Drops the derived identity without dropping the connection.
+ *
+ * Used when the wallet moves to another account or another network: the
+ * connection is still live, but the identity derived from the previous one must
+ * not be reused, because it marks which seat in a circle belongs to you.
+ */
+export function forgetIdentity(): void {
+  cachedIdentity = null;
+}
+
+/**
+ * Watches the wallet for changes the app did not make.
+ *
+ * A person can change account, switch network, or disconnect in their
+ * extension, and none of that passes through Iwa. Wallets expose this through
+ * the standard `accountsChanged` and `networkChanged` events; a wallet that
+ * emits neither simply produces no callbacks, and the app carries on as before
+ * rather than guessing.
+ *
+ * Returns a function that stops watching.
+ */
+export function watchWallet(
+  onEvent: (event: WalletChange) => void,
+): () => void {
+  // starknet.js exposes the two wallet events on the account itself. A wallet
+  // that emits neither simply produces no callbacks, and the app carries on as
+  // it did before rather than guessing at the wallet's state.
+  const account = connected?.account as unknown as {
+    onAccountChange?: (cb: (accounts?: string[]) => void) => void;
+    onNetworkChanged?: (cb: (chainId?: string) => void) => void;
+  } | undefined;
+  if (account === undefined) return () => {};
+
+  let live = true;
+
+  account.onAccountChange?.((accounts) => {
+    if (!live) return;
+    onEvent({ type: "accountsChanged", accounts: (accounts ?? []).map(String) });
+  });
+
+  account.onNetworkChanged?.((chainId) => {
+    if (!live) return;
+    if (typeof chainId === "string" && chainId !== "") {
+      onEvent({ type: "networkChanged", chainId });
+    }
+  });
+
+  // These subscriptions have no documented removal, so the guard is what stops
+  // a stale callback reaching a provider that has moved on.
+  return () => {
+    live = false;
+  };
 }
 
 /**

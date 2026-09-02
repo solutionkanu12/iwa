@@ -43,8 +43,7 @@ function walletSigner(): WalletSigner {
 type Entry = { association: CircleAssociation; standing: Standing | null };
 
 export function StandingView({ navigate }: { navigate: (to: string | Route) => void }) {
-  const wallet = useWallet();
-  const address = wallet.address;
+  const { address, ensureIdentity } = useWallet();
   const [entries, setEntries] = useState<Entry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -57,7 +56,7 @@ export function StandingView({ navigate }: { navigate: (to: string | Route) => v
       // Organizing one is not participating in it.
       const mine = (await backend.myCircles(address, walletSigner())).filter((a) => a.accepted);
       const identity = mine.some((a) => a.status === "created")
-        ? await wallet.ensureIdentity()
+        ? await ensureIdentity()
         : null;
 
       const read = await Promise.all(
@@ -85,7 +84,7 @@ export function StandingView({ navigate }: { navigate: (to: string | Route) => v
       setEntries([]);
       setError(e instanceof BackendError ? e.message : "Could not read your standing.");
     }
-  }, [address, wallet]);
+  }, [address, ensureIdentity]);
 
   useEffect(() => {
     void load();

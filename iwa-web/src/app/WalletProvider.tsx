@@ -20,7 +20,9 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -29,12 +31,18 @@ import {
   connectWallet,
   deriveMemberCommitment,
   disconnectWallet,
+  forgetIdentity,
+  watchWallet,
   WalletCancelledError,
   type MemberCommitment,
 } from "../lib/starknetWallet";
+import { REQUIRED_CHAIN_ID } from "../chains/strk20/walletConnect";
+import { identityCacheFor, nextWalletState, DISCONNECTED } from "./walletSession";
 
 export interface WalletState {
   address: string | null;
+  /** The wallet is on the network Iwa settles on. False while it is elsewhere. */
+  onExpectedChain: boolean;
   /** Set once a screen has needed the member identity and the wallet signed. */
   identity: MemberCommitment | null;
   connecting: boolean;
@@ -52,17 +60,39 @@ export interface WalletState {
 const WalletContext = createContext<WalletState | null>(null);
 
 export function WalletProvider({ children }: { children: ReactNode }) {
-  const [address, setAddress] = useState<string | null>(null);
-  const [identity, setIdentity] = useState<MemberCommitment | null>(null);
+  const [session, setSession] = useState(DISCONNECTED);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  /**
+   * The derived identity, held in a ref rather than in state.
+   *
+   * Deliberate. Deriving it used to set state, which changed the context value,
+   * which changed the callbacks screens depend on, which re-ran the very read
+   * that asked for the identity, which asked the wallet to sign a second time.
+   * A ref lets the identity arrive without telling anybody to start again.
+   *
+   * Memory only, and never persisted: the private half of this must not touch
+   * storage, and the whole thing is dropped whenever the account or the network
+   * moves.
+   */
+  const identityRef = useRef<MemberCommitment | null>(null);
+
+  /** Reads the latest session inside callbacks without depending on it. */
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
 
   const connect = useCallback(async (): Promise<string | null> => {
     setConnecting(true);
     setError(null);
     try {
       const addr = await connectWallet();
-      setAddress(addr);
+      setSession({
+        address: addr,
+        chainId: REQUIRED_CHAIN_ID,
+        identityAddress: null,
+        onExpectedChain: true,
+      });
       return addr;
     } catch (e) {
       // A cancelled modal is a decision, not a fault: no error is shown for it.
@@ -77,28 +107,84 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const disconnect = useCallback(async () => {
     await disconnectWallet();
-    setAddress(null);
-    setIdentity(null);
+    identityRef.current = null;
+    setSession(DISCONNECTED);
     setError(null);
   }, []);
 
+  /**
+   * Watches the wallet for things that did not go through Iwa.
+   *
+   * A person can change account, switch network or disconnect in their
+   * extension. Until this existed none of it was noticed, so the app could keep
+   * showing an address the wallet had left and keep an identity derived from
+   * it. Every one of those drops the identity: it belongs to one account on one
+   * network, and a stale one would mark somebody else's seat as yours.
+   *
+   * Nothing here initiates a transaction or asks for a signature. It only
+   * forgets.
+   */
+  useEffect(() => {
+    return watchWallet((event) => {
+      setSession((current) => {
+        const next = nextWalletState(current, event, REQUIRED_CHAIN_ID);
+        if (next.identityAddress === null && current.identityAddress !== null) {
+          identityRef.current = null;
+          forgetIdentity();
+        }
+        if (next.address === null && current.address !== null) {
+          identityRef.current = null;
+          forgetIdentity();
+        }
+        return next;
+      });
+    });
+  }, []);
+
+  /**
+   * The member identity, deriving it once if this is the first time it is
+   * needed for the connected account.
+   *
+   * Stable across renders: it reads the session through a ref, so it does not
+   * change when the identity arrives and does not restart whatever asked for
+   * it. It refuses on the wrong network, since the identity is signed under a
+   * domain that names the chain.
+   */
   const ensureIdentity = useCallback(async (): Promise<MemberCommitment | null> => {
-    if (address === null) return null;
-    if (identity !== null) return identity;
+    const now = sessionRef.current;
+    if (now.address === null || !now.onExpectedChain) return null;
+
+    const usable = identityCacheFor({ ...now, identityAddress: now.address });
+    if (identityRef.current !== null && usable !== null) return identityRef.current;
+
     try {
-      const derived = await deriveMemberCommitment(address);
-      setIdentity(derived);
+      const derived = await deriveMemberCommitment(now.address);
+      // The account may have moved while the wallet was showing the prompt.
+      if (!identityCacheFor({ ...sessionRef.current, identityAddress: now.address })) return null;
+      identityRef.current = derived;
+      setSession((c) => (c.identityAddress === now.address ? c : { ...c, identityAddress: now.address }));
       return derived;
     } catch {
       // Without a signature there is no membership to show. The public parts of
       // every screen still work, so this is not fatal.
       return null;
     }
-  }, [address, identity]);
+  }, []);
 
   const value = useMemo<WalletState>(
-    () => ({ address, identity, connecting, error, connect, disconnect, ensureIdentity }),
-    [address, identity, connecting, error, connect, disconnect, ensureIdentity],
+    () => ({
+      address: session.address,
+      onExpectedChain: session.onExpectedChain,
+      identity: identityRef.current,
+      connecting,
+      error,
+      connect,
+      disconnect,
+      ensureIdentity,
+    }),
+    // Deliberately not depending on the identity: it arriving must not restart
+    // the read that asked for it. Screens that need it call ensureIdentity.
+    [session.address, session.onExpectedChain, connecting, error, connect, disconnect, ensureIdentity],
   );
 
   return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;
