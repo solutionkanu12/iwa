@@ -664,3 +664,63 @@
     border-top-color: var(--iris);
   }
 }
+
+/* The circle timeline.
+   A single column at every width, because a horizontal timeline on a 320px
+   screen either scrolls sideways or clips its labels, and both are worse than
+   a list. The marker is a small dot in the existing palette rather than a new
+   visual language. */
+.timeline {
+  list-style: none;
+  margin: 18px 0 0;
+  padding: 0;
+  border-left: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.timelineItem {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  align-items: baseline;
+  padding: 7px 0 7px 18px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.timelineItem::before {
+  content: "";
+  position: absolute;
+  left: -4px;
+  top: 13px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.16);
+}
+
+.timelineItem[data-tone="done"]::before {
+  background: rgba(0, 0, 0, 0.32);
+}
+
+.timelineItem[data-tone="current"]::before {
+  background: var(--mint, #1f9d76);
+  box-shadow: 0 0 0 3px rgba(31, 157, 118, 0.16);
+}
+
+.timelineLabel {
+  color: var(--ink, #1a1a1a);
+}
+
+.timelineItem[data-tone="upcoming"] .timelineLabel {
+  opacity: 0.55;
+}
+
+.timelineItem[data-tone="current"] .timelineLabel {
+  font-weight: 600;
+}
+
+.timelineDetail {
+  color: var(--muted, #6b6b6b);
+  font-size: 12px;
+}

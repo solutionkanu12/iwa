@@ -14,6 +14,7 @@
 import type { SnarkProof } from "./convert";
 import type { Circle, CircleStatus } from "./types";
 import type { Standing } from "./standing";
+import type { ObligationFacts } from "./roundState";
 import {
   DEMO_CIRCLE_ID,
   IWA_CIRCLE,
@@ -156,7 +157,7 @@ export async function get_circle(
     token: USDC_TOKEN,
     trust_required: false,
     amount,
-    frequency: 0,
+    frequency: view.cadenceSeconds,
     size: view.memberLimit,
     current_round: view.currentRound,
     status: mapStatus(view.status, view.joinedCount, view.memberLimit),
@@ -167,6 +168,42 @@ export async function get_circle(
     youJoined,
     yourStreak: 0,
   };
+}
+
+/**
+ * This member's obligation for one round, with the deadlines the contract set.
+ *
+ * Returns null when there is no obligation, which is the ordinary state of a
+ * round that has not begun. An absent obligation is not a debt, so it must not
+ * be reported as one.
+ */
+export async function get_round_obligation(
+  circleId: number,
+  round: number,
+  memberCommitment: Uint8Array,
+): Promise<ObligationFacts | null> {
+  const ref = feltHex(bytes32ToFelt(memberCommitment));
+  try {
+    const o = await getContributionObligation(provider, circleId, round, ref);
+    return {
+      status: o.status as ObligationFacts["status"],
+      requiredAmount: o.requiredAmount,
+      dueAt: o.dueAt,
+      graceEndsAt: o.graceEndsAt,
+    };
+  } catch {
+    // No obligation for this round yet.
+    return null;
+  }
+}
+
+/** When the circle was created on chain, in unix seconds, or null if unreadable. */
+export async function get_circle_created_at(circleId: number): Promise<number | null> {
+  try {
+    return (await readCircle(provider, circleId)).createdAt;
+  } catch {
+    return null;
+  }
 }
 
 export async function get_members(circleId: number): Promise<string[]> {

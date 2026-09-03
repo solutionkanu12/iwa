@@ -128,9 +128,15 @@ export interface CircleView {
   id: number;
   asset: "Usdc" | "Strk";
   contributionAmount: bigint;
+  /** Seconds between rounds. */
+  cadenceSeconds: number;
+  /** Seconds after a deadline during which a payment is late rather than missed. */
+  gracePeriodSeconds: number;
   memberLimit: number;
   currentRound: number;
   status: CircleStatus;
+  /** Unix seconds. When the circle was created on chain. */
+  createdAt: number;
   organizer: string;
   joinedCount: number;
 }
@@ -142,9 +148,15 @@ export async function getCircle(provider: RpcProvider, circleId: number): Promis
     id: asInt(r[0]),
     asset: asInt(r[1]) === 0 ? "Usdc" : "Strk",
     contributionAmount: BigInt(r[2]),
+    // Felts 3, 4 and 8 were always in the reply and were always discarded.
+    // They are the terms a person actually asks about: how often, how long
+    // they have after a deadline, and when this started.
+    cadenceSeconds: asInt(r[3]),
+    gracePeriodSeconds: asInt(r[4]),
     memberLimit: asInt(r[5]),
     currentRound: asInt(r[6]),
     status: variant(CIRCLE_STATUS, r[7], "CircleStatus"),
+    createdAt: asInt(r[8]),
     organizer: r[9],
     joinedCount: asInt(r[11]),
   };
@@ -172,9 +184,21 @@ export async function isMember(
   return asInt(r[0]) === 1;
 }
 
+/**
+ * One member's obligation for one round.
+ *
+ * `dueAt` and `graceEndsAt` are written by the contract when the round begins
+ * (`due_at = round_started_at + cadence`, `grace_ends_at = due_at + grace`),
+ * so they are facts rather than estimates. They were already in the reply and
+ * were simply not being read.
+ */
 export interface ObligationView {
   round: number;
   requiredAmount: bigint;
+  /** Unix seconds. */
+  dueAt: number;
+  /** Unix seconds. Always dueAt plus the circle's grace period. */
+  graceEndsAt: number;
   status: ContributionStatus;
 }
 
@@ -193,6 +217,8 @@ export async function getContributionObligation(
   return {
     round: asInt(r[1]),
     requiredAmount: BigInt(r[4]),
+    dueAt: asInt(r[5]),
+    graceEndsAt: asInt(r[6]),
     status: variant(CONTRIBUTION_STATUS, r[7], "ContributionStatus"),
   };
 }

@@ -25,6 +25,13 @@ import { Island } from "../components/Island.tsx";
 import { Button } from "../components/Button.tsx";
 import { ProveView, CLAIMS } from "./ProveView.tsx";
 import { canJoin } from "../chains/strk20/circleState.ts";
+import {
+  circleTimeline,
+  relativeDay,
+  roundSummary,
+  type ObligationFacts,
+} from "../lib/roundState.ts";
+import { get_round_obligation, get_circle_created_at } from "../lib/iwaStarknet.ts";
 import styles from "./CircleView.module.css";
 
 // One circle: its seats, its round, and what you can do about it.
@@ -259,6 +266,11 @@ export function CircleView({
   const [contribError, setContribError] = useState<string | null>(null);
   const [contribOnTime, setContribOnTime] = useState(true);
   const [alreadyPaid, setAlreadyPaid] = useState(false);
+  // This round's obligation and the circle's start, both straight from chain.
+  // Null means not read rather than nothing owed, so nothing is claimed until
+  // the answer is actually in.
+  const [obligation, setObligation] = useState<ObligationFacts | null>(null);
+  const [createdAt, setCreatedAt] = useState<number | null>(null);
   const [collectStatus, setCollectStatus] = useState<Status>("idle");
   const [collectTx, setCollectTx] = useState<string | null>(null);
   const [collectError, setCollectError] = useState<string | null>(null);
@@ -303,6 +315,8 @@ export function CircleView({
     setContribTx(null);
     setContribError(null);
     setAlreadyPaid(false);
+    setObligation(null);
+    setCreatedAt(null);
     setCollectStatus("idle");
     setCollectTx(null);
     setCollectError(null);
@@ -314,6 +328,16 @@ export function CircleView({
         if (!live) return;
         setCircle(c);
         await loadPaidStatus(c, mine?.commitmentBytes);
+
+        const started = await get_circle_created_at(circleId);
+        if (!live) return;
+        setCreatedAt(started);
+
+        if (mine !== null && c.youJoined) {
+          const o = await get_round_obligation(circleId, c.current_round, mine.commitmentBytes);
+          if (!live) return;
+          setObligation(o);
+        }
       } catch (err) {
         console.warn("circle read failed", err);
       } finally {
@@ -565,6 +589,36 @@ export function CircleView({
     );
     const sym = tokenSymbol(circle.token);
     const decimals = tokenDecimals(circle.token);
+
+    // Where this round stands, and the shape of the whole circle. Both are
+    // derived from what the chain returned and from nothing else: the summary
+    // is only offered once this wallet is actually a member, because a status
+    // line about somebody who has not joined would be answering a question
+    // nobody asked.
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const yourSlotIndex = circle.members.findIndex((m) => m.isYou);
+    const summary = circle.youJoined
+      ? roundSummary({
+          round: circle.current_round,
+          memberLimit: circle.size,
+          contributionAmount: circle.amount,
+          circleStatus: circle.status,
+          youJoined: circle.youJoined,
+          reserved: circle.reserved,
+          yourSlot: yourSlotIndex === -1 ? null : yourSlotIndex,
+          obligation,
+          now: nowSeconds,
+        })
+      : null;
+    const timeline = circleTimeline({
+      currentRound: circle.current_round,
+      memberLimit: circle.size,
+      createdAt,
+      obligation,
+      circleComplete: circle.status === "complete",
+      now: nowSeconds,
+    });
+
     // A seat in the payout order is a place reserved for you, not proof you
     // joined. Every seat is reserved the moment the circle is created, so the
     // join offer has to come from the contract's own joined count.
@@ -635,13 +689,43 @@ export function CircleView({
               {formatAmount(circle.pot, decimals)} {sym}
             </span>
           </div>
-          {circle.youJoined ? (
-            <div className={styles.row}>
-              <span className={styles.k}>Your place</span>
-              <span className={styles.v}>You are a member of this circle</span>
-            </div>
+          {summary !== null ? (
+            <>
+              <div className={styles.row}>
+                <span className={styles.k}>Your status</span>
+                <span className={styles.v}>
+                  {summary.paymentLabel}
+                  {summary.paidLate ? " (late)" : ""}
+                </span>
+              </div>
+              {summary.dueAt !== null && summary.payment !== "paid" ? (
+                <div className={styles.row}>
+                  <span className={styles.k}>Due</span>
+                  <span className={styles.v}>{relativeDay(summary.dueAt, nowSeconds)}</span>
+                </div>
+              ) : null}
+              <div className={styles.row}>
+                <span className={styles.k}>Whose turn</span>
+                <span className={styles.v}>{summary.turnLabel}</span>
+              </div>
+            </>
           ) : null}
         </div>
+
+        {summary?.nextAction ? (
+          <p className={styles.meta}>{summary.nextAction}</p>
+        ) : null}
+
+        <ol className={styles.timeline}>
+          {timeline.map((entry) => (
+            <li key={entry.key} className={styles.timelineItem} data-tone={entry.tone}>
+              <span className={styles.timelineLabel}>{entry.label}</span>
+              {entry.detail !== null ? (
+                <span className={styles.timelineDetail}>{entry.detail}</span>
+              ) : null}
+            </li>
+          ))}
+        </ol>
 
         <div className={styles.promise}>
           <LockIcon />
