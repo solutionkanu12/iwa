@@ -51,7 +51,7 @@ export const POT_COLLECTION: Capability = {
   available: false,
   title: "Collecting the pot",
   reason:
-    "Collecting is not open in this version. Your turn and your place in the order are recorded, and nothing about them changes while this is being finished.",
+    "Collecting is not open in this version. Your turn and your place in the order are recorded, and nothing about them changes while this is being finished. When it does open, only you will be able to release your own round, using the same wallet you joined with, so keeping access to that wallet is what keeps your turn claimable.",
 };
 
 /** Every declared capability, for tests and for anything that lists them. */

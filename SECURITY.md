@@ -407,7 +407,222 @@ Where funds can safely be recovered:
 - recovery must not bypass payout/accounting invariants
 - recovery actions must be replay protected
 
-The exact recovery path must be specified before production deployment.
+The deployed v1 contracts satisfy the first four points and do not satisfy the
+fifth. No recovery path exists for a member who loses the key that authorizes
+their own payout. That gap is finding H-2 and is described in full in the next
+section. It was accepted knowingly for this deployment rather than resolved,
+and the contracts are immutable, so it cannot be changed without a new version.
+
+## Payout liveness and a lost member key
+
+This is finding H-2 from the Phase 6 audit. It is a liveness limitation of the
+deployed design, not a defect in the backend, the frontend, the organizer flow
+or the STRK20 caller. It is recorded here because it is the most serious known
+limitation of the current contracts and it cannot be fixed in place.
+
+### The condition
+
+Every round has one scheduled recipient, fixed at creation. Before that round's
+pot can settle, the scheduled member must call `authorize_payout_settlement` and
+present a signature that verifies against `member_auth_keys[(circle_id,
+member_ref)]`. That key is the public half of a keypair the member derives in
+their own browser from one wallet signature. It is written once, when they join,
+and there is no setter anywhere in the contract.
+
+If that member permanently loses access to the wallet the key was derived from,
+or simply refuses to sign, the required authorization can never be produced.
+The round's pot then stays where it is, indefinitely.
+
+The effect is wider than one round. `prepare_final_settlement` refuses to run
+while any round is still `Scheduled`, and it does so deliberately: the preflight
+loop treats a scheduled payout as a rightful claim that must not be silently
+converted to recovery or discarded. That protects the rightful recipient from
+having their entitlement taken away, and the price of it is that one unreachable
+key can also stop the circle from being finalized.
+
+### Why it happens
+
+It follows directly from two decisions that are otherwise correct.
+
+The first is that a member is a commitment, not an address, and their authority
+over their own money is a key only they hold. Nobody else can produce that
+signature, which is exactly the property that makes the payout order impossible
+for an organizer or an operator to redirect.
+
+The second is that the contracts carry no administrative power at all. There is
+no owner, no pause, no setter and no upgrade path. `setup_authority` is written
+once at deployment and burned to zero, which can be read from chain.
+
+Together these mean the only party who can release a round's pot is the member
+it belongs to. When that member is unreachable, so is the pot.
+
+### Who cannot recover it
+
+Nobody. Stated precisely, because the distinction matters:
+
+- The organizer cannot. Every settlement hash binds `member_ref`, and the
+  organizer holds no key that satisfies it.
+- Iwa cannot. There is no admin function, no seizure path, and no key held by
+  the operator that any settlement function will accept.
+- The other members cannot. Authorization is per member, not by threshold.
+- The helper cannot. `IwaStrk20Helper` accepts calls only from the privacy pool
+  and moves tokens only along a settlement the circle contract has authorized.
+- A redeployment cannot. The deployed contracts are immutable and the funds are
+  accounted against the deployed instances.
+
+`normalize_surplus` on the helper deserves an explicit mention, because it is
+permissionless and it does move tokens, and it must not be mistaken for a rescue
+path. It can only move surplus, meaning the amount held above the sum of every
+accounted round liability. A stranded pot is an accounted round liability, so it
+is not surplus. The function asserts `surplus != 0` and would revert, and it
+finishes by asserting the remaining balance still equals the accounted total, so
+it cannot reduce backing for a real obligation. Its destination is immutable
+storage rather than a parameter, so a caller cannot direct value anywhere.
+
+### What is not true
+
+The funds are not stealable, and no one can redirect them. Every settlement
+function binds the circle, the round, the member commitment, the helper, the
+pool, the token, the exact amount and the destination note into the hash that is
+signed. A signature for one payout cannot be spent on another, and there is no
+recipient substitution anywhere in the design.
+
+This is also not an active exploit, and it does not mean funds are generally
+unsafe. It is a liveness condition with one trigger: the scheduled recipient of
+a round becoming unable or unwilling to authorize their own settlement. Circles
+whose members retain access to their wallets are unaffected, and the accounting
+invariants hold either way.
+
+### Current status
+
+Accepted as a known limitation of this deployment. Fixing it properly requires
+a new contract version, described under Contract versioning below. No patch is
+being rushed into the deployed contracts, because they cannot be patched, and no
+administrative override is being added, because that would trade a liveness
+problem for a custody problem.
+
+### Options considered for a future contract version
+
+None of these are implemented. They are recorded so the v2 design starts from an
+argued position rather than from scratch.
+
+**A. Time locked fallback recipient.** After a long, fixed delay with no
+authorization, settlement may proceed to a destination fixed before the circle
+started.
+
+*Liveness:* solves it, and is the only option here that works when the member is
+genuinely gone rather than merely inconvenienced. *Custody:* stays
+non-custodial if the fallback is committed at creation and cannot be edited.
+*Attack surface:* the delay is the whole defence. Too short and it becomes a
+denial of service against a member who is briefly offline. *Abuse risk:* the
+main one is choosing the fallback badly, so it should be the member's own second
+destination rather than the organizer's. *Organizer power:* none, provided the
+organizer never chooses the fallback. *Admin power:* none. *Payout order:*
+unchanged. The rotation and the amounts stay deterministic; only the destination
+of one settlement changes, and only after a published delay. *Privacy:* the
+fallback destination is another note, so the pool model is unchanged, though a
+fallback that fires is publicly visible as a fallback. *Deployment:* new
+contract version.
+
+**B. Member designated recovery key.** A member registers a second public key at
+join time, and either key can authorize their payouts.
+
+*Liveness:* solves the lost device case, not the lost person case. *Custody:*
+fully non-custodial, and the cleanest fit with the existing model, since it
+changes one key lookup into two. *Attack surface:* doubles the number of keys
+that can authorize a payout, so a compromised recovery key is as good as the
+primary. *Abuse risk:* low, but people store both halves in the same place and
+lose both together. *Organizer power:* none. *Admin power:* none. *Payout
+order:* unchanged. *Privacy:* unchanged, since the key is already public and
+already written per member. *Deployment:* new contract version, and a real
+product question about how a person is asked to keep a second key safe without
+the request being ignored.
+
+**C. Multi key account or passkey recovery.** Recovery moves into the account
+layer instead of the circle, using an account contract that supports several
+signers.
+
+*Liveness:* solves it for accounts that have it, and does nothing for members
+who joined with a plain wallet. *Custody:* non-custodial, and the recovery
+question moves to a layer that is designed for it. *Attack surface:* inherits
+whatever the account implementation allows, which is outside Iwa's control.
+*Abuse risk:* depends entirely on the account. *Organizer and admin power:*
+none. *Payout order:* unchanged. *Privacy:* unchanged. *Deployment:* this is
+the most natural home for the problem long term, especially alongside embedded
+Iwa accounts, but it cannot be relied on as the only answer while members join
+with wallets Iwa does not control. Worth noting that today's member key is
+derived deterministically from a wallet signature, so this option depends on the
+wallet rather than replacing the dependency.
+
+**D. Guardian or social recovery threshold.** A quorum of nominated parties can
+jointly authorize a payout the member cannot.
+
+*Liveness:* solves it, including the lost person case. *Custody:* preserves
+non-custody only if the member alone nominates the guardians and Iwa is never
+one of them. *Attack surface:* the largest of the five. A threshold that can
+release a payout is a threshold that can be colluded into releasing it, and in a
+savings circle the obvious guardians are the other members, who are exactly the
+people with an interest in the pot. *Abuse risk:* high for that reason.
+*Organizer power:* dangerous if the organizer can nominate or serve, because it
+reintroduces exactly the redirection the fixed payout order exists to prevent.
+*Admin power:* none if Iwa is structurally excluded. *Payout order:* unchanged,
+but the recipient effectively becomes negotiable, which weakens the guarantee
+people are being asked to trust. *Privacy:* guardians learn a member's
+participation. *Deployment:* new contract version. Recommended only with
+guardians outside the circle, and not as the first mechanism.
+
+**E. Escrow or administrative recovery.** Iwa, or an escrow it controls, can
+release a stranded pot.
+
+*Liveness:* solves it. *Custody:* destroys the property the product is built
+on. *Attack surface:* creates a key whose compromise reaches every circle at
+once, and makes Iwa a target and a regulated custodian. *Abuse risk:*
+structural rather than hypothetical, and no policy statement constrains a key
+that exists. *Organizer power:* unchanged. *Admin power:* total, which is the
+objection. *Payout order:* nominally unchanged, though an administrator who can
+release funds can in practice redirect them. *Privacy:* an administrator with a
+release path needs enough visibility to decide when to use it. *Deployment:*
+**rejected.** AGENTS.md states that admin must never be able to seize or move
+user funds, and this is that, whatever it is called.
+
+### Invariants any future recovery must preserve
+
+- The organizer cannot redirect a payout.
+- Iwa cannot seize funds, under any name or process.
+- The payout order stays deterministic and fixed at creation.
+- No arbitrary recipient substitution. Any alternative destination is committed
+  before funds are, and is not chosen after the fact.
+- Recovery cannot trigger immediately. A delay long enough to be clearly not an
+  attack is part of the safety, not a detail.
+- The recovery path is known to every member before they commit money, not
+  introduced afterwards.
+- Recovery is auditable. It emits its own event and is distinguishable on chain
+  from an ordinary settlement.
+- The privacy model is not weakened silently. Any new disclosure is stated.
+
+Option A with the fallback destination chosen by the member, optionally combined
+with B, satisfies all eight. That is the direction to design against.
+
+## Contract versioning
+
+H-2 cannot be fixed in the deployed contracts. They have no upgrade path by
+design: no owner, no pause, no setter, no class replacement, and a setup
+authority burned to zero. This is a property worth keeping, and the cost of
+keeping it is that a fix means a new deployment.
+
+A future `IwaCircle` v2 should carry the chosen recovery mechanism. When it
+exists:
+
+- Existing circles stay on v1. They cannot be migrated, and pretending otherwise
+  would be false.
+- New circles can use v2 once it has been audited. Nothing forces a move.
+- There is no forced migration and no shared upgrade switch, because there is
+  nothing to switch.
+- The application should be able to tell a person which version a circle runs
+  on and what that version can do, so the difference is visible rather than
+  implied.
+
+None of this is implemented.
 
 ## Portable Trust Credential security
 
@@ -734,15 +949,28 @@ Do not downgrade a finding because a deadline is near.
 
 ## Known current risk status
 
-The new Starknet implementation has not been written yet.
+This section was written before the Starknet implementation existed and said so.
+It is now out of date in the one direction that matters, because the contracts
+are deployed and hold real value, so it is restated against what is actually
+true.
 
-Therefore:
+Where things stand:
 
-- no claim of Starknet contract security exists
-- STRK20 integration is not yet validated
-- mainnet deployment has not occurred
-- legacy Stellar/Soroban security assumptions must not be inherited automatically
-- legacy Circom/prover components remain unapproved for reuse until reviewed
+- `IwaCircle` and `IwaStrk20Helper` are deployed to Starknet mainnet and are
+  immutable. Addresses are in `STATUS.md`.
+- STRK20 settlement has been exercised on mainnet. The recorded transactions are
+  in `strk20.json`.
+- No external security audit has been carried out. The invariants in this
+  document are the ones the contracts are expected to hold, verified by the
+  contract test suite and by internal review, and that is a weaker statement
+  than an audit.
+- H-2, payout liveness under a lost member key, is an accepted known limitation
+  of this deployment. See the section above.
+- Legacy Stellar/Soroban security assumptions must not be inherited
+  automatically. The frontend modules that carried them have been removed.
+- Legacy Circom/prover components remain unapproved for reuse until reviewed.
+  Proof generation is present but gated closed, and nothing on this network can
+  check a proof.
 
 ## Development rule
 

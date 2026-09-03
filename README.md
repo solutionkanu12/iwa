@@ -53,12 +53,21 @@ file anyone else gets to keep.
 5. Paying after the deadline but inside the grace window is recorded as late,
    not as a default. Missing it entirely is recorded as a default, and cannot be
    erased.
-6. When the round is complete, the scheduled member collects the pot.
+6. When the round is complete, the scheduled member collects the pot by
+   authorizing the settlement themselves. Nobody else can authorize it for them,
+   and nobody else can send it anywhere else.
 
 A member who reaches their turn while carrying an unresolved deficit does not
 simply lose the pot. The contract holds it under defined rules and provides a
 cure path, so a bad month is recoverable and the outcome is not left to an
 administrator's discretion.
+
+That last point cuts both ways, and it is worth being plain about. Because only
+the scheduled member can release their own round, a member who permanently loses
+access to the wallet they joined with can leave that round's pot unsettled. The
+currently deployed contracts have no recovery path for this, by the same design
+that stops anyone from redirecting a payout. Recovery mechanisms are planned for
+a future contract version, and the options are written up in `SECURITY.md`.
 
 ## Privacy model
 

@@ -79,6 +79,54 @@ describe("what the product says", () => {
     }
   });
 
+  // Finding H-2. A round settles only when the member it belongs to authorizes
+  // it, and the deployed contracts have no way to release one if that member is
+  // unreachable. Nothing shown to a person may suggest otherwise, because the
+  // one thing worse than the limitation is somebody committing money without
+  // knowing about it.
+  it("never promises that a lost or stranded payout can be recovered", () => {
+    for (const path of FILES) {
+      const text = shippedText(path).toLowerCase();
+      for (const banned of [
+        "recover your pot",
+        "recover the pot",
+        "we can recover",
+        "we will recover",
+        "support can recover",
+        "contact support to recover",
+        "iwa can release",
+        "we can release your",
+        "guaranteed payout",
+        "guaranteed to receive",
+        "always be able to collect",
+      ]) {
+        expect(text).not.toContain(banned);
+      }
+    }
+  });
+
+  // The counterpart. No screen may imply that anybody other than the member
+  // themselves can move a payout, because no such party exists.
+  it("never suggests an operator or organizer can move a payout", () => {
+    for (const path of FILES) {
+      const text = shippedText(path).toLowerCase();
+      for (const banned of [
+        "organizer can collect",
+        "organizer can release",
+        "admin can release",
+        // Narrow on purpose. A bare "on your behalf" also catches the STRK20
+        // client correctly telling somebody that Iwa CANNOT register for them,
+        // which is the opposite of an overclaim and should stay exactly as it is.
+        "collect on your behalf",
+        "release on your behalf",
+        "reassign the payout",
+        "redirect the payout",
+      ]) {
+        expect(text).not.toContain(banned);
+      }
+    }
+  });
+
   it("makes no claim of a rating, band or grade", () => {
     for (const path of FILES) {
       const text = shippedText(path).toLowerCase();

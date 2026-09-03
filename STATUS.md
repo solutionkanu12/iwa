@@ -88,6 +88,45 @@ across circles, and none is displayed.
 directory says so. Joining without a reserved place is not possible and is not
 offered.
 
+## Known limitations accepted for this release
+
+**Payout liveness if a member loses their key (finding H-2).** A round's pot can
+only settle when the member scheduled to receive it authorizes the settlement
+with the key they derived when they joined. That key has no setter, and the
+contracts have no owner, no pause and no upgrade path. So if that member
+permanently loses access to their wallet, or refuses to sign, the round's pot
+stays where it is and the circle cannot be finalized either, because
+`prepare_final_settlement` will not convert a scheduled payout into anything
+else.
+
+What this is not: nobody can steal or redirect those funds. Every settlement
+signature binds the circle, the round, the member, the amount and the exact
+destination, so there is no substitution path. The organizer cannot recover
+them, Iwa cannot recover them, and no administrative override exists to be
+misused. The helper's `normalize_surplus` cannot reach them either, because a
+stranded pot is accounted liability rather than surplus.
+
+Status: accepted for this deployment, knowingly. There is no rushed patch, and
+there cannot be one, because the deployed contracts are immutable. A real fix
+needs a new contract version. The options and the invariants any fix has to
+preserve are written up in `SECURITY.md`. Existing circles would stay on the
+current contracts; nothing would be force migrated.
+
+Scope: this affects a circle only when its scheduled recipient becomes unable or
+unwilling to authorize their own payout. It is a liveness tradeoff in an
+immutable non-custodial design, not an exploit and not a general risk to funds.
+
+Live example, read from mainnet with read-only calls and no transaction sent.
+`IwaStrk20Helper` holds 2.000000 USDC. Its accounted token liability for USDC is
+also 2.000000 USDC, and its surplus is 0. Those three figures together are the
+proof that the amount is a real round obligation rather than stray value, and
+that `normalize_surplus` cannot move it: that function refuses when surplus is
+zero. The round level payout status behind this balance is carried from the
+Phase 6 audit rather than re-read, because the payout accessors are declared
+`ref self` and are not callable as plain reads. No member commitment, wallet
+address or invitation identifier is recorded here, and none is needed: these are
+aggregate contract totals that anybody can read.
+
 ## Security constraints
 
 - Non-custodial. The coordination service holds no funds, signs nothing, and has
