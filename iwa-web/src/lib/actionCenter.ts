@@ -56,6 +56,14 @@ export interface CircleInput {
   readyToJoin: boolean;
   /** Null until the chain has been read for this circle. */
   round: RoundSummary | null;
+  /**
+   * What the chain says about the circle as a whole, once it has been read.
+   *
+   * Public, so reading it costs no signature, and undefined rather than zero
+   * when it has not been read: a circle nobody has looked at must never turn
+   * into a circle nobody has joined.
+   */
+  chain?: { joinedCount: number; memberLimit: number } | null;
 }
 
 const ORDER: Record<TaskPriority, number> = { urgent: 0, soon: 1, info: 2 };
@@ -153,13 +161,34 @@ function contributorTask(circle: CircleInput): CircleTask | null {
 
 /** What this person has to do to get a circle of theirs running. */
 function organizerTask(circle: CircleInput): CircleTask | null {
-  if (circle.status === "created" || circle.status === "abandoned") return null;
+  if (circle.status === "abandoned") return null;
 
   const base = {
     circleId: circle.circleId,
     draftId: circle.draftId,
     audience: "organizer" as const,
   };
+
+  // The circle exists. The one thing that can still be stuck on a person, and
+  // that only the organizer will notice, is a place somebody accepted and never
+  // took. Nothing here is an action on their behalf: it opens the circle, where
+  // the operational detail is, and joining stays with the person joining.
+  if (circle.status === "created") {
+    const chain = circle.chain;
+    if (chain === undefined || chain === null) return null;
+    const waiting = chain.memberLimit - chain.joinedCount;
+    if (waiting <= 0) return null;
+    return {
+      ...base,
+      key: `joining-${circle.draftId}`,
+      title: "Waiting for people to join",
+      detail:
+        waiting === 1
+          ? "1 person accepted but has not joined yet."
+          : `${waiting} people accepted but have not joined yet.`,
+      priority: "soon",
+    };
+  }
   const everyoneAccepted = circle.acceptedCount >= circle.memberCount;
 
   if (everyoneAccepted) {

@@ -31,7 +31,13 @@ import {
   roundSummary,
   type ObligationFacts,
 } from "../lib/roundState.ts";
-import { get_round_obligation, get_circle_created_at } from "../lib/iwaStarknet.ts";
+import {
+  get_round_obligation,
+  get_circle_created_at,
+  get_organizer_facts,
+  type OrganizerChainFacts,
+} from "../lib/iwaStarknet.ts";
+import { isOrganizer, organizerSummary, ORGANIZER_COPY } from "../lib/organizerView.ts";
 import styles from "./CircleView.module.css";
 
 // One circle: its seats, its round, and what you can do about it.
@@ -238,6 +244,85 @@ function StandingCard({
   );
 }
 
+/**
+ * The circle as the person running it needs to see it.
+ *
+ * Deliberately a section of the circle screen rather than a dashboard
+ * somewhere else. An organizer opens the circle for the same reason everybody
+ * else does, and what they need extra is context, not a separate product.
+ *
+ * It reports and it does not act. There is no control here, and there is none
+ * missing: an organizer cannot contribute for somebody, release a pot, choose
+ * a recipient, waive a default or pause anything, and the deployed contracts
+ * hold no such power for a screen to reach. What it can do is tell them
+ * exactly which place the circle is waiting on, which is the thing they can
+ * actually help with.
+ *
+ * Places are positions. No wallet address, member reference, invitation or
+ * anything about a member's savings elsewhere reaches this component, because
+ * none of it is needed to know that place three has not joined.
+ */
+function OrganizerSection({ facts, now }: { facts: OrganizerChainFacts; now: number }) {
+  const summary = organizerSummary({
+    memberLimit: facts.memberLimit,
+    joinedCount: facts.joinedCount,
+    acceptedCount: facts.acceptedCount,
+    round: facts.round,
+    circleStatus: facts.circleStatus,
+    places: facts.places,
+    payout: facts.payout,
+    priorPayout: facts.priorPayout,
+    now,
+  });
+
+  return (
+    <Island className={styles.card}>
+      <h2 className={styles.h2}>{ORGANIZER_COPY.heading}</h2>
+      <p className={styles.meta}>{ORGANIZER_COPY.lede}</p>
+
+      <div className={styles.rows}>
+        {summary.rows.map((row) => (
+          <div key={row.key} className={styles.row}>
+            <span className={styles.k}>{row.label}</span>
+            <span className={styles.v}>{row.value}</span>
+          </div>
+        ))}
+      </div>
+
+      {summary.attention.length > 0 ? (
+        <ul className={styles.timeline} aria-label="What this circle is waiting on">
+          {summary.attention.map((line) => (
+            <li key={line} className={styles.timelineItem} data-tone="current">
+              <span className={styles.timelineLabel}>{line}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      <p className={styles.meta}>{ORGANIZER_COPY.placesHeading}</p>
+      <ol className={styles.timeline} aria-label="Progress by place">
+        {summary.places.map((place) => (
+          <li
+            key={place.key}
+            className={styles.timelineItem}
+            data-tone={place.needsAttention ? "current" : "done"}
+          >
+            <span className={styles.timelineLabel}>{place.label}</span>
+            <span className={styles.timelineDetail}>
+              {place.paymentLabel === null
+                ? place.joinLabel
+                : `${place.joinLabel} · ${place.paymentLabel}`}
+              {place.payoutTurn ? " · collecting now" : ""}
+            </span>
+          </li>
+        ))}
+      </ol>
+
+      <p className={styles.meta}>{ORGANIZER_COPY.noMemberPowers}</p>
+    </Island>
+  );
+}
+
 type Screen =
   | "circle"
   | "contribute"
@@ -271,6 +356,10 @@ export function CircleView({
   // the answer is actually in.
   const [obligation, setObligation] = useState<ObligationFacts | null>(null);
   const [createdAt, setCreatedAt] = useState<number | null>(null);
+  // The operational picture, read only for the wallet the contract records as
+  // this circle's organizer. Null for everybody else, and null until the chain
+  // has answered, so nothing about running a circle is ever shown on a guess.
+  const [organizer, setOrganizer] = useState<OrganizerChainFacts | null>(null);
   const [collectStatus, setCollectStatus] = useState<Status>("idle");
   const [collectTx, setCollectTx] = useState<string | null>(null);
   const [collectError, setCollectError] = useState<string | null>(null);
@@ -317,6 +406,7 @@ export function CircleView({
     setAlreadyPaid(false);
     setObligation(null);
     setCreatedAt(null);
+    setOrganizer(null);
     setCollectStatus("idle");
     setCollectTx(null);
     setCollectError(null);
@@ -332,6 +422,21 @@ export function CircleView({
         const started = await get_circle_created_at(circleId);
         if (!live) return;
         setCreatedAt(started);
+
+        // Who organizes a circle is the contract's answer, not the browser's
+        // and not the coordination service's. Every read behind this is public,
+        // so an organizer opening their own circle is never asked to sign.
+        if (isOrganizer(c.organizer, address)) {
+          try {
+            const facts = await get_organizer_facts(circleId);
+            if (!live) return;
+            setOrganizer(facts);
+          } catch (err) {
+            // The operational view simply does not appear. A circle that could
+            // not be read is not a circle with nothing happening in it.
+            console.warn("organizer read failed", err);
+          }
+        }
 
         if (mine !== null && c.youJoined) {
           const o = await get_round_obligation(circleId, c.current_round, mine.commitmentBytes);
@@ -846,6 +951,12 @@ export function CircleView({
   return (
     <>
       {body}
+      {/* Below the circle itself, and only for the wallet the contract records
+          as its organizer. Everybody else, including every member of this same
+          circle, sees exactly what they saw before. */}
+      {screen === "circle" && organizer !== null ? (
+        <OrganizerSection facts={organizer} now={Math.floor(Date.now() / 1000)} />
+      ) : null}
       <p className={`${styles.mono} ${styles.protoNote}`}>
         Live on Starknet mainnet · contributions settle privately
       </p>

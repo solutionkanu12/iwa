@@ -67,6 +67,55 @@ Private to them.
 circle terms, seats and rounds are visible to anyone; a wallet is asked for by
 the action that needs one.
 
+## Phase 7B: organizer command center
+
+Complete, and verified against mainnet with read-only calls.
+
+The circle screen now carries an operational section for the wallet the
+deployed contract records as that circle's organizer. It is read only. It
+reports state and offers no control, because the contracts hold no organizer
+power for it to offer: no fund movement, no payout override, no contributing or
+collecting on somebody's behalf, no waiving a default.
+
+What it establishes, and from what:
+
+- Organizer identity is `organizer` on the deployed circle contract, compared
+  against the connected wallet. Not a role from the coordination service, and
+  not a claim from the browser. It fails closed.
+- Accepted places and joined places are shown separately and never collapse
+  into one figure. A place accepted but not joined is surfaced in its own words.
+- The current round's paid, due, grace, past grace and missed counts are
+  derived from each place's obligation on chain. A grace window that has closed
+  without the contract recording a default is reported as past grace, not as a
+  default.
+- No private member identifier reaches the screen. Places are positions, shown
+  as Place 1 and Place 2: no wallet address, member reference, invitation
+  token, auth key, or savings history from anywhere else.
+- Reading it costs no wallet signature. Every call behind it is a public view
+  call, and opening Home still asks for nothing by itself.
+
+No database migration, no contract change, no new signing flow, no mainnet
+write.
+
+Frontend: 471 tests pass, `tsc -b` clean, production build clean. Backend: 193
+pass and 12 skipped, typecheck clean, with no backend source changed.
+
+### Circle 1, read live
+
+Round 1 of 2. Contribution 1.000000 USDC per member. Two members, both joined,
+both obligations `OnTime`. Round outstanding liability 2.000000 USDC.
+`get_payout_state(1, 1)` reverts with `IWA: payout locked`, which is the
+contract saying it holds no payout record for that round yet. The derived
+operational state is `accountingReady`: the round is waiting at
+`finalize_round_payout_accounting`.
+
+That is an earlier point in a round than finding H-2 below. H-2 is about a
+payout that has already been prepared and then waits on its recipient's own
+authorization. Round 1 has not reached that step, so the 2.000000 USDC held
+against it is not evidence of a stranded payout, and nothing here says it is.
+Preparing the accounting moves no money and is not an organizer power; the
+application does not call it.
+
 ## What does not work yet
 
 **Collecting the pot.** The settlement path exists and is covered by the
@@ -121,9 +170,10 @@ Live example, read from mainnet with read-only calls and no transaction sent.
 also 2.000000 USDC, and its surplus is 0. Those three figures together are the
 proof that the amount is a real round obligation rather than stray value, and
 that `normalize_surplus` cannot move it: that function refuses when surplus is
-zero. The round level payout status behind this balance is carried from the
-Phase 6 audit rather than re-read, because the payout accessors are declared
-`ref self` and are not callable as plain reads. No member commitment, wallet
+zero. The round level payout status behind this balance has since been read
+directly, in Phase 7B above: `get_payout_state` is a plain view call, and for
+circle 1 round 1 it reverts with `IWA: payout locked`, so no payout record
+exists for that round yet. No member commitment, wallet
 address or invitation identifier is recorded here, and none is needed: these are
 aggregate contract totals that anybody can read.
 

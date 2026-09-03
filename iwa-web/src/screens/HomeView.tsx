@@ -90,17 +90,26 @@ export function HomeView({ navigate }: { navigate: (to: string | Route) => void 
             readyToJoin: false,
             round: null,
           };
-          if (a.status !== "created" || a.circleId === null || identity === null || !a.accepted) {
+          if (a.status !== "created" || a.circleId === null) {
             return base;
           }
           try {
-            const c = await get_circle(a.circleId, identity.commitmentBytes);
+            // Public, and read for every circle that exists: how many places
+            // have been taken is what tells an organizer their circle is stuck
+            // on somebody. It needs no identity and therefore no signature.
+            const c = await get_circle(a.circleId, identity?.commitmentBytes);
+            const chain = { joinedCount: c.joinedCount, memberLimit: c.size };
+            // Everything below is about this wallet's own place, so it is only
+            // asked for when this wallet actually holds one.
+            if (identity === null || !a.accepted) return { ...base, chain };
+
             const yourSlot = c.members.findIndex((m) => m.isYou);
             const obligation = c.youJoined
               ? await get_round_obligation(a.circleId, c.current_round, identity.commitmentBytes)
               : null;
             return {
               ...base,
+              chain,
               readyToJoin: canJoin({
                 reservedForYou: c.reserved,
                 youJoined: c.youJoined,

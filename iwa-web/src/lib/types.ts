@@ -36,6 +36,13 @@ export interface Circle {
   members: MemberSlot[]; // payout order; `filled` means reserved, not joined
   /** How many of the reserved places have actually called join_circle. */
   joinedCount: number;
+  /**
+   * The address that created the circle, as the contract recorded it. Public
+   * on chain, and the only thing that establishes who organizes a circle: a
+   * claim from the coordination service could not, and a claim from the
+   * browser certainly could not.
+   */
+  organizer: string;
   /** A place in the payout order holds the connected wallet's commitment. */
   reserved: boolean;
   /** The contract counts the connected wallet as a joined member. */

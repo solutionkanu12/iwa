@@ -120,20 +120,34 @@ export function recipientSlotFor(round: number): number {
   return round - 1;
 }
 
-function paymentOf(facts: RoundFacts): { state: PaymentState; late: boolean } {
-  if (!facts.youJoined) return { state: "notJoined", late: false };
+/**
+ * Where one obligation stands, on its own.
+ *
+ * Split out from the member's own summary because the organizer view asks the
+ * same question about every place in the circle, and two implementations of
+ * "is this late" would eventually disagree about somebody's money. The
+ * obligation is the whole input: no wallet, no identity, nothing about who it
+ * belongs to.
+ */
+export function obligationState(
+  obligation: ObligationFacts | null,
+  now: number,
+): { state: Exclude<PaymentState, "notJoined">; late: boolean } {
+  if (obligation === null) return { state: "none", late: false };
 
-  const o = facts.obligation;
-  if (o === null) return { state: "none", late: false };
-
-  if (o.status === "OnTime") return { state: "paid", late: false };
-  if (o.status === "LateWithinGrace") return { state: "paid", late: true };
-  if (o.status === "MissedDefault") return { state: "missed", late: false };
+  if (obligation.status === "OnTime") return { state: "paid", late: false };
+  if (obligation.status === "LateWithinGrace") return { state: "paid", late: true };
+  if (obligation.status === "MissedDefault") return { state: "missed", late: false };
 
   // Pending. Which of the three windows are we in.
-  if (facts.now < o.dueAt) return { state: "due", late: false };
-  if (facts.now < o.graceEndsAt) return { state: "grace", late: false };
+  if (now < obligation.dueAt) return { state: "due", late: false };
+  if (now < obligation.graceEndsAt) return { state: "grace", late: false };
   return { state: "overdue", late: false };
+}
+
+function paymentOf(facts: RoundFacts): { state: PaymentState; late: boolean } {
+  if (!facts.youJoined) return { state: "notJoined", late: false };
+  return obligationState(facts.obligation, facts.now);
 }
 
 const PAYMENT_LABEL: Record<PaymentState, string> = {

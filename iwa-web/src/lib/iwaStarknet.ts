@@ -15,6 +15,7 @@ import type { SnarkProof } from "./convert";
 import type { Circle, CircleStatus } from "./types";
 import type { Standing } from "./standing";
 import type { ObligationFacts } from "./roundState";
+import type { PayoutAccounting, PlaceFacts } from "./organizerView";
 import {
   DEMO_CIRCLE_ID,
   IWA_CIRCLE,
@@ -29,6 +30,7 @@ import {
   getCircle as readCircle,
   getContributionObligation,
   getPayoutOrder,
+  getPayoutState,
   helperSurplus,
   isContributionNonceConsumed,
   isMember as readIsMember,
@@ -164,10 +166,118 @@ export async function get_circle(
     pot: potFor(amount, view.memberLimit),
     members,
     joinedCount: view.joinedCount,
+    organizer: view.organizer,
     reserved,
     youJoined,
     yourStreak: 0,
   };
+}
+
+/**
+ * The circle as the person running it needs to see it.
+ *
+ * Every value is a public view call, so opening this asks the wallet for
+ * nothing: no signature, no session, no identity derivation. That matters more
+ * than the saved round trip. An organizer checking why a round has stalled is
+ * doing housekeeping, and housekeeping that opens a wallet is housekeeping
+ * people learn to approve without reading.
+ *
+ * It reads what the chain already publishes to anybody: the payout order's
+ * length, whether each place has joined, each place's obligation for the round,
+ * and the round's payout accounting. Member references are used to make those
+ * calls and are not returned, because a position is all the caller needs.
+ *
+ * Nothing here writes. `finalize_round_payout_accounting` is the call that
+ * would move this circle forward, and it is deliberately absent: this module
+ * reports that the accounting is ready and stops there.
+ */
+export async function get_organizer_facts(circleId: number): Promise<OrganizerChainFacts> {
+  const view = await readCircle(provider, circleId);
+  const order = await getPayoutOrder(provider, circleId);
+
+  const places: PlaceFacts[] = await Promise.all(
+    order.map(async (ref, slot) => {
+      const memberRef = feltHex(BigInt(ref));
+      let joined = false;
+      try {
+        joined = await readIsMember(provider, circleId, memberRef);
+      } catch {
+        // Unreadable membership stays false rather than becoming a claim.
+      }
+
+      let obligation: ObligationFacts | null = null;
+      try {
+        const o = await getContributionObligation(provider, circleId, view.currentRound, memberRef);
+        obligation = {
+          status: o.status as ObligationFacts["status"],
+          requiredAmount: o.requiredAmount,
+          dueAt: o.dueAt,
+          graceEndsAt: o.graceEndsAt,
+        };
+      } catch {
+        // No obligation for this round yet. Absence is not a debt.
+      }
+
+      return { slot, joined, obligation };
+    }),
+  );
+
+  // A place is accepted when its slot in the payout order holds a real
+  // commitment, and the contract refuses to create a circle whose order has an
+  // empty entry. So this is a count the chain enforces rather than one the
+  // coordination service is trusted for, which is why it can be shown on a
+  // screen that never signs in.
+  const acceptedCount = order.filter((ref) => {
+    try {
+      return BigInt(ref) !== 0n;
+    } catch {
+      return false;
+    }
+  }).length;
+
+  return {
+    memberLimit: view.memberLimit,
+    joinedCount: view.joinedCount,
+    acceptedCount,
+    round: view.currentRound,
+    circleStatus: mapStatus(view.status, view.joinedCount, view.memberLimit),
+    organizer: view.organizer,
+    places,
+    payout: await readPayoutAccounting(circleId, view.currentRound),
+    priorPayout:
+      view.currentRound > 1 ? await readPayoutAccounting(circleId, view.currentRound - 1) : null,
+  };
+}
+
+/** The chain half of the organizer's picture. The service supplies the rest. */
+export interface OrganizerChainFacts {
+  memberLimit: number;
+  joinedCount: number;
+  /** Places whose invitation was accepted before the circle was created. */
+  acceptedCount: number;
+  round: number;
+  circleStatus: CircleStatus;
+  /** The address that created the circle, as the contract recorded it. */
+  organizer: string;
+  places: PlaceFacts[];
+  payout: PayoutAccounting;
+  priorPayout: PayoutAccounting | null;
+}
+
+/**
+ * One round's payout accounting, as one of three honest answers.
+ *
+ * A read that did not come back becomes `unavailable` and never `notPrepared`:
+ * the contract has a specific error for a round it holds no payout record for,
+ * and anything else is the network failing rather than the circle waiting.
+ */
+async function readPayoutAccounting(circleId: number, round: number): Promise<PayoutAccounting> {
+  try {
+    const state = await getPayoutState(provider, circleId, round);
+    return state === null ? { kind: "notPrepared" } : { kind: "prepared", status: state.status };
+  } catch {
+    return { kind: "unavailable" };
+  }
 }
 
 /**

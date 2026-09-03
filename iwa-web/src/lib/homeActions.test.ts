@@ -177,3 +177,29 @@ describe("the screen obeys the rule", () => {
     }
   });
 });
+
+// Phase 7B added a public read to the same load, so that an organizer is told
+// when their circle is stuck on somebody who never joined. Public is the whole
+// point: it must not have moved the identity derivation, which is the one step
+// in here that opens a wallet.
+describe("the front door after the organizer tasks arrived", () => {
+  const source = readFileSync(
+    fileURLToPath(new URL("../screens/HomeView.tsx", import.meta.url)),
+    "utf8",
+  );
+
+  it("derives the member identity only for a circle this wallet has a place in", () => {
+    expect(source).toContain("live.some((a) => a.accepted) ? await ensureIdentity() : null");
+    expect([...source.matchAll(/ensureIdentity\(\)/g)]).toHaveLength(1);
+  });
+
+  it("still reaches private data through exactly one call site", () => {
+    expect([...source.matchAll(/authorizedRead\(/g)]).toHaveLength(1);
+  });
+
+  it("asks the wallet to sign nothing", () => {
+    for (const banned of ["signMessage", "account.execute", "createSession("]) {
+      expect(source).not.toContain(banned);
+    }
+  });
+});

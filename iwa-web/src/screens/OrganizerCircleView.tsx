@@ -16,6 +16,7 @@ import { circlePath, type Route } from "../lib/router";
 import { useWallet } from "../app/WalletProvider";
 import { useSession } from "../app/SessionProvider.tsx";
 import { mergePrivate, moveInOrder, orderOf } from "../lib/draftOrder";
+import { inviteProgress } from "../lib/organizerView";
 import { CHAIN_ID, MAX_MEMBERS, MIN_MEMBERS, USDC_DECIMALS, USDC_TOKEN } from "../lib/starknetConfig";
 import { formatUnits, parseUnits } from "../chains/strk20/funding";
 
@@ -210,6 +211,25 @@ export function OrganizerCircleView({
       await onCopy("", token);
     },
     [onCopy],
+  );
+
+  /**
+   * How far the invitations have got.
+   *
+   * The same counts the screen already shows, said in words: a bar tells
+   * somebody roughly how far along they are, and what they actually want to
+   * know is how many people they still have to chase. No invitation is
+   * described here beyond whether its place is taken, and no token is read.
+   */
+  const invites = useMemo(
+    () =>
+      draft === null
+        ? null
+        : inviteProgress({
+            memberCount: draft.memberCount,
+            acceptedCount: draft.acceptedCount,
+          }),
+    [draft],
   );
 
   /** The order on screen: what the organizer is arranging, or what is saved. */
@@ -450,6 +470,7 @@ export function OrganizerCircleView({
                 style={{ width: `${(draft.acceptedCount / draft.memberCount) * 100}%` }}
               />
             </div>
+            {invites !== null && <p className={styles.hint}>{invites.label}</p>}
 
             {orderedSlots.map((slot, position) => (
               <div
@@ -581,7 +602,9 @@ export function OrganizerCircleView({
 
             {draft.status !== "ready" ? (
               <p className={styles.hint}>
-                Everyone needs to accept their invitation before the circle can start.
+                {invites !== null && !invites.ready
+                  ? `${invites.label} before the circle can start.`
+                  : "Everyone needs to accept their invitation before the circle can start."}
               </p>
             ) : (
               <p className={styles.hint}>

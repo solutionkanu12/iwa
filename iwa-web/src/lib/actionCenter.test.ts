@@ -211,3 +211,66 @@ describe("ordering and shape", () => {
     }
   });
 });
+
+// Phase 7B. An organizer's work does not stop when the circle is created: a
+// circle where somebody accepted and never joined is stuck, and nobody but the
+// organizer is going to notice. These check that it surfaces, that it links to
+// the circle where the operational detail lives, and that it stays quiet
+// whenever the chain has not actually said so.
+describe("organizer work after the circle exists", () => {
+  const organizerCircle = (over: Partial<CircleInput> = {}): CircleInput =>
+    circle({
+      role: "organizer",
+      accepted: false,
+      status: "created",
+      circleId: 7,
+      round: null,
+      ...over,
+    });
+
+  it("says when people accepted but have not joined", () => {
+    const [task] = actionCenter([
+      organizerCircle({ chain: { joinedCount: 1, memberLimit: 3 } }),
+    ]);
+    expect(task.title).toBe("Waiting for people to join");
+    expect(task.detail).toBe("2 people accepted but have not joined yet.");
+    expect(task.audience).toBe("organizer");
+    expect(task.priority).toBe("soon");
+  });
+
+  it("uses the singular for one person", () => {
+    const [task] = actionCenter([
+      organizerCircle({ chain: { joinedCount: 2, memberLimit: 3 } }),
+    ]);
+    expect(task.detail).toBe("1 person accepted but has not joined yet.");
+  });
+
+  it("links the task to the circle, so the organizer lands where the detail is", () => {
+    const [task] = actionCenter([
+      organizerCircle({ chain: { joinedCount: 1, memberLimit: 3 } }),
+    ]);
+    expect(task.circleId).toBe(7);
+  });
+
+  it("says nothing once everyone has joined", () => {
+    expect(
+      actionCenter([organizerCircle({ chain: { joinedCount: 3, memberLimit: 3 } })]),
+    ).toEqual([]);
+  });
+
+  it("says nothing when the chain has not been read", () => {
+    expect(actionCenter([organizerCircle({ chain: null })])).toEqual([]);
+    expect(actionCenter([organizerCircle()])).toEqual([]);
+  });
+
+  it("still puts the organizer's own contribution first", () => {
+    const [task] = actionCenter([
+      organizerCircle({
+        accepted: true,
+        round: round({ now: NOW + 6 * DAY }),
+        chain: { joinedCount: 1, memberLimit: 3 },
+      }),
+    ]);
+    expect(task.audience).toBe("member");
+  });
+});

@@ -229,6 +229,79 @@ export interface RoundLiabilityView {
   outstanding: bigint;
 }
 
+/** PayoutStatus, in the contract's declaration order. */
+export const PAYOUT_STATUS = [
+  "Scheduled",
+  "DeferredLocked",
+  "SettlementAuthorized",
+  "RecoveryPending",
+  "NoFundedRecovery",
+  "Paid",
+  "Recovered",
+] as const;
+
+export type PayoutStatusName = (typeof PAYOUT_STATUS)[number];
+
+export interface PayoutStateView {
+  round: number;
+  /** Base units. The whole pot for the round. */
+  amount: bigint;
+  status: PayoutStatusName;
+}
+
+/**
+ * The short string `get_payout_state` reverts with when a round has no payout
+ * record yet. Matched exactly, and only this one.
+ */
+const PAYOUT_LOCKED = "IWA: payout locked";
+
+/**
+ * True when a failed `get_payout_state` means the round's accounting has not
+ * been prepared, rather than that the read did not happen.
+ *
+ * The distinction is the whole point. A round with no payout record and a
+ * round nobody could reach look identical from a promise that rejected, and
+ * reporting the second as the first would tell an organizer that their circle
+ * is waiting on something when in fact nothing is known about it. The contract
+ * is specific, so this is specific: any other failure is not an answer.
+ */
+export function isPayoutNotPrepared(error: unknown): boolean {
+  const text =
+    error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  return text.includes(PAYOUT_LOCKED);
+}
+
+/**
+ * A round's payout accounting, or null when the contract holds none yet.
+ *
+ * Read only, like everything else here. Preparing that accounting is a
+ * separate call this module deliberately does not make and cannot make.
+ */
+export async function getPayoutState(
+  provider: RpcProvider,
+  circleId: number,
+  round: number,
+): Promise<PayoutStateView | null> {
+  let r: string[];
+  try {
+    r = await view(provider, STARKNET_MAINNET.iwaCircle, "get_payout_state", [
+      String(circleId),
+      String(round),
+    ]);
+  } catch (e) {
+    if (isPayoutNotPrepared(e)) return null;
+    throw e;
+  }
+  if (r.length < 5) throw new Error(`get_payout_state returned ${r.length} felts, expected 5`);
+  return {
+    round: asInt(r[1]),
+    // r[2] is the scheduled member reference. Deliberately not returned: no
+    // caller needs it, and a value nobody needs is a value that leaks.
+    amount: BigInt(r[3]),
+    status: variant(PAYOUT_STATUS, r[4], "PayoutStatus"),
+  };
+}
+
 export async function getRoundLiability(
   provider: RpcProvider,
   circleId: number,
