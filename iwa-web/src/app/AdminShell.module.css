@@ -1,0 +1,172 @@
+/*
+ * The operator area's frame.
+ *
+ * Every value comes from styles/tokens.css. No new colours, no new radii, no
+ * gradients, no glow. It is the same paper Iwa is printed on, arranged for
+ * somebody reading figures rather than browsing circles: a compact header, one
+ * calm column, and a lot of quiet around it.
+ *
+ * There is no sidebar and no bottom bar. The saver's navigation belongs to the
+ * saver's product, and an operations page is not a place to offer it.
+ */
+
+.shell {
+  min-height: 100dvh;
+  background: var(--mist);
+  color: var(--ink);
+}
+
+/* --- Header --- */
+
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--cloud);
+  border-bottom: 1px solid var(--brd);
+}
+
+.headerInner {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 12px 16px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  color: var(--ink);
+}
+
+.brandName {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* Says which part of Iwa this is, without shouting it. */
+.badge {
+  font-size: 11px;
+  color: var(--mut);
+  background: var(--mist);
+  border: 1px solid var(--brd);
+  border-radius: 999px;
+  padding: 2px 9px;
+  white-space: nowrap;
+}
+
+/*
+ * The account, on the right where a person already looks for it.
+ *
+ * Pushed there by margin rather than by a spacer element, so that when the
+ * header wraps on a narrow screen the account simply moves to its own line
+ * instead of leaving a gap in the middle.
+ */
+.account {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-data);
+  font-size: 12px;
+  color: var(--mut);
+  white-space: nowrap;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mint);
+  flex: 0 0 auto;
+}
+
+.dotOff {
+  background: var(--lav2);
+}
+
+/* --- Section navigation --- */
+
+/*
+ * Anchors, not routes. The operator area is one page, so these move within it.
+ *
+ * They wrap rather than scroll sideways: a row that scrolls hides its own
+ * contents, and at 320px a wrapped second line is the honest way to show five
+ * short labels.
+ */
+.nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  width: 100%;
+  border-top: 1px solid var(--brd);
+  padding-top: 8px;
+}
+
+.navLink {
+  font-size: 13px;
+  line-height: 1;
+  color: var(--mut);
+  text-decoration: none;
+  padding: 7px 10px;
+  border-radius: var(--radius-control);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.navLink:hover,
+.navLink:focus-visible {
+  background: var(--mist);
+  color: var(--ink);
+}
+
+.navLink:active {
+  color: var(--iris);
+}
+
+/* --- Content --- */
+
+.main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 22px 16px 72px;
+  box-sizing: border-box;
+  position: relative;
+  z-index: 1;
+}
+
+/*
+ * A sticky header would otherwise cover the top of whatever an anchor jumps
+ * to. This reserves the room, so a section lands below the header rather than
+ * behind it.
+ */
+.main :global(section[id]) {
+  scroll-margin-top: 96px;
+}
+
+@media (min-width: 700px) {
+  .headerInner {
+    padding: 14px 24px;
+    flex-wrap: nowrap;
+  }
+
+  /* On a wide header the navigation sits inline, between brand and account. */
+  .nav {
+    width: auto;
+    border-top: 0;
+    padding-top: 0;
+    margin-left: 8px;
+    flex-wrap: nowrap;
+  }
+
+  .main {
+    padding: 30px 24px 84px;
+  }
+}

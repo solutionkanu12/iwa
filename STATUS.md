@@ -118,8 +118,8 @@ application does not call it.
 
 ## Phase 7C: platform admin dashboard
 
-Complete, and verified with read-only calls against the running service and
-mainnet.
+Complete, and working in production: an allowlisted wallet signs in at `/admin`
+and the dashboard loads.
 
 Operators reach `/admin`. It reports and does nothing else: there is no admin
 mutation in the service and no administrative power in the contracts for one to
@@ -156,6 +156,40 @@ COUNT, SUM and MIN over columns that already existed.
 
 Frontend: 526 tests pass, `tsc -b` clean, production build clean. Backend: 224
 pass and 12 skipped, typecheck clean.
+
+### The first sign in, and why it failed
+
+The first attempt returned "Your wallet signature could not be verified". The
+cause was the nominated operator account: it had not been deployed on Starknet
+mainnet, so `is_valid_signature` could not be called on it at all, and the
+verifier correctly read an uncallable account as a failed signature. Once the
+account was deployed, SNIP-12 admin authentication succeeded and the dashboard
+loaded.
+
+Nothing was wrong with the authorization binding, the allowlist or the route.
+Worth remembering because the failure looks like a signing bug and is not one: a
+wallet nominated for an operational role has to be a deployed account before it
+can prove anything on chain.
+
+### The operator area has its own shell
+
+`/admin` renders in a dedicated AdminShell: a compact header with the brand, the
+section anchors and the connected wallet, over a single column. The saver
+navigation does not appear there. Home, Explore, My circles, Invitations, My
+standing and Start a circle belong to the saver product, and so does the mobile
+tab bar; none of them renders on an operations page. Every other route keeps the
+existing AppShell unchanged, including an unrecognised path under `/admin`,
+which is a mistyped URL rather than an operator page and gets the ordinary not
+found.
+
+The shell is layout and holds no authority. It carries no allowlist, no role and
+no gate, signs nothing and calls no API, so rendering it grants nothing. What an
+operator may see is still decided by the service, against a wallet signature and
+the environment allowlist, unchanged by this correction.
+
+That correction touched the frontend only: no backend change, no database
+migration, no contract change, and no mainnet write. Frontend: 549 tests pass,
+`tsc -b` clean, production build clean.
 
 ### What the metrics are, and are not
 

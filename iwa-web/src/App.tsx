@@ -4,6 +4,7 @@
 // frames it, this chooses it, and neither knows what a circle contains.
 
 import { AppShell, NotFoundView } from "./app/AppShell.tsx";
+import { AdminShell } from "./app/AdminShell.tsx";
 import { CircleView } from "./screens/CircleView.tsx";
 import { HomeView } from "./screens/HomeView.tsx";
 import { ExploreView } from "./screens/ExploreView.tsx";
@@ -12,6 +13,7 @@ import { InvitationsView } from "./screens/InvitationsView.tsx";
 import { StandingView } from "./screens/StandingView.tsx";
 import { OrganizerCircleView } from "./screens/OrganizerCircleView.tsx";
 import { AdminView } from "./screens/AdminView.tsx";
+import { shellFor } from "./app/navigation.ts";
 import type { Route } from "./lib/router.ts";
 
 export interface AppProps {
@@ -50,6 +52,13 @@ export function App({ route, navigate }: AppProps) {
       break;
     default:
       screen = <NotFoundView navigate={navigate} />;
+  }
+
+  // Which frame this route belongs in. The operator area has its own, so the
+  // saver's navigation never appears beside a page about running the platform.
+  // The rule is in app/navigation.ts, where it can be checked directly.
+  if (shellFor(route) === "admin") {
+    return <AdminShell navigate={navigate}>{screen}</AdminShell>;
   }
 
   return (

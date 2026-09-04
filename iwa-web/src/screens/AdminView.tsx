@@ -158,6 +158,7 @@ export function AdminView({ navigate }: { navigate: (to: string | Route) => void
 
       {state.kind === "ready" ? (
         <>
+          <section id="operations">
           <Island className={styles.card}>
             <h2 className={styles.h2}>{ADMIN_COPY.operationsHeading}</h2>
             {state.report.operations.length === 0 ? (
@@ -177,9 +178,11 @@ export function AdminView({ navigate }: { navigate: (to: string | Route) => void
               </ul>
             )}
           </Island>
+          </section>
 
           {state.report.sections.map((section) => (
-            <Island key={section.key} className={styles.card}>
+            <section id={section.key} key={section.key}>
+            <Island className={styles.card}>
               <h2 className={styles.h2}>{section.title}</h2>
               <div className={styles.rows}>
                 {section.rows.map((row) => (
@@ -196,6 +199,7 @@ export function AdminView({ navigate }: { navigate: (to: string | Route) => void
                 {[...new Set(section.rows.map((r) => SOURCE_LABEL[r.source]))].join(". ")}.
               </p>
             </Island>
+            </section>
           ))}
 
           <Island className={styles.card}>
