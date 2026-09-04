@@ -12,7 +12,7 @@ Last reviewed against the working tree during the reconnect work.
 |---|---|
 | Frontend | Vercel, live at `useiwa.xyz` |
 | Coordination service | Railway |
-| Database | Supabase Postgres, row level security enabled with no policies |
+| Database | Supabase Postgres. Row level security is applied out of band, not by a migration |
 | Chain | Starknet mainnet |
 | Privacy settlement | STRK20 pool |
 
@@ -278,8 +278,12 @@ aggregate contract totals that anybody can read.
   order and terms must match the draft. A client cannot assert it.
 - Every authenticated settlement path consumes a single-use nonce in its own
   namespace, checked and written atomically.
-- The database runs with row level security enabled and no policies, so the anon
-  and authenticated roles reach nothing while the service connects as owner.
+- The database is reached only by the coordination service, which connects as
+  owner. Row level security with no policies was applied to the Supabase project
+  by hand, so the anon and authenticated roles reach nothing there. That state is
+  not in `backend/migrations/`, which means it is real on this deployment but is
+  not reproduced by deploying this repository somewhere new. A fresh database
+  would need it applied again, by hand or by a migration nobody has written yet.
 
 Iwa has not been through an external security audit. The invariants the
 contracts are expected to hold are in `SECURITY.md`.

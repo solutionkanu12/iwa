@@ -13,6 +13,13 @@ import { SN_MAIN } from "./validation.js";
 
 const IWA_CIRCLE = "0x01f81497b09aa702a38715c0ec149d7672cd557c0caea480714d4802ff6f81be";
 
+// The assets a circle can be denominated in. Public mainnet addresses, pinned
+// here for the same reason the circle address is: one place, verified once.
+const TOKENS = {
+  usdc: "0x033068F6539f8e6e6b131e6B2B814e6c34A5224bC66947c47DaB9dFeE93b35fb",
+  strk: "0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d",
+};
+
 async function main(): Promise<void> {
   const config = loadConfig();
   const store = new PgStore(config.databaseUrl, config.databaseSsl);
@@ -56,11 +63,13 @@ async function main(): Promise<void> {
       chainId: SN_MAIN,
       circleAddress: IWA_CIRCLE,
       startBlock: config.indexerStartBlock,
+      tokens: TOKENS,
     });
     const tick = async (): Promise<void> => {
       try {
         const r = await indexer.runOnce();
         if (r.inserted > 0) console.log(`indexed ${r.inserted} event(s) up to block ${r.to}`);
+        if (r.circles > 0) console.log(`refreshed ${r.circles} circle(s) in the public cache`);
       } catch (e) {
         // A failed pass must not kill the service; the cursor did not advance,
         // so the same range is retried next tick.

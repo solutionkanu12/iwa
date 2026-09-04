@@ -621,21 +621,31 @@ Never silently substitute fabricated or fixture data in production.
 
 The admin dashboard is non-custodial.
 
-It reads public/indexed operational data and exposes limited maintenance controls.
+It reads public and indexed operational data. It exposes no maintenance control,
+because none exists to expose.
 
-Allowed capabilities may include:
+**Built, and live today.** Each figure is labelled on screen with which of the
+three sources it came from, so a coordination count is never read as chain truth:
 
-- contract health
-- transaction health
-- public circle statistics
-- failed action monitoring
-- alerts
-- support workflow
-- audit logs
-- verification usage
-- subscription/revenue metrics
-- feature flags where safe
-- narrowly scoped emergency controls
+- overview: database reachability, network, node reachability, circles set up,
+  circles created, places accepted
+- operations: what needs looking at, derived and report-only, never actioned
+- chain health: latest block, whether the circle contract answers, and the
+  contract addresses this build is pinned to
+- security: environment, challenge and session store modes with live counts,
+  count of configured origins, custody, contract immutability, known limitation
+- product aggregates: drafts by outcome, acceptance rate, setup completion
+
+**Deferred, and deliberately absent rather than stubbed.** Each needs a source
+this system does not yet have:
+
+- audit logs, which need a table and a write on every authenticated route
+- signup and user-growth analytics, which need a first-seen record and a user
+  event source; deriving them from coordination rows would invent figures
+  nobody could trace
+- revenue and subscription metrics, which need a billing system
+- feature flags beyond the compile-time capability flags already in the frontend
+- support tooling
 
 Forbidden capabilities:
 
@@ -650,11 +660,31 @@ Forbidden capabilities:
 
 ## Admin authentication
 
-Admin authentication must protect operational surfaces.
+Implemented. An operator reads the dashboard by proving control of a wallet that
+the running service has been told is an operator.
 
-The exact implementation is intentionally deferred until the backend stack is selected.
+- **The credential is a SNIP-12 signature**, bound to the exact action
+  (`admin:read`), method, path and body, verified against the account contract on
+  chain, consuming a single-use nonce. It is the same authorization the rest of
+  the API uses; admin is one more action in the same closed set.
+- **The allowlist is `ADMIN_ADDRESSES`**, an environment variable of the
+  coordination service holding comma-separated Starknet addresses, normalized and
+  validated at boot. It is checked server side, in the route, against the address
+  the signature proved.
+- **An ordinary read session is refused.** Sessions are bearer tokens, so
+  accepting one would mean a captured token became operator access. Admin reads
+  take the full per-request signature and nothing else.
+- **An unset or empty allowlist denies everyone.** A deployment nobody has
+  configured for operations has no admin surface rather than an open one.
+- **The role lives in the environment, not the database**, so write access to
+  Postgres does not make anybody an operator.
+- **The surface is read-only aggregates.** There is no admin mutation route, and
+  the deployed contracts hold no administrative power for one to reach.
 
-Regardless of implementation:
+The frontend route is layout, never a boundary: `/admin` renders nothing until
+the API answers, and a caller who skips the screen meets the same check.
+
+Still true regardless of implementation:
 
 - privileged actions must be authenticated
 - sensitive actions must be logged

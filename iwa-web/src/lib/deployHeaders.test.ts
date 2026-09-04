@@ -15,12 +15,26 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const config = JSON.parse(
-  readFileSync(join(process.cwd(), "..", "vercel.json"), "utf8"),
-) as {
+type VercelConfig = {
   headers: { source: string; headers: { key: string; value: string }[] }[];
   rewrites: { source: string; destination: string }[];
 };
+
+const read = (path: string) => JSON.parse(readFileSync(path, "utf8")) as VercelConfig;
+
+/**
+ * The file Vercel actually reads.
+ *
+ * The deployed project's root directory is `iwa-web/`, so this is the config in
+ * force and the repository root's copy is not. That distinction was not
+ * academic: this suite used to check the root file, which carried the headers
+ * and the /app/(.*) rewrite, while the deployed file carried neither. Every
+ * assertion here passed and production served no Content-Security-Policy at all.
+ */
+const config = read(join(process.cwd(), "vercel.json"));
+
+/** The repository root's copy, kept only so the two cannot drift apart again. */
+const rootConfig = read(join(process.cwd(), "..", "vercel.json"));
 
 const all = config.headers[0].headers;
 const header = (key: string) => all.find((h) => h.key === key)?.value ?? "";
@@ -183,5 +197,35 @@ describe("the routes are untouched", () => {
   it("adds no redirect and no caching rule", () => {
     expect(config).not.toHaveProperty("redirects");
     expect(JSON.stringify(config)).not.toContain("Cache-Control");
+  });
+});
+
+// The defect this suite missed once, pinned so it cannot happen again.
+describe("the config that ships is the config that is checked", () => {
+  it("carries its headers in the file Vercel reads", () => {
+    // Not merely "a config has headers": the deployed one has them.
+    expect(config.headers?.[0]?.headers?.length ?? 0).toBeGreaterThan(0);
+    const keys = config.headers[0].headers.map((h) => h.key);
+    expect(keys).toContain("Content-Security-Policy");
+    expect(keys).toContain("X-Frame-Options");
+    expect(keys).toContain("X-Content-Type-Options");
+    expect(keys).toContain("Referrer-Policy");
+    expect(keys).toContain("Permissions-Policy");
+  });
+
+  it("serves the whole application, including every nested route", () => {
+    // /app/explore and /app/circles/:id are nested. Without this rewrite Vercel
+    // answered them 404 while the app still rendered, which is a deep link that
+    // works for a person and is broken for everything else.
+    const sources = config.rewrites.map((r) => r.source);
+    expect(sources).toContain("/app");
+    expect(sources).toContain("/app/(.*)");
+    expect(sources).toContain("/admin");
+    expect(sources).toContain("/invite/(.*)");
+  });
+
+  it("keeps the two copies identical, so neither can drift", () => {
+    expect(config.rewrites).toEqual(rootConfig.rewrites);
+    expect(config.headers).toEqual(rootConfig.headers);
   });
 });

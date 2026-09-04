@@ -10,8 +10,9 @@
 //
 // The suite creates and drops its own data; point it at a scratch database.
 
-import { describe, expect, it, beforeAll, afterAll, vi } from "vitest";
+import { describe, expect, it, beforeAll, beforeEach, afterAll, vi } from "vitest";
 import { Pool } from "pg";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -69,6 +70,19 @@ suite("PgStore against a real Postgres", () => {
       ALTER TABLE public.sync_cursor      ENABLE ROW LEVEL SECURITY;
     `);
     store = new PgStore(DATABASE_URL as string, false);
+  });
+
+  // Each test starts from an empty database.
+  //
+  // The schema is built once, but the rows are not: every test creates its own
+  // draft with the same organizer, so without this the associations of earlier
+  // tests are still there when a later one counts them. The schema is left in
+  // place, so this is a truncate rather than another migration per test.
+  beforeEach(async () => {
+    await pool.query(
+      `TRUNCATE circle_events, draft_slots, circle_drafts, indexed_circles,
+         sync_cursor RESTART IDENTITY CASCADE`,
+    );
   });
 
   afterAll(async () => {
@@ -238,6 +252,9 @@ it("answers which circles belong to a wallet", async () => {
   it("survives a restart: a new connection sees the same data", async () => {
     const draft = await store.createDraft(DRAFT);
     await store.acceptInvite({ inviteToken: draft.slots[0].inviteToken, memberRef: MEMBER_A, authPublicKey: KEY_A, address: ORGANIZER });
+    // Written here rather than inherited from an earlier test: what survives a
+    // restart is what this test put there.
+    await store.setCursor("test_cursor", SN_MAIN, 14160100);
 
     const reopened = new PgStore(DATABASE_URL as string, false);
     try {

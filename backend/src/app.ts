@@ -557,11 +557,22 @@ export function createApp(options: AppOptions): Express {
 
   app.post("/api/drafts", async (req, res, next) => {
     if (!mutate(req, res)) return;
-    const parsed = createDraftSchema.safeParse(req.body);
-    if (!parsed.success) return badRequest(res, parsed.error.issues);
     try {
+      // Authenticate first, then read the body.
+      //
+      // The order matters even though the body is not secret. Validating first
+      // meant an unauthenticated caller received the whole schema back as a
+      // 400, while every other authenticated route answers 401 and says
+      // nothing. It also meant attacker-controlled input was parsed before
+      // anybody had proved who they were. Neither is dangerous here, and both
+      // are the wrong shape.
+      //
+      // The signature binding is unaffected: `authenticate` hashes the parsed
+      // body itself, from the request it is handling, exactly as before.
       const caller = await authenticate(req, res, AUTH_ACTIONS.draftCreate);
       if (caller === null) return;
+      const parsed = createDraftSchema.safeParse(req.body);
+      if (!parsed.success) return badRequest(res, parsed.error.issues);
       if (caller !== parsed.data.organizerAddress) {
         return res.status(403).json({ error: "not_organizer", message: "Sign in with the wallet that will organize this circle." });
       }

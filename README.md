@@ -168,8 +168,10 @@ Iwa is non-custodial by construction.
   indexes public chain data. It takes no custody, signs nothing, and has no
   column for key material. Organizer actions require a single-use expiring
   challenge, signed by the wallet and verified against the account contract on
-  chain, so an address by itself is never a credential. The database runs with
-  row level security enabled and no policies.
+  chain, so an address by itself is never a credential. The database is reached
+  only by that service, connecting as owner; row level security with no policies
+  is applied to the Supabase project out of band rather than by a migration, so
+  a fresh deployment has to have it applied again.
 
 Iwa has not been through an external security audit. The invariants the
 contracts are expected to hold are documented in [SECURITY.md](SECURITY.md).

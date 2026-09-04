@@ -85,8 +85,27 @@ describe("the screen cannot be the security boundary", () => {
 });
 
 describe("the screen never signs by itself", () => {
-  it("has no effect at all, so arriving prompts nothing", () => {
-    expect(screen()).not.toContain("useEffect");
+  it("has no effect that reads, so arriving prompts nothing", () => {
+    // There is one effect and it only forgets. What must never exist is an
+    // effect that loads: that would turn a render into a wallet prompt, which
+    // is the whole rule this screen shares with Home.
+    const effects = [...screen().matchAll(/useEffect\(\(\) => \{([\s\S]*?)\}, \[/g)].map(
+      (m) => m[1] as string,
+    );
+    expect(effects.length).toBeGreaterThan(0);
+    for (const body of effects) {
+      expect(body).not.toContain("load(");
+      expect(body).not.toContain("adminOverview");
+      expect(body).not.toContain("walletSigner");
+    }
+  });
+
+  it("forgets the report when the wallet changes", () => {
+    // A-1. The report was authorized by one wallet; once that wallet is no
+    // longer connected the screen must not still be showing it.
+    const text = screen();
+    const effect = /useEffect\(\(\) => \{\s*setState\(\{ kind: "idle" \}\);\s*\}, \[address\]\);/;
+    expect(text).toMatch(effect);
   });
 
   it("signs only inside the read the operator asked for", () => {
@@ -194,5 +213,26 @@ describe("the guard itself", () => {
     expect(screen().length).toBeGreaterThan(1000);
     expect(view().length).toBeGreaterThan(1000);
     expect(screen()).toContain("ADMIN_COPY.heading");
+  });
+});
+
+// A-1. Clearing has to be total: if the idle state could still carry a report,
+// forgetting would leave something behind for the next wallet to see.
+describe("what a forgotten report leaves behind", () => {
+  it("has no state that both means idle and holds a report", () => {
+    const text = screen();
+    expect(text).toContain('| { kind: "idle" }');
+    // Only the ready state names a report, so resetting to idle discards it
+    // structurally rather than by remembering to blank a field.
+    const reportStates = [...text.matchAll(/\{ kind: "(\w+)";[^}]*report:/g)].map((m) => m[1]);
+    expect(reportStates).toEqual(["ready"]);
+  });
+
+  it("renders the report only from the ready state", () => {
+    const text = screen();
+    // Every read of the report is guarded by the ready state.
+    for (const m of text.matchAll(/state\.report/g)) {
+      expect(m.index).toBeGreaterThan(text.indexOf('state.kind === "ready"'));
+    }
   });
 });

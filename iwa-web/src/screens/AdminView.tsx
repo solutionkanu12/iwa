@@ -21,7 +21,7 @@
 // counts, health flags and public contract addresses, so there is no wallet,
 // member reference, invitation or circle membership here to leak.
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { Island } from "../components/Island.tsx";
 import { Button } from "../components/Button.tsx";
@@ -100,6 +100,25 @@ export function AdminView({ navigate }: { navigate: (to: string | Route) => void
         message: e instanceof BackendError ? e.message : ADMIN_COPY.failed,
       });
     }
+  }, [address]);
+
+  /**
+   * Forgets the report when the wallet changes.
+   *
+   * A report is about the platform, but it was authorized by one particular
+   * wallet, and the moment that wallet is no longer the one connected the
+   * screen is showing something the current wallet never proved it may see.
+   * That is true whether the person switched to a wallet with no operator
+   * access at all or to a second operator wallet: either way the figures on
+   * screen belong to a session that has ended.
+   *
+   * It clears and stops. It deliberately does not reload, because reloading
+   * would mean a wallet prompt nobody asked for, arriving because an account
+   * changed in an extension. The next read is a press, exactly as the first
+   * one was.
+   */
+  useEffect(() => {
+    setState({ kind: "idle" });
   }, [address]);
 
   return (

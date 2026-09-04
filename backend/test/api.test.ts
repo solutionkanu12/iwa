@@ -619,3 +619,54 @@ describe("organizer draft recovery", () => {
     );
   });
 });
+
+// B-1. The route used to validate the body before authenticating, so an
+// unauthenticated caller was handed the whole schema back as a 400 while every
+// other authenticated route answers 401 and says nothing. The order is now the
+// other way round, and these pin it.
+describe("draft creation authenticates before it reads the body", () => {
+  it("refuses an unauthenticated caller with 401, whatever the body is", async () => {
+    for (const body of [{}, { nonsense: true }, DRAFT, { memberCount: 1 }]) {
+      const res = await request(app).post("/api/drafts").send(body);
+      expect(res.status).toBe(401);
+      expect(res.body.error).toBe("missing_auth");
+    }
+  });
+
+  it("discloses no field name or schema detail to an unauthenticated caller", async () => {
+    const res = await request(app).post("/api/drafts").send({});
+    const text = JSON.stringify(res.body);
+    expect(res.body).not.toHaveProperty("issues");
+    for (const field of [
+      "chainId",
+      "organizerAddress",
+      "contributionAmount",
+      "cadenceSeconds",
+      "graceSeconds",
+      "memberCount",
+      "invalid_type",
+    ]) {
+      expect(text).not.toContain(field);
+    }
+  });
+
+  it("still gives an authenticated caller a real validation error", async () => {
+    const res = await request(app)
+      .post("/api/drafts")
+      .set(await authHeaders(app, ORGANIZER))
+      .send({});
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_request");
+    expect(Array.isArray(res.body.issues)).toBe(true);
+  });
+
+  it("still creates a circle for a valid authenticated request", async () => {
+    const res = await request(app)
+      .post("/api/drafts")
+      .set(await authHeaders(app, ORGANIZER))
+      .send(DRAFT);
+    expect(res.status).toBe(201);
+    expect(res.body.memberCount).toBe(DRAFT.memberCount);
+    expect(res.body.slots).toHaveLength(DRAFT.memberCount);
+  });
+});
