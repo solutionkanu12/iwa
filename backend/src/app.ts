@@ -25,6 +25,12 @@ import {
 } from "./authBinding.js";
 import { SessionStore } from "./session.js";
 import {
+  AdminAllowlist,
+  adminOverview,
+  NO_CHAIN_HEALTH,
+  type ChainHealthReader,
+} from "./admin.js";
+import {
   acceptInviteSchema,
   isInviteToken,
   isUuid,
@@ -76,6 +82,16 @@ export interface AppOptions {
   circleVerifier: CircleVerifier;
   challenges?: ChallengeStore;
   sessions?: SessionStore;
+  /**
+   * Wallets allowed to read the operator dashboard. Absent or empty means the
+   * admin API allows nobody, which is how an unconfigured deployment stays
+   * closed rather than open.
+   */
+  adminAddresses?: readonly string[];
+  /** Live chain health for the dashboard. Injected so routes test without RPC. */
+  chainHealth?: ChainHealthReader;
+  /** Reported to operators as the environment. Never a secret. */
+  environment?: "development" | "test" | "production";
   /** Mutations allowed per window, per client. */
   rateLimit?: { windowMs: number; max: number };
   /**
@@ -218,6 +234,9 @@ export function createApp(options: AppOptions): Express {
   const sessions = options.sessions ?? new SessionStore(now);
   const verifier = options.verifier;
   const circleVerifier = options.circleVerifier;
+  const admins = new AdminAllowlist(options.adminAddresses ?? []);
+  const chainHealth = options.chainHealth ?? NO_CHAIN_HEALTH;
+  const environment = options.environment ?? "development";
 
   const app = express();
   app.disable("x-powered-by");
@@ -804,6 +823,76 @@ export function createApp(options: AppOptions): Express {
       if (caller === null) return;
       const all = await store.listAssociationsForAddress(caller);
       res.json(all.filter((a) => a.accepted));
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  // --- operator dashboard ---
+
+  /**
+   * The platform, as an operator needs to see it.
+   *
+   * THE SIGNATURE PATH ONLY. `authenticate`, deliberately, and never
+   * `authenticateRead`: a read-only session is a bearer token, and whoever
+   * holds one is treated as its wallet. Requiring a fresh per-request signature
+   * means a captured session cannot become operator access, which is the one
+   * question this route had to answer well.
+   *
+   * The allowlist is then checked against the address the signature proved, not
+   * against anything the caller sent, and it lives in the environment rather
+   * than the database, so writing to Postgres does not make anybody an
+   * operator. An unconfigured deployment allows nobody.
+   *
+   * A caller who is authenticated but not an operator is told exactly that and
+   * learns nothing else. There is no hidden URL doing any work here: this route
+   * is as reachable as any other and simply refuses.
+   *
+   * Everything it returns is an aggregate, a health flag or a public contract
+   * address. No draft, wallet, member reference, invitation token or circle
+   * membership passes through it, and there is nothing here to mutate.
+   */
+  app.post("/api/admin/overview", async (req, res, next) => {
+    if (!mutate(req, res)) return;
+    try {
+      const caller = await authenticate(req, res, AUTH_ACTIONS.adminRead);
+      if (caller === null) return;
+      if (!admins.allows(caller)) {
+        return res.status(403).json({
+          error: "not_admin",
+          message: "This wallet does not operate Iwa.",
+        });
+      }
+
+      const [dbOk, coordination, chainHealthy] = await Promise.all([
+        store.healthy(),
+        store.coordinationCounts(normalizeFelt(SN_MAIN)),
+        chainHealth.read(),
+      ]);
+
+      res.json(
+        adminOverview({
+          backend: {
+            database: dbOk ? "up" : "down",
+            challengeStore: "in-process",
+            sessionStore: "in-process",
+            liveChallenges: challenges.size,
+            liveSessions: sessions.size,
+            corsOriginsConfigured: corsOrigins.length,
+            environment,
+          },
+          chain: {
+            chainId: SN_MAIN,
+            rpcConfigured: chainHealth.configured,
+            rpcReachable: chainHealthy.rpcReachable,
+            latestBlock: chainHealthy.latestBlock,
+            circleContract: chainHealth.circleContract,
+            circleReadOk: chainHealthy.circleReadOk,
+          },
+          coordination,
+          now: now(),
+        }),
+      );
     } catch (e) {
       next(e);
     }

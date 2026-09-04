@@ -9,6 +9,7 @@
 // If this service is unavailable, contributing to an existing circle still
 // works — that path talks to the chain and the wallet directly.
 
+import type { AdminOverviewFacts } from "./adminView";
 import {
   AUTH_ACTIONS,
   authorizationTypedData,
@@ -132,6 +133,7 @@ const FRIENDLY: Record<string, string> = {
     "We could not reach Starknet to confirm this. Nothing is lost, please try again in a moment.",
   unverified_creation: "Starknet does not show that circle as belonging to this draft.",
   no_circle_yet: "No circle for this draft exists on Starknet yet.",
+  not_admin: "This wallet does not operate Iwa.",
 };
 
 /** True when the failure is worth retrying rather than reporting as final. */
@@ -333,6 +335,25 @@ export const backend = {
     } catch {
       // Unreachable service. Already forgotten locally.
     }
+  },
+
+  /**
+   * The operator dashboard.
+   *
+   * Takes an address and a signer, never a session, and that is the security
+   * property rather than an inconvenience: a session is a bearer token, so
+   * accepting one here would mean a captured token became operator access. The
+   * service refuses a session on this route regardless of what this client does.
+   *
+   * The reply is aggregates, health flags and public contract addresses. Nothing
+   * about any individual saver exists in it to be shown.
+   */
+  async adminOverview(address: string, sign: WalletSigner): Promise<AdminOverviewFacts> {
+    return signedCall(address, sign, {
+      action: AUTH_ACTIONS.adminRead,
+      method: "POST",
+      path: "/api/admin/overview",
+    });
   },
 
   async createDraft(input: CreateDraftInput, sign: WalletSigner): Promise<DraftView> {

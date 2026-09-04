@@ -36,10 +36,14 @@ describe("which routes accept a read-only session", () => {
   });
 
   // Everything that writes, plus the sign-in itself, which must never be
-  // mintable from a session or a session would renew itself forever.
+  // mintable from a session or a session would renew itself forever, plus the
+  // operator dashboard read. That last one is not a write, and is here on
+  // purpose: a session is a bearer token, so accepting one would mean a
+  // captured token became operator access.
   it("demands a full wallet signature for every other action", () => {
     expect(actionsFor("authenticate")).toEqual(
       [
+        "adminRead",
         "sessionCreate",
         "draftCreate",
         "draftReorder",

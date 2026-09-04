@@ -95,6 +95,7 @@ describe("the action set", () => {
   it("matches the service, name for name", () => {
     expect(Object.values(AUTH_ACTIONS).sort()).toEqual(
       [
+        "admin:read",
         "associations:list",
         "draft:create",
         "draft:mark-created",

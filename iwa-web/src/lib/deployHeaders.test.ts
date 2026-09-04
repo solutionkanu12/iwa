@@ -168,6 +168,9 @@ describe("the routes are untouched", () => {
       "/",
       "/app",
       "/app/(.*)",
+      // The operator dashboard is a client route like any other. It is served
+      // here and gated by the API, never by whether the path resolves.
+      "/admin",
       "/strk20",
       "/start",
       "/invite/(.*)",

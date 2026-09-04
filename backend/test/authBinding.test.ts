@@ -571,6 +571,7 @@ describe("fixed vectors shared with the client", () => {
   it("names the same actions as the client", () => {
     expect(Object.values(AUTH_ACTIONS).sort()).toEqual(
       [
+        "admin:read",
         "associations:list",
         "draft:create",
         "draft:mark-created",

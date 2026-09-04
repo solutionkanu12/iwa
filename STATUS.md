@@ -116,6 +116,60 @@ against it is not evidence of a stranded payout, and nothing here says it is.
 Preparing the accounting moves no money and is not an organizer power; the
 application does not call it.
 
+## Phase 7C: platform admin dashboard
+
+Complete, and verified with read-only calls against the running service and
+mainnet.
+
+Operators reach `/admin`. It reports and does nothing else: there is no admin
+mutation in the service and no administrative power in the contracts for one to
+reach.
+
+**Access.** A wallet signature, bound to the exact action, method, path and body
+as SNIP-12 typed data, verified against the account contract on chain, and then
+checked against an allowlist. Enforcement is server side, in the route, against
+the address the signature proved. The path is not the protection: `/admin`
+renders nothing until the API answers, and a caller who skips the screen meets
+the same check.
+
+**The allowlist** is the `ADMIN_ADDRESSES` environment variable of the
+coordination service: comma separated Starknet addresses, validated at boot.
+Unset or empty denies everybody, so a deployment nobody has configured for
+operations has no admin surface rather than an open one. It lives in the
+environment and not in Postgres, so write access to the database does not make
+anybody an operator.
+
+**A read-only session cannot reach it.** Admin reads take the full per-request
+signature and refuse a bearer token, so a captured session never becomes
+operator access. That is asserted directly: an operator's own valid session
+works on an ordinary private read and is refused here.
+
+**What it shows.** Aggregate coordination counts, live chain health, and this
+deployment's configuration, each row labelled with which of the three it came
+from. No wallet address, member reference, invitation token, draft id or circle
+membership is in the response to be shown. No money movement, no payout or
+settlement action, no reconciliation on an organizer's behalf, and no control
+of any kind.
+
+No contract change, no database migration, no mainnet write. The counts are
+COUNT, SUM and MIN over columns that already existed.
+
+Frontend: 526 tests pass, `tsc -b` clean, production build clean. Backend: 224
+pass and 12 skipped, typecheck clean.
+
+### What the metrics are, and are not
+
+They are coordination, chain and health aggregates: drafts by state, places
+accepted, circles recorded as created, circles the indexer has seen, node
+reachability, contract reachability, store modes and live counts.
+
+They are not user or growth analytics, and nothing in the dashboard claims to
+be. Durable signup and user-growth figures are deferred: there is no first-seen
+record and no user event source in this system to derive them from, and
+inventing them from coordination rows would produce numbers nobody could trace.
+Adding them needs a new event source and a schema change, neither of which this
+phase made.
+
 ## What does not work yet
 
 **Collecting the pot.** The settlement path exists and is covered by the

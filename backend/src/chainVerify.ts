@@ -25,6 +25,7 @@
 
 import { RpcProvider } from "starknet";
 
+import type { ChainHealthReader } from "./admin.js";
 import type { CircleDraft } from "./store.js";
 import { normalizeFelt, SN_MAIN } from "./validation.js";
 
@@ -235,5 +236,59 @@ export class OnChainCircleVerifier implements CircleVerifier {
       if (e instanceof Unavailable) return { status: "unavailable" };
       throw e;
     }
+  }
+}
+
+/**
+ * Live chain health, for the operator dashboard.
+ *
+ * Two read-only questions, both answered as values rather than exceptions: can
+ * this service reach a node at all, and does the circle contract answer a view
+ * call. A dashboard that goes blank when the chain is unreachable has hidden
+ * the very thing an operator opened it to find out.
+ *
+ * The RPC URL never leaves the service. Only whether one is configured, which
+ * is an operational fact, unlike the endpoint itself, which may carry a key.
+ */
+export class RpcChainHealth implements ChainHealthReader {
+  readonly configured = true;
+
+  constructor(
+    private readonly provider: RpcProvider,
+    readonly circleContract: string,
+  ) {}
+
+  async read(): Promise<{
+    rpcReachable: boolean;
+    latestBlock: number | null;
+    circleReadOk: boolean;
+  }> {
+    let latestBlock: number | null = null;
+    try {
+      latestBlock = await this.provider.getBlockNumber();
+    } catch {
+      // Unreachable node. Reported, not thrown.
+      return { rpcReachable: false, latestBlock: null, circleReadOk: false };
+    }
+
+    let circleReadOk = false;
+    try {
+      // The cheapest question the contract answers about itself. It reads and
+      // cannot write: get_settlement_config takes no argument and returns
+      // configuration the contract already publishes.
+      await this.provider.callContract(
+        {
+          contractAddress: this.circleContract,
+          entrypoint: "get_settlement_config",
+          calldata: [],
+        },
+        "latest",
+      );
+      circleReadOk = true;
+    } catch {
+      circleReadOk = false;
+    }
+
+    return { rpcReachable: true, latestBlock, circleReadOk };
   }
 }

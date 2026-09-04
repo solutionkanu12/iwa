@@ -45,6 +45,12 @@ export const AUTH_ACTIONS = {
   draftsList: "drafts:list",
   associationsList: "associations:list",
   invitationsList: "invitations:list",
+  /**
+   * Reads the operator dashboard. Bound like every other action, and never
+   * accepted from a read-only session: an operational read takes a fresh
+   * signature so a captured bearer token can never become one.
+   */
+  adminRead: "admin:read",
 } as const;
 
 export type AuthAction = (typeof AUTH_ACTIONS)[keyof typeof AUTH_ACTIONS];

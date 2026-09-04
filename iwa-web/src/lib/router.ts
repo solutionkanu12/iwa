@@ -29,6 +29,12 @@ export type Route =
   | { name: "create" }
   | { name: "invite"; token: string }
   | { name: "console" }
+  /**
+   * The operator dashboard. Reachable by anybody who types it, and useful to
+   * nobody but an operator: what it shows comes from an authenticated API that
+   * checks an allowlist server side, so the path is not the protection.
+   */
+  | { name: "admin" }
   | { name: "notFound"; path: string };
 
 export interface Resolved {
@@ -88,6 +94,8 @@ export function hrefFor(route: Route): string {
       return `/invite/${encodeURIComponent(route.token)}`;
     case "console":
       return "/strk20";
+    case "admin":
+      return "/admin";
     case "notFound":
       return route.path;
   }
@@ -109,6 +117,10 @@ export function resolve(pathname: string, search: string): Resolved {
   // Compatibility: the first phase reached the organizer flow at /start.
   if (parts.length === 1 && parts[0] === "start") {
     return { route: { name: "create" }, redirectTo: "/app/create" };
+  }
+
+  if (parts[0] === "admin") {
+    return parts.length === 1 ? { route: { name: "admin" }, redirectTo: null } : notFound;
   }
 
   if (parts[0] === "strk20") {
@@ -168,6 +180,7 @@ export function isAppRoute(route: Route): boolean {
     route.name === "circle" ||
     route.name === "standing" ||
     route.name === "create" ||
+    route.name === "admin" ||
     route.name === "notFound"
   );
 }

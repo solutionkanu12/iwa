@@ -40,6 +40,10 @@
       "destination": "/index.html"
     },
     {
+      "source": "/admin",
+      "destination": "/index.html"
+    },
+    {
       "source": "/strk20",
       "destination": "/index.html"
     },

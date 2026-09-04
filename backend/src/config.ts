@@ -5,6 +5,8 @@
 
 import { z } from "zod";
 
+import { isFelt } from "./validation.js";
+
 const schema = z.object({
   PORT: z.coerce.number().int().positive().default(8080),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -15,6 +17,15 @@ const schema = z.object({
   STARKNET_RPC_URL: z.string().url(),
   /** Comma-separated exact origins. No wildcard in production. */
   CORS_ORIGINS: z.string().default(""),
+  /**
+   * Wallets allowed to read the operator dashboard, comma separated.
+   *
+   * Empty by default, which disables the admin API rather than opening it: a
+   * deployment nobody has configured for operators has no admin surface at all.
+   * It lives in the environment and not in the database, so somebody who can
+   * write to Postgres cannot make themselves an operator.
+   */
+  ADMIN_ADDRESSES: z.string().default(""),
   /** Blocks the indexer loop when false, e.g. on a second replica. */
   INDEXER_ENABLED: z.enum(["true", "false"]).default("true"),
   INDEXER_INTERVAL_MS: z.coerce.number().int().min(5_000).default(30_000),
@@ -29,6 +40,7 @@ export type Config = {
   databaseSsl: boolean;
   starknetRpcUrl: string;
   corsOrigins: string[];
+  adminAddresses: string[];
   indexerEnabled: boolean;
   indexerIntervalMs: number;
   indexerStartBlock: number;
@@ -55,6 +67,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error("CORS_ORIGINS must not be a wildcard");
   }
 
+  // A malformed operator address is a startup failure rather than a silent
+  // lockout. Getting it wrong should be loud at deploy time, when somebody is
+  // watching, and not at the moment an operator needs the dashboard.
+  const adminAddresses = v.ADMIN_ADDRESSES.split(",")
+    .map((s) => s.trim())
+    .filter((s) => s !== "");
+  for (const address of adminAddresses) {
+    if (!isFelt(address)) {
+      throw new Error("ADMIN_ADDRESSES must be a comma-separated list of Starknet addresses");
+    }
+  }
+
   return {
     port: v.PORT,
     nodeEnv: v.NODE_ENV,
@@ -62,6 +86,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     databaseSsl: v.DATABASE_SSL === "true",
     starknetRpcUrl: v.STARKNET_RPC_URL,
     corsOrigins,
+    adminAddresses,
     indexerEnabled: v.INDEXER_ENABLED === "true",
     indexerIntervalMs: v.INDEXER_INTERVAL_MS,
     indexerStartBlock: v.INDEXER_START_BLOCK,

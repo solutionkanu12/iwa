@@ -9,6 +9,8 @@
 
 import { randomUUID, randomBytes } from "node:crypto";
 
+import type { CoordinationCounts } from "./admin.js";
+
 export type DraftStatus = "draft" | "ready" | "created" | "abandoned";
 
 export interface DraftSlot {
@@ -140,6 +142,16 @@ export interface Store {
 
   getCursor(name: string): Promise<number | null>;
   setCursor(name: string, chainId: string, block: number): Promise<void>;
+
+  /**
+   * Aggregate coordination counts, for the operator dashboard.
+   *
+   * Counts and two timestamps. It returns no draft, no slot, no address, no
+   * invitation token and no circle membership, so an operator can see that four
+   * drafts are waiting without learning anything about whose they are. Every
+   * figure comes from a column that already exists.
+   */
+  coordinationCounts(chainId: string): Promise<CoordinationCounts>;
 
   healthy(): Promise<boolean>;
 }
@@ -339,6 +351,40 @@ export class MemoryStore implements Store {
 
   async setCursor(name: string, chainId: string, block: number): Promise<void> {
     this.cursors.set(name, { chainId, block });
+  }
+
+  async coordinationCounts(chainId: string): Promise<CoordinationCounts> {
+    const drafts = [...this.drafts.values()];
+    const live = drafts.filter((d) => d.status !== "abandoned");
+    const withStatus = (s: DraftStatus) => drafts.filter((d) => d.status === s);
+
+    const recorded = new Set(
+      drafts.filter((d) => d.circleId !== null).map((d) => d.circleId as number),
+    );
+    const indexed = [...this.circles.values()].filter((c) => c.chainId === chainId);
+
+    const oldest = (list: CircleDraft[]): string | null =>
+      list.length === 0
+        ? null
+        : list.reduce((a, b) => (a.createdAt <= b.createdAt ? a : b)).createdAt;
+
+    return {
+      draftsTotal: drafts.length,
+      draftsCollecting: withStatus("draft").length,
+      draftsReady: withStatus("ready").length,
+      draftsCreated: withStatus("created").length,
+      draftsAbandoned: withStatus("abandoned").length,
+      placesTotal: live.reduce((n, d) => n + d.memberCount, 0),
+      placesAccepted: live.reduce(
+        (n, d) => n + d.slots.filter((s) => s.memberRef !== null).length,
+        0,
+      ),
+      createdWithoutCircleId: withStatus("created").filter((d) => d.circleId === null).length,
+      indexedCircles: indexed.length,
+      unrecordedChainCircles: indexed.filter((c) => !recorded.has(c.circleId)).length,
+      oldestCollectingAt: oldest(withStatus("draft")),
+      oldestReadyAt: oldest(withStatus("ready")),
+    };
   }
 
   async healthy(): Promise<boolean> {

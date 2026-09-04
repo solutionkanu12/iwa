@@ -11,6 +11,7 @@ import { MyCirclesView } from "./screens/MyCirclesView.tsx";
 import { InvitationsView } from "./screens/InvitationsView.tsx";
 import { StandingView } from "./screens/StandingView.tsx";
 import { OrganizerCircleView } from "./screens/OrganizerCircleView.tsx";
+import { AdminView } from "./screens/AdminView.tsx";
 import type { Route } from "./lib/router.ts";
 
 export interface AppProps {
@@ -43,6 +44,9 @@ export function App({ route, navigate }: AppProps) {
       break;
     case "create":
       screen = <OrganizerCircleView navigate={navigate} />;
+      break;
+    case "admin":
+      screen = <AdminView navigate={navigate} />;
       break;
     default:
       screen = <NotFoundView navigate={navigate} />;

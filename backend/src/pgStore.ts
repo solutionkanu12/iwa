@@ -6,6 +6,7 @@
 
 import { Pool, type PoolClient } from "pg";
 
+import type { CoordinationCounts } from "./admin.js";
 import {
   associationFor,
   deriveStatus,
@@ -431,6 +432,80 @@ export class PgStore implements Store {
        ON CONFLICT (name) DO UPDATE SET last_block = EXCLUDED.last_block, updated_at = now()`,
       [name, chainId, block],
     );
+  }
+
+  /**
+   * Aggregate coordination counts for the operator dashboard.
+   *
+   * Two aggregate queries over columns that already exist. No migration was
+   * needed and none was made: everything here is a COUNT, a SUM or a MIN, and
+   * no row, address, token or member reference is selected, so there is nothing
+   * in the result that could identify anybody even by accident.
+   */
+  async coordinationCounts(chainId: string): Promise<CoordinationCounts> {
+    const drafts = await this.pool.query<{
+      drafts_total: string;
+      drafts_collecting: string;
+      drafts_ready: string;
+      drafts_created: string;
+      drafts_abandoned: string;
+      places_total: string | null;
+      created_without_circle_id: string;
+      oldest_collecting_at: Date | null;
+      oldest_ready_at: Date | null;
+    }>(
+      `SELECT
+         count(*)                                                        AS drafts_total,
+         count(*) FILTER (WHERE status = 'draft')                        AS drafts_collecting,
+         count(*) FILTER (WHERE status = 'ready')                        AS drafts_ready,
+         count(*) FILTER (WHERE status = 'created')                      AS drafts_created,
+         count(*) FILTER (WHERE status = 'abandoned')                    AS drafts_abandoned,
+         coalesce(sum(member_count) FILTER (WHERE status <> 'abandoned'), 0)
+                                                                         AS places_total,
+         count(*) FILTER (WHERE status = 'created' AND circle_id IS NULL)
+                                                                         AS created_without_circle_id,
+         min(created_at) FILTER (WHERE status = 'draft')                 AS oldest_collecting_at,
+         min(created_at) FILTER (WHERE status = 'ready')                 AS oldest_ready_at
+       FROM circle_drafts`,
+    );
+
+    const slots = await this.pool.query<{ places_accepted: string }>(
+      `SELECT count(*) AS places_accepted
+         FROM draft_slots s
+         JOIN circle_drafts d ON d.id = s.draft_id
+        WHERE s.member_ref IS NOT NULL AND d.status <> 'abandoned'`,
+    );
+
+    const circles = await this.pool.query<{ indexed: string; unrecorded: string }>(
+      `SELECT
+         count(*) AS indexed,
+         count(*) FILTER (
+           WHERE c.circle_id NOT IN (
+             SELECT circle_id FROM circle_drafts WHERE circle_id IS NOT NULL
+           )
+         ) AS unrecorded
+       FROM indexed_circles c
+      WHERE c.chain_id = $1`,
+      [chainId],
+    );
+
+    const d = drafts.rows[0];
+    const n = (value: string | null | undefined): number => Number(value ?? 0);
+
+    return {
+      draftsTotal: n(d?.drafts_total),
+      draftsCollecting: n(d?.drafts_collecting),
+      draftsReady: n(d?.drafts_ready),
+      draftsCreated: n(d?.drafts_created),
+      draftsAbandoned: n(d?.drafts_abandoned),
+      placesTotal: n(d?.places_total),
+      placesAccepted: n(slots.rows[0]?.places_accepted),
+      createdWithoutCircleId: n(d?.created_without_circle_id),
+      indexedCircles: n(circles.rows[0]?.indexed),
+      unrecordedChainCircles: n(circles.rows[0]?.unrecorded),
+      oldestCollectingAt: d?.oldest_collecting_at?.toISOString() ?? null,
+      oldestReadyAt: d?.oldest_ready_at?.toISOString() ?? null,
+    };
   }
 
   async healthy(): Promise<boolean> {

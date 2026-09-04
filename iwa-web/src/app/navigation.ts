@@ -95,6 +95,7 @@ export type ScreenName =
   | "circle"
   | "standing"
   | "create"
+  | "admin"
   | "notFound";
 
 export function screenFor(route: Route): ScreenName {
@@ -106,6 +107,7 @@ export function screenFor(route: Route): ScreenName {
     case "circle":
     case "standing":
     case "create":
+    case "admin":
       return route.name;
     default:
       return "notFound";
@@ -120,5 +122,10 @@ export function screenFor(route: Route): ScreenName {
  * connection, and it is asked for at that point rather than at the door.
  */
 export function needsWallet(screen: ScreenName): boolean {
-  return screen === "standing" || screen === "myCircles" || screen === "invitations";
+  return (
+    screen === "standing" ||
+    screen === "myCircles" ||
+    screen === "invitations" ||
+    screen === "admin"
+  );
 }
