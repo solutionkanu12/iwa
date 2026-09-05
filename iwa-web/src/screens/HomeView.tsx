@@ -269,6 +269,19 @@ export function HomeView({ navigate }: { navigate: (to: string | Route) => void 
         </div>
       </Island>
 
+      <Island className={styles.card}>
+        <h2 className={styles.h2}>Prize Savings</h2>
+        <p className={styles.meta}>
+          Save privately, keep your principal withdrawable at any time, and earn a
+          chance at shared rewards through a confidential draw.
+        </p>
+        <div className={styles.stack}>
+          <Button variant="ghost" onClick={() => navigate({ name: "prizeSavings" })}>
+            Prize Savings
+          </Button>
+        </div>
+      </Island>
+
       {connected && (
         <Island className={styles.card}>
           <h2 className={styles.h2}>Your standing</h2>
