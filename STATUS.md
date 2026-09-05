@@ -6,6 +6,131 @@ intent.
 
 Last reviewed against the working tree during the reconnect work.
 
+## Zama Prize Savings bounty (active work)
+
+Branch `feature/zama-prize-savings`. Standalone spike-to-bounty track inside
+`zama-prize-savings/`; nothing in it touches the Starknet track or `iwa-web`.
+
+- S1 toolchain/round-trip spike: LOCAL PASS (Sepolia pending credentials)
+- S2 weighted-draw GO/NO-GO spike: LOCAL PASS. `MAX_PARTICIPANTS = 16`
+  (measured N=16: global 8.62M < 20M HCU, depth 2.82M < 5M HCU)
+- S3 ERC-7984 wrapper + actual-returned accounting spike: LOCAL PASS
+  (13 tests; pinned `@openzeppelin/confidential-contracts` 0.5.3,
+  peer-compatible with `@fhevm/solidity` 0.11.1)
+- P1 pool core (`IwaPrizeSavings`): LOCAL PASS (14 deposit + 8 withdraw tests)
+  - state machine `Open/Locked/Drawn/Claimable` (Open + locking implemented)
+  - confidential deposit crediting only the actual returned transfer
+  - requested withdraw with `FHE.min` clamping and `withdrawAll()` liveness hatch
+  - participant cap 16, once-per-wallet registration, anti-grief verified
+  - no sweep/rescue ABI, no plaintext amounts, no draw/claim code
+- P2 prize funding + pool cap: LOCAL PASS (13 prize + 5 cap tests)
+  - `fundPrize` owner-only while Open, crediting only the actual returned amount
+  - prize reserve encrypted, irrevocable, separate from participant draw weight
+  - `MAX_POOL_TOTAL = 1024` (2^10, S2-measured bound); deposit headroom clamp
+    via encrypted `FHE.min` - no plaintext branch, no decryption
+  - solvency: sum(credited) + prizeReserve == pool token holdings at every step
+- **Unresolved release risk (carried, do not redesign in this bounty):** 16
+  distinct zero-transfer wallets can still consume all participant slots. Each
+  wallet is capped at one slot, and zero-weight participants cannot be
+  selected in the draw, but a testnet attacker with 16 wallets can fill the
+  pool. Accepted for the bounty MVP; a real fix (e.g. registration fee or
+  plaintext stake) is out of scope.
+- **P3 (draw): BLOCKED - DRAW_TIMEOUT is not pinned.** The approved spec and
+  plan reference `lockTimestamp + DRAW_TIMEOUT` (C6) by name only and never
+  assign a number. Per the P3 task instruction, the value must come from the
+  approved docs or P3 stops. The reviewer must pin an exact
+  `DRAW_TIMEOUT` (seconds, plaintext constant) before P3 can proceed. All
+  other P3 inputs (S2-proven walk, euint16 winner, NO_WINNER sentinel 65535,
+  confidential ticket, N=16 bound) are ready.
+- P3 draw: LOCAL PASS (25 tests). DRAW_TIMEOUT = 900s approved 2026-09-05.
+  - `draw()`: owner immediately after lock; permissionless at
+    `lockTimestamp + 900` (C6 anti-stranding); once per round
+  - S2-proven encrypted weighted walk over LIVE balances; `euint16` winner
+    index; NO_WINNER sentinel 65535; rollover on `ticket >= total`
+  - ticket and winner stay confidential (no public decryption); prize reserve
+    and all balances untouched by the draw
+  - production N=16 measured: global 8.62M HCU < 20M, depth 2.82M < 5M,
+    gas 1.33M (FHE cost identical to S2's N=16 measurement)
+- P4 claim: LOCAL PASS (25 tests)
+  - `claim()`: pull action, Drawn/Claimable, first claim performs the one-time
+    Drawn -> Claimable transition (spec requires claim in Claimable and lists
+    no separate transition function)
+  - `FHE.eq` scalar winner check, `FHE.select` payout credit - non-winners
+    credit encrypted zero, never revert, never distinguished
+  - per-user `hasClaimed` replay protection; winner identity never revealed
+  - accounting option A (decision.md): `confidentialTotal` increases by the
+    payout so `total == sum(credited)` always; post-draw changes cannot
+    retroactively affect the completed draw
+  - winner withdraws the prize later through the normal confidential
+    withdrawal; solvency holds before/after claims; NO_WINNER rounds credit
+    zero and leave the reserve fully intact
+- P5 full lifecycle: LOCAL PASS (4 tests, NO production changes - the P1-P4
+  contract already supports the complete flow)
+  - winner cycle: Alice 60 / Bob 40 / prize 20, every step its own
+    transaction; Alice wins, claims 20, withdraws principal+prize; Bob claims
+    zero, withdraws principal; final holdings 0 == liabilities 0; no user
+    loses principal
+  - rollover cycle: ticket >= total -> NO_WINNER, zero claims, reserve 20
+    rolls over fully backed (liabilities 0, holdings 20)
+  - solvency asserted at every checkpoint; claim replay enforced; full-cycle
+    logs leak no amounts, balances, winner or payout
+- P6 red team: 29 adversarial tests, all GREEN - **BUT the release gate is
+  BLOCKED by one HIGH finding** (see below and SECURITY.md findings table).
+  All accounting/solvency, claim, draw, ACL/privacy, authority, ERC-7984 and
+  state-machine attacks were repelled; no new bugs found in the contract.
+- **RELEASE BLOCKER - HIGH: zero-transfer slot DoS.** 16 distinct wallets can
+  permanently fill the participant cap with zero-value deposit attempts
+  (each wallet one slot, but 16 wallets fill the pool for free). Real users
+  can never join that deployment; no removal function and no owner recovery
+  exist. Funds, the draw and existing participants are unaffected. No small
+  safe mitigation exists within the approved architecture (detecting a
+  positive encrypted transfer would require an ebool branch or public
+  decryption; a registration stake would be an architecture change).
+  **DECISION (approved 2026-09-05): ACCEPTED FOR THE SEPOLIA BOUNTY MVP ONLY.
+  BLOCKS ANY PRODUCTION/MAINNET DEPLOYMENT.** Before production, participant
+  admission must be redesigned (registration stake / allowlist / expiring
+  slots / confidential positive-participation proof - see decision.md).
+- **P7 REAL SEPOLIA VERIFICATION: PASS (all 8 items, real network).**
+  - S1 encrypted round-trip incl. cross-tx ACL and wallet-B rejection: PASS
+  - ERC-7984 operator path + allowTransient handoff (deposit 40 then 20): PASS
+  - wrong-contract input binding: REJECTED by the real verifier (InvalidSigner)
+  - wrong-sender input binding: REJECTED (InvalidSigner)
+  - no-prize claim: credits zero, full exit works - no stuck state
+  - real Sepolia logs: no plaintext amounts/balances/prize/winner
+  - F2 first-funding ACL: confirmed on the real ACL - funder sees only their
+    own first funding; a rewritten reserve handle removes access
+  - N=16 production draw on Sepolia: PASS, gas 1,705,385; real HCU measured
+    identical to local (global 8,616,576 < 20M, depth 2,818,032 < 5M)
+  - real-network deviation noted: publicly-known test-mnemonic addresses get
+    drained/swept on public testnets - random fresh wallets used instead
+- **P7 DEPLOYMENT (official, Sepolia):** MockUSD, CMockUSD, IwaPrizeSavings
+  deployed and recorded in `zama-prize-savings/deployments/sepolia.json`.
+  Pool: 0x2d1b97F7e1E4845260aBd23017686fBa38006037; wrapper
+  0xB87CE72B9083488977372507efD4127e157510c2; MockUSD
+  0x0041A7b8Bb29cA5D6b1Cb6eFBcaBAc8519075392. Constants verified on chain
+  (MAX_PARTICIPANTS 16, MAX_POOL_TOTAL 1024, DRAW_TIMEOUT 900).
+- **P7 FRONTEND: Iwa Prize Savings integrated into the main Iwa app** at
+  `/app/prize-savings` - one Iwa product, not a standalone dapp. Inside
+  AppShell, Iwa lavender design system, sidebar + account-nav entry (kept off
+  the 4-tab phone bar per the existing mobile rule), Ethereum-Sepolia wallet
+  seam (EIP-1193, separate from the Starknet wallet), Zama SDK wrapper for
+  encrypted inputs and EIP-712 user decryption, full flow (mint -> wrap ->
+  operator -> deposit -> balance reveal -> owner fund/lock/draw -> claim ->
+  withdraw/withdrawAll) with wrong-network, rejection, relayer-failure and
+  claim-replay handling. Frontend: 589 tests pass, build clean, typecheck
+  clean; existing routes untouched.
+- Sepolia verification: pending credentials. Sepolia-only items listed in
+  SECURITY.md (mock does not enforce operation-level ACL or input binding).
+- Release gate: **CLEARED for the Sepolia bounty** (F1 accepted for MVP).
+- P8 packaging: READY - README section + module README (confidentiality and
+  leakage analysis), submission package (demo script, X thread, form answers,
+  release checklist) in `zama-prize-savings/SUBMISSION.md`. Live-site check:
+  `/app/prize-savings` rewrites correctly on useiwa.xyz but the new build is
+  not yet deployed (final push is a human action). Local build verified.
+- Current task: human final actions (see SUBMISSION.md checklist). Next:
+  final commit/push/deploy + demo + X thread + form
+- Deadline: 2026-09-05 23:59 AOE
+
 ## Deployment
 
 | | |

@@ -1,0 +1,33 @@
+{
+  "chainId": 11155111,
+  "deployer": "0x0Eee82dd005765747943f79bD46785d9A374eA7a",
+  "contracts": {
+    "MockUSD": {
+      "address": "0xeE51D09cA39579c18b49A18a640baAf3083152F9",
+      "deployTx": null,
+      "note": "Last real-Sepolia verification run (N=16 draw)"
+    },
+    "CMockUSD": {
+      "address": "0x1654433efbfF5E761246D1041b36064F3cf7A1e7",
+      "deployTx": null,
+      "note": "Last real-Sepolia verification run (N=16 draw)"
+    },
+    "IwaPrizeSavings": {
+      "address": "0xE625365AD568514E3Fea3b1372C33fC94A01Ece0",
+      "deployTx": null,
+      "note": "Last real-Sepolia verification run (N=16 draw)"
+    },
+    "SpikeRoundTrip": {
+      "address": "0x1742CFe8f0E2BeaCf3971024747A2EFFDE9b9Fec",
+      "deployTx": null,
+      "note": "Last real-Sepolia verification run (N=16 draw)"
+    }
+  },
+  "toolchain": {
+    "@fhevm/solidity": "0.11.1",
+    "@fhevm/hardhat-plugin": "0.4.2",
+    "@openzeppelin/confidential-contracts": "0.5.3",
+    "solc": "0.8.27"
+  },
+  "note": "Sepolia verification deployment (P7 Part A). Not the official bounty deployment - see sepolia.json for the official one. The test suite records this file automatically on real Sepolia runs."
+}

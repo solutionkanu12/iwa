@@ -1,0 +1,45 @@
+{
+  "chainId": 11155111,
+  "deployer": "0x0Eee82dd005765747943f79bD46785d9A374eA7a",
+  "contracts": {
+    "MockUSD": {
+      "address": "0x0041A7b8Bb29cA5D6b1Cb6eFBcaBAc8519075392",
+      "deployTx": "0xfc1478f42bcb4e79eb940616565e46c18193e1a8b826cbbc5ca2d975c46da689",
+      "constructorParams": []
+    },
+    "CMockUSD": {
+      "address": "0xB87CE72B9083488977372507efD4127e157510c2",
+      "deployTx": "0xf455d0da49847ce0c773a8709e5c4f06132adf0f163212e349ffbc07b68a3af2",
+      "constructorParams": [
+        "0x0041A7b8Bb29cA5D6b1Cb6eFBcaBAc8519075392"
+      ],
+      "description": "ERC7984ERC20Wrapper over MockUSD (rate 1, 6 decimals)"
+    },
+    "IwaPrizeSavings": {
+      "address": "0x2d1b97F7e1E4845260aBd23017686fBa38006037",
+      "deployTx": "0x9f7a20b6c0a4cfd79a3c44d42970ca5851092e5239b0f436dd3e334a341371e5",
+      "constructorParams": [
+        "0xB87CE72B9083488977372507efD4127e157510c2"
+      ],
+      "constants": {
+        "MAX_PARTICIPANTS": 16,
+        "MAX_POOL_TOTAL": 1024,
+        "DRAW_TIMEOUT": 900
+      }
+    }
+  },
+  "toolchain": {
+    "@fhevm/solidity": "0.11.1",
+    "@fhevm/hardhat-plugin": "0.4.2",
+    "@fhevm/mock-utils": "0.4.2",
+    "@zama-fhe/relayer-sdk": "0.4.1",
+    "@openzeppelin/confidential-contracts": "0.5.3",
+    "@openzeppelin/contracts": "5.6.1",
+    "solc": "0.8.27",
+    "evmVersion": "cancun"
+  },
+  "acceptedRisk": {
+    "F1": "zero-transfer participant-slot DoS - ACCEPTED FOR SEPOLIA BOUNTY MVP ONLY; blocks any production/mainnet deployment"
+  },
+  "deployedAt": "2026-09-05T14:55:13.159Z"
+}

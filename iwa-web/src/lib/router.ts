@@ -27,6 +27,7 @@ export type Route =
   | { name: "circle"; circleId: number }
   | { name: "standing" }
   | { name: "create" }
+  | { name: "prizeSavings" }
   | { name: "invite"; token: string }
   | { name: "console" }
   /**
@@ -90,6 +91,8 @@ export function hrefFor(route: Route): string {
       return "/app/standing";
     case "create":
       return "/app/create";
+    case "prizeSavings":
+      return "/app/prize-savings";
     case "invite":
       return `/invite/${encodeURIComponent(route.token)}`;
     case "console":
@@ -157,6 +160,7 @@ export function resolve(pathname: string, search: string): Resolved {
     if (parts[1] === "invitations") return { route: { name: "invitations" }, redirectTo: null };
     if (parts[1] === "standing") return { route: { name: "standing" }, redirectTo: null };
     if (parts[1] === "create") return { route: { name: "create" }, redirectTo: null };
+    if (parts[1] === "prize-savings") return { route: { name: "prizeSavings" }, redirectTo: null };
     return notFound;
   }
 
@@ -180,6 +184,7 @@ export function isAppRoute(route: Route): boolean {
     route.name === "circle" ||
     route.name === "standing" ||
     route.name === "create" ||
+    route.name === "prizeSavings" ||
     route.name === "admin" ||
     route.name === "notFound"
   );
