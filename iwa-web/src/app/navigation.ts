@@ -45,6 +45,20 @@ const STANDING: NavEntry = {
   onMobile: false,
 };
 
+/**
+ * Iwa Prize Savings.
+ *
+ * Off the phone bar deliberately, like Standing: five destinations would
+ * crowd a 320px row, so secondary features live in the sidebar and the
+ * account control instead.
+ */
+const PRIZE_SAVINGS: NavEntry = {
+  route: { name: "prizeSavings" },
+  label: "Prize savings",
+  shortLabel: "Prizes",
+  onMobile: false,
+};
+
 /** Places to go. The sidebar shows all of these. */
 export const PRIMARY_NAV: NavEntry[] = [
   { route: { name: "home" }, label: "Home", onMobile: true },
@@ -57,6 +71,7 @@ export const PRIMARY_NAV: NavEntry[] = [
     onMobile: true,
   },
   STANDING,
+  PRIZE_SAVINGS,
 ];
 
 /**
@@ -64,7 +79,7 @@ export const PRIMARY_NAV: NavEntry[] = [
  * wallet chip, one tap here: never more than one interaction further than the
  * bar would have been.
  */
-export const ACCOUNT_NAV: NavEntry[] = [STANDING];
+export const ACCOUNT_NAV: NavEntry[] = [STANDING, PRIZE_SAVINGS];
 
 /** Things to do. */
 export const ACTION_NAV: NavEntry[] = [
@@ -95,6 +110,7 @@ export type ScreenName =
   | "circle"
   | "standing"
   | "create"
+  | "prizeSavings"
   | "admin"
   | "notFound";
 
@@ -107,6 +123,7 @@ export function screenFor(route: Route): ScreenName {
     case "circle":
     case "standing":
     case "create":
+    case "prizeSavings":
     case "admin":
       return route.name;
     default:

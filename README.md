@@ -97,6 +97,56 @@ Capability gated in this version:
   device-side proving exist; nothing on the current network can check a proof,
   so the entry point stays closed rather than half working.
 
+## Iwa Prize Savings
+
+One product, one more way to save.
+
+Iwa Prize Savings is an Iwa feature, not a separate product: inside the app at
+`/app/prize-savings`, a saver deposits into a shared pool, keeps their
+principal withdrawable at any time, and earns a chance at a shared reward
+through a confidential weighted draw.
+
+**"Save privately. Keep your principal. Earn a chance at shared rewards."**
+
+The current implementation runs on Ethereum Sepolia and uses Zama's fhEVM as
+its confidentiality layer.
+
+How the confidentiality works:
+
+- **One public step, then encrypted.** A saver wraps plaintext MockUSD into a
+  confidential ERC-7984 token (cMockUSD). That one wrap is public, because the
+  underlying ERC-20 transfer is public; it is also the only amount the saver
+  ever reveals. After wrapping, everything is encrypted.
+- **Encrypted deposits.** Deposit amounts move as confidential ERC-7984
+  transfers - no plaintext amount ever appears on chain.
+- **Encrypted balances.** Every participant balance is a ciphertext, usable by
+  the pool contract but decryptable only by its owner, through an
+  EIP-712-authorized user decryption the saver's own wallet signs.
+- **Confidential weighted draw.** A plaintext power-of-two bound, an encrypted
+  random ticket, and a cumulative encrypted walk over live balances select a
+  winner without decrypting a single balance.
+- **Encrypted winner.** The winner is an encrypted index, never an address in
+  the clear. Claiming is a pull: every participant's claim looks identical on
+  chain, and only the winner's own balance grows by the reward.
+- **Encrypted claim, confidential withdrawal.** The reward is credited as an
+  encrypted balance adjustment, and principal plus reward withdraw through the
+  normal confidential withdrawal. Principal is never locked: withdrawals are
+  available in every round state, including a full `withdrawAll` that needs no
+  encrypted input at all.
+- **No plaintext exposure.** No deposit amount, balance, prize, ticket or
+  winner index is ever written in the clear.
+
+What stays public, by design: membership and participant indices, transaction
+timing, contract addresses, the one-time wrap amount, and the round state.
+
+Known limitation, accepted for the Sepolia version only: sixteen distinct
+wallets can fill the participant cap with zero-value deposit attempts. That
+acceptance does not carry to production; any production deployment requires a
+redesigned participant admission (see `SECURITY.md`).
+
+Deployed addresses and the full confidentiality and leakage analysis are in
+[`zama-prize-savings/README.md`](zama-prize-savings/README.md).
+
 ## Privacy
 
 Privacy here is structural, not a setting.

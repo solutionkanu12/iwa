@@ -1005,6 +1005,159 @@ If IWA cannot satisfy the security gate safely before a deadline:
 
 **reduce scope instead of weakening the security model.**
 
+## Zama Prize Savings (Ethereum Sepolia bounty) security rules
+
+The Zama bounty track (`zama-prize-savings/`, branch `feature/zama-prize-savings`)
+has its own invariants, verified by the S1/S2/S3 spike suites and carried into
+the P1 pool core.
+
+- Only the ACTUAL returned ERC-7984 transfer amount may be credited. Never the
+  requested amount. This is the unbacked-share / fund-draining exploit guard.
+- With the pinned `@openzeppelin/confidential-contracts` 0.5.3, ERC-7984
+  transfers are all-or-nothing (`FHE.select(balance >= amount, amount, 0)`),
+  NOT min-clamped. A shortfall transfer moves and returns 0.
+- A shortfall deposit transfers 0 and credits 0. Accepted behavior for the
+  bounty MVP; the user retries with a valid amount.
+- No admin sweep/rescue/emergency function exists or may be added. The owner
+  cannot move user funds or pool funds in any direction.
+- ACL re-grant after every new encrypted handle write: `FHE.allowThis(handle)`
+  plus `FHE.allow(handle, user)`. Omitting either freezes the balance.
+- `withdrawAll()` is a mandatory liveness hatch: no encrypted input, no input
+  proof, works even if the relayer/SDK infrastructure is unavailable.
+- No plaintext balance, deposit/withdraw amount, or winner may appear in pool
+  state, events, return values, or revert reasons.
+- `MAX_PARTICIPANTS = 16` hard cap (S2-measured HCU ceiling). The 17th distinct
+  wallet is rejected in plaintext. Participant registration is once per wallet
+  on first deposit request; a single wallet can never consume more than one
+  slot, and zero-weight participants cannot be selected in the draw (S2-verified).
+- **Unresolved release risk (accepted for the bounty MVP):** 16 distinct
+  zero-transfer wallets can still consume all participant slots. Bounded per
+  wallet (one slot each) and harmless to the draw, but a testnet attacker with
+  16 wallets can fill the pool. A registration fee or plaintext stake would
+  fix it; out of scope for this bounty.
+- **Prize funding (C2):** `fundPrize` is owner-only, allowed only while the
+  round is Open, and credits ONLY the actual returned ERC-7984 transfer. A
+  shortfall funds 0. The prize reserve is encrypted and irrevocable - no
+  function in the contract can reduce, redirect, recover, or sweep it, and the
+  owner has no decrypt access to it.
+- **Participant total vs prize reserve:** `confidentialTotal` is participant
+  draw weight only; `prizeReserve` is a separate encrypted value that never
+  counts toward draw weight and never consumes `MAX_POOL_TOTAL` headroom.
+- **`MAX_POOL_TOTAL = 1024`** (2^10, S2-measured bound): plaintext power-of-two
+  cap on participant deposit weight. Deposit requests clamp to headroom via
+  encrypted `FHE.min(requested, MAX_POOL_TOTAL - total)` - no plaintext
+  branch, no decryption of the total, fail-closed to 0 via `trySub`.
+- **Draw (P3):** `draw()` runs the S2-proven encrypted cumulative weighted
+  walk over LIVE participant balances, once per round (`Locked -> Drawn`).
+  The owner may draw immediately after lock; anyone may draw at or after
+  `lockTimestamp + DRAW_TIMEOUT` (900s, Sepolia MVP value, C6 anti-stranding).
+  `FHE.randEuint64(MAX_POOL_TOTAL)` only - no encrypted bounds, no `FHE.rem`,
+  no re-draw, no rebias. A ticket `>=` the actual confidential total yields
+  NO_WINNER (65535) and the prize rolls over untouched.
+- **Winner and ticket stay encrypted.** `winnerIndex` is an encrypted euint16
+  handle with `allowThis` only - nobody, including the owner, is granted
+  decryption access. The ticket is stored confidentially; there is no
+  `makePubliclyDecryptable` path anywhere (C4: never publish both ticket and
+  winner identity). The draw moves no tokens: prize reserve and all balances
+  are untouched.
+- **Claim (P4):** `claim()` is a pull action in `Drawn`/`Claimable` (first
+  claim performs the one-time `Drawn -> Claimable` transition). The winner
+  check is the scalar encrypted `FHE.eq(winnerIndex, asEuint16(index))` and
+  the credit is `FHE.select(isWinner, prizeReserve, 0)` - there is no
+  `require` on an encrypted condition, no decrypt of the winner index, and no
+  plaintext payout anywhere. A non-winner claims successfully and receives
+  encrypted zero, externally indistinguishable from a winner claim.
+- **Claim replay protection is per-user** (`hasClaimed`), never a global
+  per-round flag: one user's claim cannot block another's, and claiming zero
+  still consumes the caller's own attempt.
+- **Prize reserve decreases only by the actual encrypted payout** to a
+  verified winner; a NO_WINNER round credits zero to everyone and leaves the
+  reserve fully intact for rollover.
+- **Claim accounting (option A, decision.md):** the winner's credited balance
+  AND `confidentialTotal` increase by the payout, so `total == sum(credited)`
+  always. Claim is only reachable after the round is Drawn, so a prize credit
+  can never retroactively affect the completed draw. Solvency invariant
+  `sum(credited) + prizeReserve <= holdings` is preserved across claims; a
+  winner's prize is withdrawable through the normal confidential withdrawal.
+- **Full-cycle result (P5, verified across separate transactions):**
+  - solvency `sum(user balances) + prizeReserve == holdings` holds at every
+    checkpoint of the complete lifecycle, and at the end of a fully-claimed
+    and fully-withdrawn round holdings and liabilities are both zero
+  - every encrypted handle written in one transaction (deposit, funding,
+    draw, claim) remains operable in all later transactions of the lifecycle
+  - no user loses principal: winners end with principal + prize, non-winners
+    with exactly their principal
+  - rollover rounds (ticket >= total) credit zero to everyone and leave the
+    prize reserve fully backed in the pool for rollover/future use
+
+## Zama prize pool — P6 red-team findings table
+
+| # | Severity | Title | Exploitability | Impact | Status |
+|---|----------|-------|----------------|--------|--------|
+| F1 | **HIGH** | Zero-transfer participant-slot DoS | 16 distinct wallets, each: setOperator + zero-value deposit (free on testnet); permissionless, no recovery | The pool is permanently full for real users (cap 16, one slot per wallet, no removal function, no owner recovery). Funds, draw and existing participants unaffected. Pool is single-round/redeployable. | **ACCEPTED FOR THE SEPOLIA BOUNTY MVP ONLY (2026-09-05). BLOCKS ANY PRODUCTION/MAINNET DEPLOYMENT** - participant admission must be redesigned before production (see decision.md) |
+| F2 | LOW/INFO | First-funding reserve handle is decryptable by the funder | Only on the FIRST funding: FHESafeMath.tryAdd stores the token's `transferred` handle directly, and the OZ token grants `allow(transferred, from)` | The funder can decrypt the reserve value exactly while it equals the amount they themselves just funded - information already known. Access disappears once the handle is rewritten (second funding or any claim). Not a confidentiality failure. | Verified, documented, accepted |
+| F3 | INFO | Donations to the pool create surplus | Anyone can send cMockUSD to the pool | Surplus is never backing; the `<=` solvency invariant holds; cannot be withdrawn; harmless | Documented (mirrors helper-surplus model) |
+| F4 | INFO | Claim with an unfunded prize uses an uninitialized reserve operand in FHE.select | Never-funded round reaches Claimable | Evaluates as 0 per the OZ FHESafeMath note; mock-verified | Sepolia-verify item |
+
+**Attack rows verified GREEN (29 red-team tests):** replay of encrypted input
+cannot double-credit; double-debit impossible; over-withdraw/withdraw-after-
+claim stay backed; zero-value deposit/funding create zero liability; prize
+cannot be credited twice; reserve cannot underflow; total == sum(credited)
+after chaotic flows; winner substitution impossible; participant-index
+confusion impossible; sentinel (65535) does not collide with index 15;
+unregistered/owner claims rejected; ordering immutable; single randomness
+source, no modulo/rebias, no second draw; draw at zero-weight cap within HCU;
+cross-user and owner decryption rejected; no setters/upgrade/proxy/
+delegatecall/selfdestruct; owner cannot unwrap or transferFrom the pool's
+tokens; operator expiry enforced; state-machine matrix complete; adversarial
+lifecycle: no principal loss, no insolvency, no ACL freeze, no disclosure.
+
+**Sepolia-only verification items (mock ACL enforcement is incomplete):**
+1. Operation-level ACL of the `allowTransient` token handoff pattern.
+2. Input-proof binding: the mock accepted wrong-contract and wrong-sender
+   inputs; Sepolia must reject them (fail-closed).
+3. Uninitialized-operand semantics in claim-with-no-prize (F4).
+4. Absence of plaintext in real coprocessor events (mock coprocessor logs
+   cleartext internally).
+5. First-funding reserve-handle grant behavior (F2) on the real ACL.
+6. N=16 HCU against real Sepolia limits (local: 8.62M global / 2.82M depth).
+
+## Real Sepolia verification results (P7A, 2026-09-05 - all confirmed)
+
+1. **S1 round-trip:** PASS on the real network - cross-transaction ACL holds,
+   wallet A decrypts 100, wallet B rejected by the real ACL ("not authorized").
+2. **allowTransient handoff + operator path:** PASS - real deposits (40, then
+   20) through the pool pull work and stay decryptable.
+3. **Wrong-contract proof binding:** REJECTED - the real input verifier fails
+   with `InvalidSigner()`; the mock's acceptance was indeed mock-only.
+4. **Wrong-sender proof binding:** REJECTED - same `InvalidSigner()`.
+5. **No-prize claim:** credits zero, no stuck state, full withdrawal works.
+6. **Event leakage:** no plaintext amounts/balances/prize/winner in real
+   Sepolia logs across the whole verification flow.
+7. **F2 first-funding ACL:** confirmed on the real ACL - the funder can
+   decrypt only the first-funding reserve handle (their own amount); a
+   rewritten handle removes access.
+8. **N=16 production draw:** executes on Sepolia (gas 1,705,385); real
+   coprocessor HCU identical to local (global 8,616,576, depth 2,818,032),
+   comfortably under the 20M/5M limits.
+9. **Real-network deviation observed:** well-known public test-mnemonic
+   addresses are swept/drained on public testnets - verification uses
+   freshly-generated random wallets; the deployed demo must never use
+   published test keys.
+
+All previously mock-only items 1-6 are now verified against the real network
+except item 1's enforcement detail (the `allowTransient` handoff pattern ran
+successfully on Sepolia, which exercises it end to end).
+- **Draw is bounded to `MAX_PARTICIPANTS = 16`.** The walk iterates exactly
+  `participants.length` (hard-capped at 16); production N=16 measured at
+  global 8.62M HCU / depth 2.82M HCU, comfortably under the 20M/5M limits.
+- Solvency invariant: `sum(credited balances) + prizeReserve <= pool's
+  confidential token balance`, maintained by crediting only actual returned
+  transfers; verified across deposit/withdraw/fund/shortfall flows.
+- Sepolia ACL enforcement and event-behaviour verification are still pending
+  credentials. The local mock does not enforce operation-level ACL, so the
+  documented `allowTransient` handoff pattern must be confirmed on Sepolia.
+
 ## Task 8A-S settlement authority and solvency rules
 
 `IwaCircle` pins the STRK20 pool and a deployment-only setup authority in its

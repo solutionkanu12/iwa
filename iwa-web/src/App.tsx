@@ -12,6 +12,7 @@ import { MyCirclesView } from "./screens/MyCirclesView.tsx";
 import { InvitationsView } from "./screens/InvitationsView.tsx";
 import { StandingView } from "./screens/StandingView.tsx";
 import { OrganizerCircleView } from "./screens/OrganizerCircleView.tsx";
+import { PrizeSavingsView } from "./screens/PrizeSavingsView.tsx";
 import { AdminView } from "./screens/AdminView.tsx";
 import { shellFor } from "./app/navigation.ts";
 import type { Route } from "./lib/router.ts";
@@ -46,6 +47,9 @@ export function App({ route, navigate }: AppProps) {
       break;
     case "create":
       screen = <OrganizerCircleView navigate={navigate} />;
+      break;
+    case "prizeSavings":
+      screen = <PrizeSavingsView />;
       break;
     case "admin":
       screen = <AdminView navigate={navigate} />;
