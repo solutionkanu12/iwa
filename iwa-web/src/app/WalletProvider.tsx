@@ -37,6 +37,18 @@ import {
   type MemberCommitment,
 } from "../lib/starknetWallet";
 import { REQUIRED_CHAIN_ID } from "../chains/strk20/walletConnect";
+import {
+  connectEthereumWallet,
+  getEthereumProvider,
+  readChainId,
+  switchToSepolia as switchEvmToSepolia,
+} from "../chains/ethereum/wallet";
+import {
+  DISCONNECTED as EVM_DISCONNECTED,
+  EXPECTED_SEPOLIA_CHAIN_ID,
+  nextEvmState,
+  type EvmWalletState,
+} from "../lib/evmWallet";
 import { identityCacheFor, nextWalletState, DISCONNECTED } from "./walletSession";
 
 export interface WalletState {
@@ -55,6 +67,21 @@ export interface WalletState {
    * Returns null when there is no wallet or the wallet declined to sign.
    */
   ensureIdentity: () => Promise<MemberCommitment | null>;
+  /**
+   * The Ethereum slot of the same Iwa-level wallet manager. Independent of the
+   * Starknet slot: connecting or disconnecting one never touches the other.
+   */
+  evm: EvmWalletState;
+  /**
+   * Connects an EIP-1193 wallet and verifies the network, into the shared EVM
+   * slot. Rejects when no provider exists; returns without an address when the
+   * visitor declines or the wallet is on another network.
+   */
+  connectEthereum: () => Promise<void>;
+  /** Asks the connected EVM wallet to switch to the Sepolia network. */
+  switchToSepolia: () => Promise<void>;
+  /** Drops the shared EVM slot. The Starknet slot is untouched. */
+  disconnectEthereum: () => void;
 }
 
 const WalletContext = createContext<WalletState | null>(null);
@@ -63,6 +90,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState(DISCONNECTED);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [evm, setEvm] = useState<EvmWalletState>(EVM_DISCONNECTED);
 
   /**
    * The derived identity, held in a ref rather than in state.
@@ -110,6 +138,83 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     identityRef.current = null;
     setSession(DISCONNECTED);
     setError(null);
+  }, []);
+
+  /**
+   * Connects an EIP-1193 wallet into the shared EVM slot.
+   *
+   * Independent of the Starknet connection: this is the Ethereum side of the
+   * same wallet manager, and it neither reads nor writes the Starknet session.
+   * The connect-and-verify flow lives in the Ethereum adapter; this only turns
+   * its result into the slot state.
+   */
+  const connectEthereum = useCallback(async (): Promise<void> => {
+    const provider = getEthereumProvider();
+    if (provider === null) {
+      setEvm({ status: "missing", address: null, chainId: null });
+      return;
+    }
+    const result = await connectEthereumWallet();
+    const accounts = (await provider.request({ method: "eth_accounts" })) as string[];
+    const chainId = await readChainId(provider);
+    setEvm({
+      status: result === "wrongNetwork" ? "wrongNetwork" : "connected",
+      address: accounts[0] ?? null,
+      chainId: result === "wrongNetwork" ? chainId : EXPECTED_SEPOLIA_CHAIN_ID,
+    });
+  }, []);
+
+  const switchToSepolia = useCallback(async (): Promise<void> => {
+    const provider = getEthereumProvider();
+    if (provider === null) {
+      setEvm({ status: "missing", address: null, chainId: null });
+      return;
+    }
+    await switchEvmToSepolia(provider);
+    const chainId = await readChainId(provider);
+    const accounts = (await provider.request({ method: "eth_accounts" })) as string[];
+    setEvm({
+      status: chainId === EXPECTED_SEPOLIA_CHAIN_ID ? "connected" : "wrongNetwork",
+      address: accounts[0] ?? null,
+      chainId,
+    });
+  }, []);
+
+  const disconnectEthereum = useCallback((): void => {
+    setEvm(EVM_DISCONNECTED);
+  }, []);
+
+  /**
+   * Watches the EVM provider for account and network changes made in the
+   * extension, keeping the shared slot honest about what the wallet is doing.
+   * A provider that emits neither event simply produces no updates.
+   */
+  useEffect(() => {
+    const provider = getEthereumProvider();
+    if (provider === null) return;
+    const onAccounts = (accounts: unknown) => {
+      const list = Array.isArray(accounts) ? accounts.map(String) : [];
+      setEvm((current) => nextEvmState(current, { type: "accountsChanged", accounts: list }, EXPECTED_SEPOLIA_CHAIN_ID));
+    };
+    const onChain = (hex: unknown) => {
+      let chainId: bigint;
+      try {
+        chainId = BigInt(String(hex));
+      } catch {
+        return;
+      }
+      setEvm((current) => nextEvmState(current, { type: "networkChanged", chainId }, EXPECTED_SEPOLIA_CHAIN_ID));
+    };
+    const target = provider as unknown as {
+      on?: (event: string, cb: (...args: unknown[]) => void) => void;
+      removeListener?: (event: string, cb: (...args: unknown[]) => void) => void;
+    };
+    target.on?.("accountsChanged", onAccounts);
+    target.on?.("chainChanged", onChain);
+    return () => {
+      target.removeListener?.("accountsChanged", onAccounts);
+      target.removeListener?.("chainChanged", onChain);
+    };
   }, []);
 
   /**
@@ -181,10 +286,26 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       connect,
       disconnect,
       ensureIdentity,
+      evm,
+      connectEthereum,
+      switchToSepolia,
+      disconnectEthereum,
     }),
     // Deliberately not depending on the identity: it arriving must not restart
     // the read that asked for it. Screens that need it call ensureIdentity.
-    [session.address, session.onExpectedChain, connecting, error, connect, disconnect, ensureIdentity],
+    [
+      session.address,
+      session.onExpectedChain,
+      connecting,
+      error,
+      connect,
+      disconnect,
+      ensureIdentity,
+      evm,
+      connectEthereum,
+      switchToSepolia,
+      disconnectEthereum,
+    ],
   );
 
   return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;
