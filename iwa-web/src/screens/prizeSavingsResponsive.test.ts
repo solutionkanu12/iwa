@@ -50,6 +50,35 @@ describe("Prize Savings copy", () => {
 describe("Prize Savings layout responsiveness", () => {
   const view = readFileSync(join(SRC, "screens", "PrizeSavingsView.tsx"), "utf8");
 
+  it("uses the same padded, intrinsic-height card column as My Standing", () => {
+    expect(css).toMatch(/\.card\s*\{[^}]*padding:\s*20px/);
+    expect(css).toMatch(/\.card\s*\{[^}]*display:\s*flex/);
+    expect(css).toMatch(/\.card\s*\{[^}]*flex-direction:\s*column/);
+    expect(css).toMatch(/\.card\s*\{[^}]*gap:\s*16px/);
+    expect(css).toMatch(/\.card\s*\{[^}]*min-width:\s*0/);
+    expect(css).not.toMatch(/\.card\s*\{[^}]*(?:height|min-height|max-height)\s*:/);
+  });
+
+  it("gives every copy block normal wrapping and readable rhythm", () => {
+    expect(css).toMatch(/\.meta\s*\{[^}]*line-height:\s*1\.5/);
+    expect(css).toMatch(/\.meta\s*\{[^}]*margin:\s*0/);
+    expect(css).toMatch(/\.meta\s*\{[^}]*white-space:\s*normal/);
+    expect(css).toMatch(/\.meta\s*\{[^}]*overflow-wrap:\s*anywhere/);
+    expect(css).toMatch(/\.meta\s*\{[^}]*min-width:\s*0/);
+  });
+
+  it("groups the information copy and gate actions into non-collapsing columns", () => {
+    expect(view).toContain("className={styles.infoCopy}");
+    expect(view).toContain("className={styles.infoTitle}");
+    expect(css).toMatch(/\.infoCopy\s*\{[^}]*display:\s*flex/);
+    expect(css).toMatch(/\.infoCopy\s*\{[^}]*flex-direction:\s*column/);
+    expect(css).toMatch(/\.infoCopy\s*\{[^}]*gap:\s*16px/);
+    expect(css).toMatch(/\.infoTitle\s*\{[^}]*display:\s*flex/);
+    expect(css).toMatch(/\.infoTitle\s*\{[^}]*flex-direction:\s*column/);
+    expect(css).toMatch(/\.stack\s*\{[^}]*margin:\s*0/);
+    expect(css).toMatch(/\.stack\s*\{[^}]*min-width:\s*0/);
+  });
+
   it("stacks each standalone action as title, explanation, then button", () => {
     expect(view).toContain("className={styles.action}");
     expect(view).toContain("className={styles.actionTitle}");

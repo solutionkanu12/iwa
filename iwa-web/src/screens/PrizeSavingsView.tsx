@@ -287,10 +287,14 @@ export function PrizeSavingsView() {
   return (
     <>
       <Island className={styles.card}>
-        <p className={styles.eyebrow}>{C.eyebrow}</p>
-        <h2 className={styles.h2}>{C.heading}</h2>
-        <p className={styles.meta}>{C.intro}</p>
-        <p className={styles.meta}>{C.privacyNote}</p>
+        <div className={styles.infoCopy}>
+          <div className={styles.infoTitle}>
+            <p className={styles.eyebrow}>{C.eyebrow}</p>
+            <h2 className={styles.h2}>{C.heading}</h2>
+          </div>
+          <p className={styles.meta}>{C.intro}</p>
+          <p className={styles.meta}>{C.privacyNote}</p>
+        </div>
 
         {gate.kind === "connectEvm" ? (
           <div className={styles.stack}>
