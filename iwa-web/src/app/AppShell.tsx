@@ -13,6 +13,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import styles from "./AppShell.module.css";
 import { useWallet } from "./WalletProvider";
+import { WalletChooser } from "./WalletChooser";
+import { AppWalletControl } from "./AppWalletControl";
 import { hrefFor, type Route } from "../lib/router";
 import {
   ACCOUNT_NAV,
@@ -51,7 +53,31 @@ export function AppShell({ route, navigate, children }: AppShellProps) {
   // The phone's account menu. Closed by default, and closed again by anything
   // that happens outside it.
   const [accountOpen, setAccountOpen] = useState(false);
+  const [chooserOpen, setChooserOpen] = useState(false);
+  const [busyChain, setBusyChain] = useState<"starknet" | "evm" | null>(null);
   const accountRef = useRef<HTMLDivElement>(null);
+
+  const evmConnected = wallet.evm.status === "connected" || wallet.evm.status === "wrongNetwork";
+
+  const connectStarknet = async () => {
+    setBusyChain("starknet");
+    try {
+      await wallet.connect();
+      setChooserOpen(false);
+    } finally {
+      setBusyChain(null);
+    }
+  };
+
+  const connectEvm = async () => {
+    setBusyChain("evm");
+    try {
+      await wallet.connectEthereum();
+      setChooserOpen(false);
+    } finally {
+      setBusyChain(null);
+    }
+  };
 
   useEffect(() => {
     if (!accountOpen) return;
@@ -99,34 +125,18 @@ export function AppShell({ route, navigate, children }: AppShellProps) {
     );
   };
 
-  const walletControl = (
-    <>
-      {wallet.address === null ? (
-        <button
-          type="button"
-          className={styles.connectBtn}
-          onClick={() => void wallet.connect()}
-          disabled={wallet.connecting}
-        >
-          {wallet.connecting ? "Connecting…" : "Connect wallet"}
-        </button>
-      ) : (
-        <>
-          <div className={styles.accountRow}>
-            <span className={styles.walletDot} aria-hidden="true" />
-            <span className={styles.walletAddr}>{short(wallet.address)}</span>
-          </div>
-          <button
-            type="button"
-            className={styles.accountAction}
-            onClick={() => void wallet.disconnect()}
-          >
-            Disconnect
-          </button>
-        </>
-      )}
-      {wallet.error !== null && <p className={styles.walletError}>{wallet.error}</p>}
-    </>
+  const accountSection = (
+    <AppWalletControl
+      starknetAddress={wallet.address}
+      evmStatus={wallet.evm.status}
+      evmAddress={wallet.evm.address}
+      busy={busyChain}
+      onOpenChooser={() => setChooserOpen(true)}
+      onConnectStarknet={() => void connectStarknet()}
+      onDisconnectStarknet={() => void wallet.disconnect()}
+      onConnectEvm={() => void connectEvm()}
+      onDisconnectEvm={() => wallet.disconnectEthereum()}
+    />
   );
 
   return (
@@ -159,7 +169,7 @@ export function AppShell({ route, navigate, children }: AppShellProps) {
           </nav>
 
           <div className={styles.spacer} />
-          <div className={styles.account}>{walletControl}</div>
+          <div className={styles.account}>{accountSection}</div>
         </div>
       </aside>
 
@@ -170,14 +180,14 @@ export function AppShell({ route, navigate, children }: AppShellProps) {
               <CowrieGlyph size={20} />
               <span className={styles.brandName}>iwa</span>
             </a>
-            {wallet.address === null ? (
+            {wallet.address === null && !evmConnected ? (
               <button
                 type="button"
                 className={styles.mobileConnect}
-                onClick={() => void wallet.connect()}
-                disabled={wallet.connecting}
+                onClick={() => setChooserOpen(true)}
+                disabled={busyChain !== null}
               >
-                {wallet.connecting ? "Connecting…" : "Connect"}
+                {busyChain !== null ? "Connecting…" : "Connect"}
               </button>
             ) : (
               <div className={styles.accountMenu} ref={accountRef}>
@@ -187,10 +197,14 @@ export function AppShell({ route, navigate, children }: AppShellProps) {
                   onClick={() => setAccountOpen((v) => !v)}
                   aria-haspopup="menu"
                   aria-expanded={accountOpen}
-                  aria-label={`Account, connected as ${short(wallet.address)}`}
+                  aria-label="Account"
                 >
                   <span className={styles.walletDot} aria-hidden="true" />
-                  {short(wallet.address)}
+                  {wallet.address !== null
+                    ? short(wallet.address)
+                    : wallet.evm.address !== null
+                      ? short(wallet.evm.address)
+                      : "Wallet"}
                 </button>
                 {accountOpen ? (
                   <div className={styles.dropdown} role="menu">
@@ -213,17 +227,7 @@ export function AppShell({ route, navigate, children }: AppShellProps) {
                         {entry.label}
                       </a>
                     ))}
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className={styles.dropdownItem}
-                      onClick={() => {
-                        setAccountOpen(false);
-                        void wallet.disconnect();
-                      }}
-                    >
-                      Disconnect
-                    </button>
+                    <div className={styles.mobileControl}>{accountSection}</div>
                   </div>
                 ) : null}
               </div>
@@ -239,6 +243,19 @@ export function AppShell({ route, navigate, children }: AppShellProps) {
           link(e, styles.bottomTab, styles.bottomTabActive, styles.bottomDot, true),
         )}
       </nav>
+
+      <WalletChooser
+        open={chooserOpen}
+        starknetAddress={wallet.address}
+        evmConnected={evmConnected}
+        evmAddress={wallet.evm.address}
+        busy={busyChain}
+        onClose={() => setChooserOpen(false)}
+        onConnectStarknet={() => void connectStarknet()}
+        onConnectEvm={() => void connectEvm()}
+        onDisconnectStarknet={() => void wallet.disconnect()}
+        onDisconnectEvm={() => wallet.disconnectEthereum()}
+      />
     </div>
   );
 }

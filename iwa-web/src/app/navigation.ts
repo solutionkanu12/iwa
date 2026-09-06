@@ -54,7 +54,7 @@ const STANDING: NavEntry = {
  */
 const PRIZE_SAVINGS: NavEntry = {
   route: { name: "prizeSavings" },
-  label: "Prize savings",
+  label: "Prize Savings",
   shortLabel: "Prizes",
   onMobile: false,
 };

@@ -5,15 +5,14 @@ import { LandingHowItWorks } from "./LandingHowItWorks.tsx";
 import { LandingShowcase } from "./LandingShowcase.tsx";
 import { LandingFaq } from "./LandingFaq.tsx";
 import { LandingFooter } from "./LandingFooter.tsx";
-import { LandingDock } from "./LandingDock.tsx";
 import styles from "./LandingPage.module.css";
 
-// Public marketing landing page (PRD section 9). All 8 sections complete:
+// Public marketing landing page (PRD section 9). All sections complete:
 // 1 glass nav, 2 hero, 3 community, 4 how it works, 5 see it in action, 6 FAQ,
-// 7 footer, 8 dock (fixed glass).
+// 7 footer.
 export interface LandingPageProps {
-  // Opens the same Starknet wallet connect flow the app uses (lib/starknetWallet.ts
-  // Wired to every live "Enter Iwa" CTA (nav, hero, dock).
+  // Opens the wallet connect / entry flow the app uses.
+  // Wired to live "Enter Iwa" CTAs (nav, hero).
   onEnterCircle: () => void;
 }
 
@@ -37,7 +36,6 @@ export function LandingPage({ onEnterCircle }: LandingPageProps) {
       <LandingShowcase />
       <LandingFaq />
       <LandingFooter />
-      <LandingDock onEnterCircle={onEnterCircle} />
     </div>
   );
 }

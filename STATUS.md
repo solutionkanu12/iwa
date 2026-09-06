@@ -161,6 +161,52 @@ contract reports a setup authority of zero, which can be read from chain.
 token movement is confined to the helper, which accepts calls only from the
 privacy pool.
 
+## Multichain wallet manager (2026-09-05)
+
+Complete, and verified against the working tree with the full frontend suite.
+
+One Iwa-level wallet manager (`lib/evmWallet.ts` + `app/WalletProvider.tsx`)
+owns two independent connection slots:
+
+- **Starknet** — savings circles, standing. The existing wallet/session logic
+  is unchanged: Ready/Argent/Braavos support, SNIP-12 identity, read-only
+  session separation.
+- **EVM** — Prize Savings. The EIP-1193 seam (MetaMask, OKX, Rabby and
+  compatible injected wallets) reports through the shared slot; the connection
+  is reused rather than re-prompted, and `accountsChanged`/`chainChanged`
+  keep the slot current.
+
+Product surface:
+
+- **Connect to Iwa chooser.** A disconnected visitor meets one modal that
+  offers both wallets: Starknet ("For savings circles and your Iwa standing.")
+  and EVM ("For Prize Savings."). No forced dual connection.
+- **AppShell wallet control.** Two compact rows (Starknet, then EVM) showing
+  Connected / Not connected / Wrong network with per-chain Connect/Disconnect
+  and the shortened address for each connected slot. The phone bar keeps its
+  account pill; the two rows sit inside that dropdown rather than nesting a
+  second pill. Connecting or disconnecting one chain never affects the other.
+- **Prize Savings EVM gate.** A Starknet-only saver opening Prize Savings is
+  met with "Prize Savings uses an EVM-compatible wallet. Connect an EVM wallet
+  to use Prize Savings. Your Starknet wallet will stay connected." An EVM
+  wallet on the wrong network is met with "Prize Savings currently runs on
+  Ethereum Sepolia." + Switch to Sepolia. Only a correctly connected EVM slot
+  reveals the feature.
+
+Constraints preserved: connection is not authorization (every money action
+keeps its own signature); no backend/contract change; no key material in the
+manager or the UI; the privacy guards on the Prize Savings surface still hold.
+
+Fresh verification on 2026-09-06: 659 frontend tests pass, `tsc -b` is clean,
+and the production build completes. The Zama regression has 159 passing and
+8 pending real-Sepolia tests. Responsive verification ran against the
+production preview in Chrome at 320 / 390 / 768 / 1440px: the landing page,
+Connect to Iwa chooser, dual-wallet AppShell control, Starknet-only Prize gate,
+wrong-network Sepolia prompt, and EVM-only loaded Prize action layout all have
+no content clipping or horizontal overflow; the narrow Prize input/action rows
+wrap. Extension events cannot auto-connect a disconnected EVM slot;
+`eth_requestAccounts` is confined to `chains/ethereum/wallet.ts`.
+
 ## What works
 
 **Circles.** Creating a circle through the invite flow, on mainnet. Each place
@@ -424,4 +470,7 @@ addresses. Each transaction succeeded and touched the STRK20 pool.
 2. A way to check a Portable Trust Credential, and a flow for whoever receives
    one.
 3. Standing that aggregates across more than one circle.
-4. A second chain implementation behind the existing chain interface.
+4. A second chain's savings-circles contract behind the existing chain
+   interface. The wallet manager and the Prize Savings (EVM) surface already
+   carry the frontend side of the multichain architecture; a full EVM circle
+   implementation is the remaining contract-side work.

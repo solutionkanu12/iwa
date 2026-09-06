@@ -10,6 +10,10 @@ export default defineConfig({
       "src/chains/**/*.test.ts",
       "src/lib/**/*.test.ts",
       "src/app/**/*.test.ts",
+      "src/app/**/*.test.tsx",
+      "src/landing/**/*.test.ts",
+      "src/screens/**/*.test.ts",
+      "src/screens/**/*.test.tsx",
     ],
   },
 });

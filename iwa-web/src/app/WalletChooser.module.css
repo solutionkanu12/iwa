@@ -1,0 +1,172 @@
+/*
+ * Wallet chooser: a small modal over the application, in the same visual
+ * system as the rest of Iwa. Cloud surface, lavender palette, soft island
+ * shadow. Compact by design — a chooser, not a dashboard.
+ */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(42, 33, 64, 0.4);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+.dialog {
+  width: 100%;
+  max-width: 460px;
+  max-height: min(86dvh, 640px);
+  overflow-y: auto;
+  background: var(--cloud);
+  border: 1px solid var(--brd);
+  border-radius: var(--radius-island);
+  box-shadow: var(--shadow-island);
+  padding: 24px;
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.eyebrow {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--iris);
+  margin: 0 0 6px;
+}
+
+.title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 19px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin: 0;
+}
+
+.close {
+  border: 0;
+  background: transparent;
+  color: var(--mut);
+  font-family: var(--font-body);
+  font-size: 13px;
+  padding: 6px 8px;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.close:hover {
+  color: var(--ink);
+  background: var(--mist);
+}
+
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--brd);
+  border-radius: var(--radius-card);
+  background: var(--mist);
+}
+
+.optionText {
+  min-width: 0;
+}
+
+.chain {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 16px;
+  color: var(--ink);
+  margin: 0 0 4px;
+}
+
+.detail {
+  font-size: 13px;
+  color: var(--mut);
+  margin: 0;
+}
+
+.connectedRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.connected {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mint-dk);
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--mint);
+  flex: 0 0 8px;
+}
+
+.addr {
+  font-family: var(--font-data);
+  font-size: 12px;
+  color: var(--mut);
+}
+
+.disconnect {
+  border: 0;
+  background: transparent;
+  color: var(--mut);
+  font-family: var(--font-body);
+  font-size: 13px;
+  padding: 6px 8px;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+
+.disconnect:hover {
+  color: var(--ink);
+  background: var(--mist);
+}
+
+/* Narrow screens: each option stacks so nothing clips. */
+@media (max-width: 480px) {
+  .dialog {
+    padding: 18px;
+  }
+
+  .option {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .connectedRow {
+    justify-content: flex-start;
+  }
+}

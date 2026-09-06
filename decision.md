@@ -110,6 +110,37 @@ lives in `STATUS.md` and the live handoff in `handoff.md`.
   mnemonic addresses are swept/drained on public testnets (observed on
   Sepolia); the demo must never use published test keys.
 
+## Iwa multichain wallet manager (2026-09-05)
+
+- **One Iwa-level wallet manager, two independent slots.** A single wallet
+  manager (`lib/evmWallet.ts` + `app/WalletProvider.tsx`) owns the Starknet
+  connection and the EVM connection side by side. Connecting or disconnecting
+  one never touches the other; each slot keeps its own address, chain and
+  state.
+- **No forced dual connection.** The Connect to Iwa chooser offers Starknet
+  and EVM as separate choices. A visitor may connect either, both, or neither;
+  nothing requires both wallets to be connected at once.
+- **Feature-specific chain gating.** Savings circles and standing need the
+  Starknet wallet; Prize Savings needs the EVM wallet. The gate for Prize
+  Savings asks for the EVM wallet without disturbing a connected Starknet
+  wallet, and an EVM wallet on the wrong network is told exactly which action
+  fixes it (switch to Sepolia).
+- **Connection does not authorize transactions.** The wallet manager only
+  tracks which wallet is connected. Every money-moving action still requires
+  its own explicit signature/authorization from the connected wallet; a
+  connection is never an authorization.
+- **Prize Savings uses EVM; circles/standing use Starknet.** The chain a
+  feature runs on is the chain its gate asks for. An EVM-only user can use
+  Prize Savings without ever connecting Starknet, and Starknet-only features
+  ask for the Starknet wallet only when they are used.
+- **EVM connection is reused, not re-prompted.** `eth_requestAccounts` is
+  called only by the explicit connect/switch actions in the Ethereum adapter;
+  ordinary Prize Savings actions reuse the connection already held, and
+  `accountsChanged`/`chainChanged` events keep the shared slot current.
+- **Extension events do not auto-connect.** A disconnected EVM slot stays
+  disconnected until the visitor asks Iwa to connect it. Wallet events may
+  update or drop an already-connected slot; they may not create one.
+
 ## Legacy / Starknet track decisions
 
 See the historical sections of `ARCHITECTURE.md`, `SECURITY.md` and the
