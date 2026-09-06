@@ -8,14 +8,15 @@
 //  - it never logs a ciphertext, a proof, or a decrypted balance
 //  - a decrypted balance is rendered and then discarded
 //  - every action is an explicit button press; nothing signs by itself
-//  - the Ethereum wallet is separate from the Starknet wallet of the rest
-//    of Iwa, and nothing here touches the Starknet session
+//  - the Ethereum connection comes from the shared Iwa-level wallet manager,
+//    independent of the Starknet wallet of the rest of Iwa, and nothing here
+//    touches the Starknet session
 
 import { useCallback, useEffect, useState } from "react";
 
 import { Island } from "../components/Island.tsx";
 import { Button } from "../components/Button.tsx";
-import { connectEthereumWallet, getEthereumProvider, readChainId, switchToSepolia } from "../chains/ethereum/wallet";
+import { useWallet } from "../app/WalletProvider.tsx";
 import { IWA_PRIZE_SAVINGS } from "../chains/ethereum/config";
 import {
   creditedHandleOf,
@@ -43,15 +44,15 @@ import {
   stageOf,
   type PoolFacts,
 } from "../lib/prizeSavings/flow.ts";
+import { evmGate } from "../lib/prizeSavings/gate.ts";
 import styles from "./PrizeSavingsView.module.css";
 
 const MOCK_USD_UNITS = 1000_000_000n; // 1000.000000 test units
 
 export function PrizeSavingsView() {
-  const [wallet, setWallet] = useState<"missing" | "disconnected" | "wrongNetwork" | "connected">(
-    "disconnected",
-  );
-  const [account, setAccount] = useState<string | null>(null);
+  const walletManager = useWallet();
+  const wallet = walletManager.evm.status;
+  const account = walletManager.evm.address;
   const [facts, setFacts] = useState<PoolFacts | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -100,41 +101,25 @@ export function PrizeSavingsView() {
     setError(null);
     setBusy("connect");
     try {
-      const result = await connectEthereumWallet();
-      setWallet(result);
-      if (result === "connected") {
-        const provider = getEthereumProvider();
-        if (provider === null) throw new Error("No Ethereum wallet found");
-        const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
-        setAccount(accounts[0]);
-      }
-    } catch (e) {
-      setWallet("disconnected");
+      await walletManager.connectEthereum();
+    } catch {
       setError("Could not connect the wallet. You can decline and try again.");
     } finally {
       setBusy(null);
     }
-  }, []);
+  }, [walletManager]);
 
   const switchNetwork = useCallback(async () => {
     setError(null);
     setBusy("network");
     try {
-      const provider = getEthereumProvider();
-      if (provider === null) throw new Error("No Ethereum wallet found");
-      await switchToSepolia(provider);
-      const chainId = await readChainId(provider);
-      if (chainId === 11155111n) {
-        setWallet("connected");
-        const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
-        setAccount(accounts[0]);
-      }
+      await walletManager.switchToSepolia();
     } catch {
       setError("Sepolia is needed for Iwa Prize Savings.");
     } finally {
       setBusy(null);
     }
-  }, []);
+  }, [walletManager]);
 
   const run = useCallback(
     async (name: string, action: () => Promise<unknown>, after?: () => Promise<void>) => {
@@ -297,6 +282,7 @@ export function PrizeSavingsView() {
   const depositView = depositOffer(stage);
   const claimView = claimOffer(facts);
   const ownerView = ownerOffer(facts);
+  const gate = evmGate(walletManager.evm);
 
   return (
     <>
@@ -306,23 +292,21 @@ export function PrizeSavingsView() {
         <p className={styles.meta}>{C.intro}</p>
         <p className={styles.meta}>{C.privacyNote}</p>
 
-        {stage === "walletMissing" ? (
-          <p className={styles.meta}>{C.connect}</p>
-        ) : null}
-
-        {stage === "connect" ? (
+        {gate.kind === "connectEvm" ? (
           <div className={styles.stack}>
+            <p className={styles.meta}>{C.gateEvm}</p>
+            <p className={styles.meta}>{C.gateEvmNote}</p>
             <Button onClick={() => void connect()} disabled={busy !== null}>
-              {C.connect}
+              {C.gateEvmAction}
             </Button>
           </div>
         ) : null}
 
-        {stage === "wrongNetwork" ? (
+        {gate.kind === "switchSepolia" ? (
           <div className={styles.stack}>
-            <p className={styles.meta}>{C.wrongNetwork}</p>
+            <p className={styles.meta}>{C.gateSepolia}</p>
             <Button onClick={() => void switchNetwork()} disabled={busy !== null}>
-              Switch to Sepolia
+              {C.gateSepoliaAction}
             </Button>
           </div>
         ) : null}
@@ -341,7 +325,8 @@ export function PrizeSavingsView() {
         {error !== null ? <p className={styles.error}>{error}</p> : null}
       </Island>
 
-      {stage === "open" || stage === "locked" || stage === "drawn" || stage === "claimable" ? (
+      {gate.kind === "ready" &&
+      (stage === "open" || stage === "locked" || stage === "drawn" || stage === "claimable") ? (
         <>
           <Island className={styles.card}>
             <h2 className={styles.h2}>Your side</h2>
@@ -363,7 +348,7 @@ export function PrizeSavingsView() {
                 <div>
                   <p className={styles.meta}>{C.getTokensDetail}</p>
                 </div>
-                <Button variant="ghost" onClick={() => void getTokens()} disabled={busy !== null}>
+                <Button className={styles.button} variant="ghost" onClick={() => void getTokens()} disabled={busy !== null}>
                   {C.getTokens}
                 </Button>
               </div>
@@ -376,7 +361,7 @@ export function PrizeSavingsView() {
                 <div>
                   <p className={styles.meta}>{C.wrapDetail}</p>
                 </div>
-                <Button variant="ghost" onClick={() => void wrap()} disabled={busy !== null}>
+                <Button className={styles.button} variant="ghost" onClick={() => void wrap()} disabled={busy !== null}>
                   {C.wrap}
                 </Button>
               </div>
@@ -389,7 +374,7 @@ export function PrizeSavingsView() {
                 <div>
                   <p className={styles.meta}>{C.grantOperatorDetail}</p>
                 </div>
-                <Button variant="ghost" onClick={() => void grantOperator()} disabled={busy !== null}>
+                <Button className={styles.button} variant="ghost" onClick={() => void grantOperator()} disabled={busy !== null}>
                   {C.grantOperator}
                 </Button>
               </div>
@@ -406,7 +391,7 @@ export function PrizeSavingsView() {
                   value={depositInput}
                   onChange={(e) => setDepositInput(e.target.value)}
                 />
-                <Button onClick={() => void deposit()} disabled={busy !== null}>
+                <Button className={styles.button} onClick={() => void deposit()} disabled={busy !== null}>
                   {C.deposit}
                 </Button>
               </div>
@@ -422,6 +407,7 @@ export function PrizeSavingsView() {
                 onChange={(e) => setWithdrawInput(e.target.value)}
               />
               <Button
+                className={styles.button}
                 variant="ghost"
                 onClick={() => void withdraw()}
                 disabled={busy !== null || !depositView.canWithdraw}
@@ -464,7 +450,7 @@ export function PrizeSavingsView() {
                     value={fundInput}
                     onChange={(e) => setFundInput(e.target.value)}
                   />
-                  <Button variant="ghost" onClick={() => void fundPrize()} disabled={busy !== null}>
+                  <Button className={styles.button} variant="ghost" onClick={() => void fundPrize()} disabled={busy !== null}>
                     {C.fundPrize}
                   </Button>
                 </div>

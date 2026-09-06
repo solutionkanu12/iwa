@@ -16,6 +16,44 @@ No component should be described as secure merely because:
 
 Security claims must map to concrete properties that were reviewed or tested.
 
+## Wallet manager model (2026-09-05)
+
+The Iwa wallet manager owns two independent connection slots — Starknet (for
+savings circles and standing) and EVM (for Prize Savings). Its security model:
+
+- **A connection is not an authorization.** The manager only tracks which
+  wallet is connected, its address and its chain. Every money-moving action
+  still requires its own explicit signature from the connected wallet, exactly
+  as before this manager existed. Nothing in the manager signs, holds, or
+  forwards key material.
+- **No secret material in the manager or the UI.** The manager and the shell
+  control hold addresses and connection state only: no private keys, no
+  viewing keys, no invite secrets, no session tokens. The Starknet identity
+  derivation and the read-only session remain exactly as they were, and the
+  session-separation guards still hold.
+- **Connecting one chain never disturbs the other.** The two slots are
+  independent by construction; disconnecting Starknet does not touch the EVM
+  connection and vice versa, so one feature's wallet action cannot affect
+  another feature's connection.
+- **Feature-specific gating.** Prize Savings is reached only through an EVM
+  slot connected on Ethereum Sepolia; the gate tells a Starknet-only user to
+  connect the EVM wallet (never to disconnect Starknet) and tells a
+  wrong-network EVM wallet exactly which action fixes it. Circles and standing
+  ask for the Starknet wallet only when used. No forced dual connection.
+- **EVM connection is reused, not re-prompted.** `eth_requestAccounts` is
+  confined to the explicit connect/switch actions in the Ethereum adapter
+  (`chains/ethereum/wallet.ts`); ordinary Prize Savings actions reuse the
+  held connection. `accountsChanged`/`chainChanged` keep an already-connected
+  slot honest and do not adopt an extension account until the visitor has
+  connected that slot in Iwa.
+- **The Prize Savings privacy guards are unchanged.** The screen still never
+  logs ciphertexts, proofs or decrypted balances, renders-then-discards a
+  decrypted value, and never forwards it anywhere.
+
+Verified by the frontend suite: the gate helper, the chooser, the shell
+control, the no-auto-connect transitions, and the EVM-reuse guard are covered
+by tests (659 total pass in the fresh 2026-09-06 run).
+
 ## Core security goals
 
 IWA must protect:

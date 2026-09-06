@@ -45,6 +45,10 @@
   flex: 1;
 }
 
+.button {
+  flex: 0 0 auto;
+}
+
 .input {
   flex: 1;
   min-width: 0;
@@ -85,4 +89,20 @@
   color: var(--mut);
   text-align: center;
   margin: 18px 0 0;
+}
+
+/* Narrow screens: an input-and-button row must wrap instead of overflowing.
+ * The input takes the full row; the button follows on its own line, left
+ * aligned. Layout changes, content and confidentiality do not. */
+@media (max-width: 560px) {
+  .row {
+    flex-wrap: wrap;
+  }
+  .row > .input {
+    flex: 1 1 100%;
+  }
+  .row > .button {
+    flex: 0 0 auto;
+    align-self: flex-start;
+  }
 }

@@ -1,0 +1,78 @@
+/*
+ * App shell wallet control: two compact rows. Same palette, same tokens.
+ * Two chains, one control. The phone bar keeps its own account pill; these
+ * rows render in the sidebar and inside that account dropdown.
+ */
+
+.control {
+  position: relative;
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: var(--radius-control);
+  background: var(--mist);
+  font-size: 13px;
+  min-width: 0;
+}
+
+.chain {
+  font-weight: 600;
+  color: var(--ink);
+  flex: 0 0 auto;
+}
+
+.state {
+  color: var(--mut);
+  flex: 1 1 auto;
+  white-space: nowrap;
+}
+
+.stateConnected {
+  color: var(--mint-dk);
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+
+.addr {
+  font-family: var(--font-data);
+  font-size: 12px;
+  color: var(--mut);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.action {
+  border: 0;
+  background: transparent;
+  color: var(--iris);
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 4px 6px;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.action:hover {
+  color: var(--ink);
+  background: var(--cloud);
+}
+
+.connectAll {
+  width: 100%;
+}
