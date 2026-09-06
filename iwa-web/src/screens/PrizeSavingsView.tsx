@@ -344,10 +344,9 @@ export function PrizeSavingsView() {
             </p>
 
             {mockBalance === null ? (
-              <div className={styles.row}>
-                <div>
-                  <p className={styles.meta}>{C.getTokensDetail}</p>
-                </div>
+              <div className={styles.action}>
+                <h3 className={styles.actionTitle}>{C.getTokensTitle}</h3>
+                <p className={styles.actionDetail}>{C.getTokensDetail}</p>
                 <Button className={styles.button} variant="ghost" onClick={() => void getTokens()} disabled={busy !== null}>
                   {C.getTokens}
                 </Button>
@@ -357,10 +356,9 @@ export function PrizeSavingsView() {
             )}
 
             {wrappedBalance === null ? (
-              <div className={styles.row}>
-                <div>
-                  <p className={styles.meta}>{C.wrapDetail}</p>
-                </div>
+              <div className={styles.action}>
+                <h3 className={styles.actionTitle}>{C.wrapTitle}</h3>
+                <p className={styles.actionDetail}>{C.wrapDetail}</p>
                 <Button className={styles.button} variant="ghost" onClick={() => void wrap()} disabled={busy !== null}>
                   {C.wrap}
                 </Button>
@@ -370,10 +368,9 @@ export function PrizeSavingsView() {
             )}
 
             {facts?.operatorGranted !== true ? (
-              <div className={styles.row}>
-                <div>
-                  <p className={styles.meta}>{C.grantOperatorDetail}</p>
-                </div>
+              <div className={styles.action}>
+                <h3 className={styles.actionTitle}>{C.grantOperatorTitle}</h3>
+                <p className={styles.actionDetail}>{C.grantOperatorDetail}</p>
                 <Button className={styles.button} variant="ghost" onClick={() => void grantOperator()} disabled={busy !== null}>
                   {C.grantOperator}
                 </Button>
@@ -383,7 +380,7 @@ export function PrizeSavingsView() {
             )}
 
             {depositView.canDeposit ? (
-              <div className={styles.row}>
+              <div className={styles.inputRow}>
                 <input
                   className={styles.input}
                   inputMode="decimal"
@@ -398,7 +395,7 @@ export function PrizeSavingsView() {
             ) : null}
             {depositView.reason !== null ? <p className={styles.meta}>{depositView.reason}</p> : null}
 
-            <div className={styles.row}>
+            <div className={styles.inputRow}>
               <input
                 className={styles.input}
                 inputMode="decimal"
@@ -442,7 +439,7 @@ export function PrizeSavingsView() {
               <h2 className={styles.h2}>Round host</h2>
               <p className={styles.meta}>{C.ownerOnly}</p>
               {ownerView.canFund ? (
-                <div className={styles.row}>
+                <div className={styles.inputRow}>
                   <input
                     className={styles.input}
                     inputMode="decimal"

@@ -5,12 +5,11 @@ import styles from "./LandingFooter.module.css";
 // Section 7 of 8: footer. Dancers silhouette on top, four link columns, X and
 // GitHub icon links, and a large faded "iwa" wordmark behind. Column headings
 // and labels are exact from design/iwa-prototype.html. A few links have real
-// destinations (Stellar, GitHub, the litepaper); the rest stay placeholders.
+// destinations (GitHub and the litepaper); the rest stay placeholders.
 // This is the one reveal-once group (no replay). Nav, hero, and earlier
 // sections, app, app nav, and seams are untouched.
 
 const GITHUB_URL = "https://github.com/solutionkanu12/iwa";
-const STARKNET_URL = "https://starknet.io";
 const X_URL = "https://x.com/joinIwa";
 
 // A footer link is one of: external (new tab), internal (same-site nav), a
@@ -43,11 +42,10 @@ const COLUMNS: { heading: string; links: FooterLink[] }[] = [
     ],
   },
   {
-    heading: "built on",
+    heading: "technology",
     links: [
-      { label: "Starknet", href: STARKNET_URL, external: true },
-      // No real destination yet, so inert rather than jumping to top.
-      { label: "STRK20 privacy", inert: true },
+      { label: "Private payments", inert: true },
+      { label: "Selective disclosure", inert: true },
       { label: "Zero-knowledge proofs", inert: true },
     ],
   },
@@ -161,7 +159,7 @@ export function LandingFooter() {
               </svg>
             </a>
           </div>
-          <span className={styles.copy}>Iwa · Private savings on Starknet</span>
+          <span className={styles.copy}>Iwa · Private community savings</span>
         </div>
       </div>
     </footer>

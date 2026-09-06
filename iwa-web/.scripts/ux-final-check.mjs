@@ -213,8 +213,9 @@ async function prizeActions(ws, sessionId) {
           inputRight: Math.round(ir.right),
           buttonLeft: br ? Math.round(br.left) : null,
           buttonRight: br ? Math.round(br.right) : null,
-          wrapped: br ? br.top >= ir.bottom - 1 : null,
-          flexWrap: row ? getComputedStyle(row).flexWrap : null,
+          sameLine: br ? Math.abs(br.top - ir.top) < 2 : null,
+          display: row ? getComputedStyle(row).display : null,
+          gridTemplateColumns: row ? getComputedStyle(row).gridTemplateColumns : null,
         };
       });
       return { inputs: inputs.length, rows };
@@ -354,7 +355,10 @@ for (const viewport of viewports) {
     "Prize input/action rows are not clipped",
   );
   if (viewport.width <= 560) {
-    check(actions.rows.every((row) => row.wrapped && row.flexWrap === "wrap"), "Prize actions wrap on narrow screens");
+    check(
+      actions.rows.every((row) => row.sameLine && row.display === "grid"),
+      "Prize amount actions stay compact on narrow screens",
+    );
   }
   await screenshot(browser, sessionId, `${viewport.name}-prize-actions`);
 }
