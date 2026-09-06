@@ -125,18 +125,27 @@ export function parseUnits6(input: string): bigint | null {
 /** Copy for the feature. Product-first; Zama acknowledged only as the layer. */
 export const PRIZE_SAVINGS_COPY = {
   eyebrow: "Iwa Prize Savings",
-  heading: "Save privately. Keep your principal. Earn a chance at shared rewards.",
+  heading: "Save privately. Keep your principal. Compete for a reward.",
   intro:
-    "Deposit confidentially into a shared pool, keep every unit of your principal withdrawable, and let a verifiable draw choose who receives this round's reward. Your balance is encrypted on chain and decryptable only by you.",
+    "Deposit confidentially into a shared pool, keep every unit of your principal withdrawable, and let a verifiable draw choose who receives this round's reward.",
   privacyNote:
-    "Deposits, balances and the winner stay encrypted. Participation is public; amounts are not. Confidentiality is provided by Zama's fhEVM.",
+    "Your balance stays encrypted and is decryptable only by you. Participation is public; amounts and the winner are not.",
   connect: "Connect an Ethereum wallet to take part.",
   wrongNetwork: "Iwa Prize Savings runs on Ethereum Sepolia. Switch networks to continue.",
+  gateEvm:
+    "Prize Savings uses an EVM-compatible wallet. Connect an EVM wallet to use Prize Savings.",
+  gateEvmNote: "Your Starknet wallet will stay connected.",
+  gateEvmAction: "Connect EVM wallet",
+  gateSepolia: "Prize Savings currently runs on Ethereum Sepolia.",
+  gateSepoliaAction: "Switch to Sepolia",
+  getTokensTitle: "Get test tokens",
   getTokens: "Get test MockUSD",
   getTokensDetail: "Testnet token with an open mint, so you can try the flow freely.",
-  wrap: "Wrap into confidential cMockUSD",
+  wrapTitle: "Make tokens confidential",
+  wrap: "Wrap tokens",
   wrapDetail: "This is the only public amount. After this step, your balance is encrypted.",
-  grantOperator: "Allow the pool to move your wrapped tokens",
+  grantOperatorTitle: "Allow deposits",
+  grantOperator: "Allow pool",
   grantOperatorDetail: "The pool needs operator permission to pull deposits. It cannot see your balance.",
   deposit: "Deposit",
   depositDetail: "Your deposit amount stays encrypted.",
