@@ -18,3 +18,8 @@ dist-ssr/
 .env
 .env.local
 .env.*.local
+
+# DEV-ONLY V2 declare capability check — large local artifacts, never committed
+# or shipped. The dir and its README stay tracked; the class JSON does not.
+public/dev-v2/*.json
+public/dev-v2/*.casm

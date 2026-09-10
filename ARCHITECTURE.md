@@ -123,18 +123,44 @@ Examples of concepts that belong in Core:
 Circle
 Member
 Round
-ContributionObligation
+Contribution
+Obligation
 ContributionStatus
+Payout
 PayoutState
+Standing
+Credential
 CredentialClaim
+Identity
 AdminPermission
 AssetId
 ChainTransactionReference
 ```
 
-## Chain interface
+## Adapter boundaries
 
-The chain interface is the boundary between IWA Core/application code and a specific blockchain.
+> **Architectural rule:** One Iwa protocol, multiple chain implementations.
+> Chain-specific privacy and settlement primitives must never leak into the core
+> domain. Portable Trust Credential semantics and private pot collection
+> semantics are chain-neutral; the Starknet implementation (Cairo + STRK20 +
+> Ready X) and any future EVM / Solana implementations satisfy the same protocol
+> spec behind their own payment/privacy adapters. No cross-chain fund bridge is
+> required for the first multichain phase.
+
+The chain interface is the boundary between IWA Core/application code and a specific blockchain. It is decomposed explicitly so payment, privacy, and credential capabilities do not leak into the core:
+
+```text
+IWA Core
+  -> ChainAdapter
+       -> PaymentAdapter
+       -> PrivacyAdapter
+       -> CredentialVerifier
+```
+
+- `ChainAdapter` maps lifecycle, reads, writes, finality, and resource identities.
+- `PaymentAdapter` moves the configured asset and reports verified value movement.
+- `PrivacyAdapter` implements and declares private inbound, private outbound, and disclosure capabilities.
+- `CredentialVerifier` verifies versioned claims and proof of possession without moving funds.
 
 It should expose capabilities such as:
 
@@ -169,13 +195,35 @@ Current implementation:
 - USDC
 - STRK
 
-### Future EVM
+### EVM and Zama
 
-Potential implementation:
+Current implementation:
+
+- Prize Savings on Ethereum Sepolia
+- encrypted balances, weighted draw selection, prize reserve, and claim payout through Zama FHE
+
+Future savings-circle implementation:
 
 - Solidity contracts
 - EVM wallet adapter
 - EVM settlement/privacy integration
+
+Prize Savings is an Iwa product implementation, but it is not evidence that an EVM savings-circle adapter has shipped.
+
+### Planned Celo
+
+- EVM-compatible payment and agent integration
+- not shipped
+
+### Planned Nimiq
+
+- Nimiq Pay Mini App integration
+- not shipped
+
+### Planned Base and other EVM chains
+
+- reuse the EVM adapter family after the shared implementation and chain-specific review exist
+- not shipped
 
 ### Future Solana
 
@@ -1048,5 +1096,76 @@ payout and rightful recipient remain visible, but there is no funded liability,
 no output note, no signature/nonce consumption, and no token action to perform.
 `NoFundedRecovery` counts as terminal accounting for eventual completion but
 must never be represented as `Paid` or `Recovered`.
+
+## Starknet V2 private payout — Candidate P (2026-09-10)
+
+Private payout is a hard V2 invariant. A direct public ERC20 transfer from the
+helper to a member account is rejected, even if the member could shield it in a
+later transaction.
+
+The capability spike against the pinned STRK20 source at commit `66e3caae...`
+established the general facts:
+
+- an empty open note cannot persist beyond its applied action set
+- a filled open note cannot be reused
+- the wallet resolves the open-note ID only during same-transaction assembly
+- the helper cannot authenticate the owner of an arbitrary caller-supplied note
+
+### Shadow-account route: SUPERSEDED / infrastructure-blocked (V2-02)
+
+The originally-identified route relied on a browser-wallet *shadow account* and a
+canonical *anonymizer* contract (Wallet API `0.10.4-rc.1` shadow commitment /
+shadow invoke methods). Iwa's installed Wallet API types are `0.10.3` and expose
+none of these methods; no shipping browser wallet provides them on the target
+network; and there is no verified anonymizer deployment / governance to bind to.
+The route is abandoned. The RED security tests that red-teamed it are retained
+for history but ignored/skipped in CI
+(`contracts/starknet/tests/test_private_destination_capability_v2.cairo` — every
+test `#[ignore]`; `iwa-web/src/chains/strk20/v2/privateDestinationCapability.test.ts`
+— six `it.skip`).
+
+### Candidate P: SELECTED
+
+The scheduled member pre-registers a private **destination note** before the
+STRK20 payout transaction is assembled. The registration is bound by a
+member-auth-key signature (`register_dest_hash`) and carries a monotonic
+destination epoch. The amount is taken from circle state, never from calldata.
+At payout the V2 helper settles the state-derived transfer into that precommitted
+note. No inline settlement signature, no caller-supplied amount, no admin path,
+no assembly-time open-note ID to sign. Terminal payout states add
+`PrivatelyPaid` and `PrivatelyRecovered`; `NoFundedRecovery` still counts as
+terminal accounting but must never read as paid/recovered.
+
+Status: `IwaCircleV2` / `IwaStrk20HelperV2` implemented; Cairo security matrix
+`test_payout_settlement_v2.cairo` (24-case) + real-pool capability proof
+`test_precommitted_note_payout_v2.cairo` green; the frontend
+`chains/strk20/v2/privatePotCollection` flow and the Portable Trust Credential
+(`lib/credential/*`) are implemented and tested. The declare/deploy itself, a
+real minimal-value mainnet proof, rotation / private recovery hardening, and an
+external audit remain gates before V2 mainnet use. Exact evidence and the plan
+are in `docs/strk20/INTEGRATION_RESEARCH.md`,
+`docs/strk20/V2_ALT_PRIVATE_PAYOUT_RESEARCH.md`, and
+`docs/superpowers/plans/2026-09-04-iwa-circle-v2.md`.
+
+### Portable Trust Credential (chain-neutral)
+
+The credential is defined at the protocol level, not the chain level. Two
+claims — Good Standing (N qualifying rounds, `OnTime` / `LateWithinGrace`, zero
+`MissedDefault` whether cured or not) and Circle Completion (terminal settlement
++ membership in the payout order + the member's own `PrivatelyPaid` /
+`PrivatelyRecovered`). The artifact (`iwa-credential/2`) is an off-chain signed
+statement of already-public facts; there is no credential registry contract and
+no backend. A verifier re-derives every fact from chain through the
+`CredentialChainReader` adapter and additionally requires a fresh,
+version-bound, verifier-bound proof-of-possession — a copied JSON alone never
+verifies. Verification is fail-closed: Verified / Invalid / Unable to verify,
+and "Unable to verify" is never treated as valid. Only the hash primitive
+(Poseidon), the signature curve (Stark), and the fact source are supplied by
+the Starknet adapter; EVM and Solana adapters supply their own.
+
+V1 remains a separate immutable deployment. Every resource is identified by
+`(contract address, circle id)`, every read/index record carries
+`protocol_version`, the config-pinned registry is primary, and no migration or
+bridge is implied.
 
 This file describes the current technical direction for IWA.

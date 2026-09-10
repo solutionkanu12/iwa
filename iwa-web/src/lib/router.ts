@@ -36,6 +36,30 @@ export type Route =
    * checks an allowlist server side, so the path is not the protection.
    */
   | { name: "admin" }
+  /**
+   * TEMPORARY local-only diagnostic (Candidate P A1 gate). Rendered only when
+   * `import.meta.env.DEV` is true, so a production build has no such page; it
+   * falls through to notFound there. No navigation link points to it.
+   */
+  | { name: "devNoteIdProbe" }
+  /**
+   * TEMPORARY local-only V2 private pot collection flow (Candidate P). Rendered
+   * only when `import.meta.env.DEV` is true and IwaCircleV2 is deployed. No
+   * navigation link points to it; V1 routes are unaffected.
+   */
+  | { name: "devV2PotCollection" }
+  /**
+   * TEMPORARY local-only check: does the connected Ready X wallet support the
+   * declare/deploy APIs for the V2 mainnet deployment (Option A)? Dev builds
+   * only; no navigation link; sends nothing.
+   */
+  | { name: "devV2DeployCapability" }
+  /**
+   * TEMPORARY local-only Portable Trust Credential flow: generate an
+   * `iwa-credential/2` artifact and verify one (with a proof-of-possession
+   * challenge). Dev builds only; no navigation link; sends nothing.
+   */
+  | { name: "devCredential" }
   | { name: "notFound"; path: string };
 
 export interface Resolved {
@@ -99,6 +123,14 @@ export function hrefFor(route: Route): string {
       return "/strk20";
     case "admin":
       return "/admin";
+    case "devNoteIdProbe":
+      return "/dev/note-id-probe";
+    case "devV2PotCollection":
+      return "/dev/v2-pot-collection";
+    case "devV2DeployCapability":
+      return "/dev/v2-deploy-capability";
+    case "devCredential":
+      return "/dev/credential";
     case "notFound":
       return route.path;
   }
@@ -128,6 +160,25 @@ export function resolve(pathname: string, search: string): Resolved {
 
   if (parts[0] === "strk20") {
     return parts.length === 1 ? { route: { name: "console" }, redirectTo: null } : notFound;
+  }
+
+  // TEMPORARY local-only A1 probe. main.tsx only renders it under
+  // import.meta.env.DEV; a production build resolves the route but shows
+  // notFound.
+  if (parts[0] === "dev") {
+    if (parts.length === 2 && parts[1] === "note-id-probe") {
+      return { route: { name: "devNoteIdProbe" }, redirectTo: null };
+    }
+    if (parts.length === 2 && parts[1] === "v2-pot-collection") {
+      return { route: { name: "devV2PotCollection" }, redirectTo: null };
+    }
+    if (parts.length === 2 && parts[1] === "v2-deploy-capability") {
+      return { route: { name: "devV2DeployCapability" }, redirectTo: null };
+    }
+    if (parts.length === 2 && parts[1] === "credential") {
+      return { route: { name: "devCredential" }, redirectTo: null };
+    }
+    return notFound;
   }
 
   if (parts[0] === "invite") {

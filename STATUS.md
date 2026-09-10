@@ -6,6 +6,93 @@ intent.
 
 Last reviewed against the working tree during the reconnect work.
 
+## Iwa V2 — Candidate P private payout + Portable Trust Credential (2026-09-10)
+
+Branch `feature/iwa-v2`, based on
+`8710646e75dfe67e7b5b9f2d07f2d8c85b91d0e7`. No commit, push, deployment, or
+V1 contract change has been made in this phase.
+
+### Preserved V1
+
+- tag: `iwa-v1-starknet`
+- branch: `submission/starknet-v1`
+- preserved SHA: `5ec9e59554a6ca7b6af7388148830dfb661b6c8e`
+- V1 mainnet contracts and circle state are immutable; no migration is planned
+
+### Private payout path: shadow-account SUPERSEDED, Candidate P SELECTED
+
+The shadow-account / anonymizer route (a precommitted per-circle STRK20 shadow
+identity, invoked by a canonical anonymizer) is **superseded /
+infrastructure-blocked** (blocker V2-02): the installed Wallet API types
+(`0.10.3`) expose no shadow-account methods, no real browser wallet ships them
+on the target network, and there is no verified anonymizer deployment /
+governance to bind to. The RED tests that red-teamed it are retained for
+security history but ignored/skipped in CI:
+
+- `contracts/starknet/tests/test_private_destination_capability_v2.cairo` — every
+  test `#[ignore]`
+- `iwa-web/src/chains/strk20/v2/privateDestinationCapability.test.ts` — the six
+  spike-dependent tests `it.skip`
+
+**Candidate P is the selected Starknet V2 path.** The scheduled member
+pre-registers a private destination note before the STRK20 transaction is
+assembled; the amount comes from circle state and the destination is bound by a
+member-auth-key signature; at payout the V2 helper settles the state-derived
+transfer into that precommitted note. No inline settlement signature, no
+caller-supplied amount, no admin path, no assembly-time open-note ID to sign.
+Public ERC20 payout remains prohibited.
+
+### What is complete
+
+- **A1 — Ready X declare capability: PASS on real Ready X against Starknet
+  mainnet.** A real `wallet_addDeclareTransaction` request reached the Ready X
+  approval prompt, which confirms the wallet supports the declaration API needed
+  for the V2 mainnet deploy (Option A). No declaration was submitted.
+- **A2 — V2 contracts implemented.** `iwa_circle_v2.cairo`,
+  `iwa_strk20_helper_v2.cairo`, `iwa_types_v2.cairo`, `iwa_events_v2.cairo`.
+  New payout states include `PrivatelyPaid` / `PrivatelyRecovered`.
+- **A3 — V2 security test matrix complete.** `test_payout_settlement_v2.cairo`
+  (24-case mandatory-payout-attack matrix) + `test_hash_parity_v2.cairo`
+  (TS↔Cairo Poseidon parity). Full Cairo suite green (217 pass, 0 fail, 20
+  ignored — the 20 are the superseded shadow-path tests).
+- **V2 frontend payout path complete.** `iwa-web/src/chains/strk20/v2/`
+  (`deploymentV2`, `iwaSigningV2`, `payoutActionsV2`, `publicReadsV2`,
+  `precommittedNoteId`, `privatePotCollection`) + a dev-only
+  `DevV2PotCollectionView`. Class hashes computed and checked against the
+  deployed V1.
+- **Portable Trust Credential implemented.** `iwa-web/src/lib/credential/`
+  (`claims`, `artifact`, `verify`, `generate`, `credentialChainReader`) + a
+  dev-only `DevCredentialView` (Generate / Verify). Two chain-neutral claims:
+  Good Standing (N qualifying rounds, `OnTime` / `LateWithinGrace`, no
+  `MissedDefault` cured or not) and Circle Completion (terminal settlement +
+  membership in the payout order + the member's own `PrivatelyPaid` /
+  `PrivatelyRecovered`). Off-chain signed `iwa-credential/2` artifact, no new
+  contract, no backend; the verifier re-derives every fact from chain and
+  additionally demands a fresh, verifier-bound proof-of-possession. Fail-closed:
+  Verified / Invalid / Unable to verify. Full mandatory attack matrix in
+  `credentialSecurity.test.ts`.
+- Deployment script + preflight: `contracts/starknet/deploy/iwa-deploy-v2.sh`
+  (non-sending checks only) with pinned mainnet config and expected V2 class
+  hashes.
+
+### What remains before V2 mainnet
+
+- The declare / deploy transactions themselves (blocked earlier by an Argent
+  guardian on the standard deployer and by deployer underfunding; the resolved
+  path is to declare/deploy from the Ready X wallet — A1 confirmed).
+- Real minimal-value mainnet proof of one private pot collection and one
+  credential verification against the deployed V2 circle.
+- V2 rotation / private recovery hardening.
+- External security audit.
+
+### Blocker and next step
+
+Nothing in this phase is committed, pushed, or deployed. Next step after review:
+declare + deploy `IwaCircleV2` / `IwaStrk20HelperV2` from Ready X, fill the
+addresses into `src/chains/strk20/v2/deploymentV2.ts`, re-run the class-hash
+preflight, then run one real minimal-value pot collection + credential
+verification.
+
 ## Zama Prize Savings bounty (active work)
 
 Branch `feature/zama-prize-savings`. Standalone spike-to-bounty track inside
@@ -377,17 +464,21 @@ phase made.
 
 ## What does not work yet
 
-**Collecting the pot.** The settlement path exists and is covered by the
-contract tests. Authorising it from a browser wallet is what is missing: the
-authorisation has to commit to an identifier that only exists once the wallet
-has already assembled the transaction, so the signature cannot be produced in
-time. The control is closed and says so rather than failing when pressed.
+**Collecting the pot (V1 network).** On the deployed V1 contracts the settlement
+path exists and is covered by the contract tests, but authorising it from a
+browser wallet requires committing to an identifier that only exists once the
+wallet has assembled the transaction, so the signature cannot be produced in
+time. The V1 control is closed and says so. This is solved for **V2** by
+Candidate P (precommitted destination note); the V2 contracts, the frontend
+`privatePotCollection` flow, and a dev-only `DevV2PotCollectionView` are
+implemented and tested but V2 is not yet deployed to mainnet.
 
-**Proving a Portable Trust Credential.** The claim model and the proving that
-runs on the member's own device both exist, preserved from the earlier
-implementation. Nothing on the current network can check a proof, so a proof
-would be produced and shown to nobody. The entry point is closed and explains
-itself before any proving work is done.
+**Portable Trust Credential.** Implemented for V2 (see the V2 section above):
+generation, verification, proof-of-possession, and the full privacy / forgery /
+replay security matrix, plus a dev-only `DevCredentialView`. It reads V2 circle
+state, so it is exercised end-to-end only once `IwaCircleV2` is deployed. The
+legacy on-device ZK proving UI (`ProveView` / `lib/zk.ts`) is unrelated and
+remains deferred.
 
 **Standing across circles.** A record exists per circle. There is no aggregate
 across circles, and none is displayed.
@@ -466,9 +557,11 @@ addresses. Each transaction succeeded and touched the STRK20 pool.
 
 ## What remains
 
-1. Collecting the pot from inside the application.
-2. A way to check a Portable Trust Credential, and a flow for whoever receives
-   one.
+1. Deploy `IwaCircleV2` / `IwaStrk20HelperV2` to Starknet mainnet (from Ready X)
+   and run one real minimal-value private pot collection + one credential
+   verification against the deployed circle.
+2. V2 rotation / private recovery hardening; external audit before V2 mainnet
+   use beyond the proof.
 3. Standing that aggregates across more than one circle.
 4. A second chain's savings-circles contract behind the existing chain
    interface. The wallet manager and the Prize Savings (EVM) surface already

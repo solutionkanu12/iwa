@@ -1,0 +1,12 @@
+{
+  "_comment": "IWA Starknet MAINNET V2 (Candidate P private pot collection) deployment configuration. Copy to deploy-v2.config.json and fill deployer_account. Unlike the V1 config, NO addresses or class hashes live here: every security-critical value (USDC, STRK, pool, surplus_sink, setup_authority, both V2 class hashes) is hardcoded in iwa-deploy-v2.sh and re-asserted on chain. This file only names the signing account and, optionally, a fixed deployment salt.",
+
+  "network": "mainnet",
+  "rpc_url": "https://api.cartridge.gg/x/starknet/mainnet",
+
+  "_deployer_account": "REQUIRED. The sncast account NAME (from `sncast account list`) that signs declare/deploy/invoke. Its resolved address MUST equal the hardcoded setup_authority (0x04099B8eBD6e6c642B4B31BFD27A9c781AB9b41D7f66F80d5C04CC51c0977E85); the script refuses otherwise. Must hold STRK for gas.",
+  "deployer_account": "iwa-deployer-standard",
+
+  "_salt": "OPTIONAL. A fixed non-zero hex felt used for both deploys, for reproducibility. Omit to have the script generate and print a fresh random salt each run. Must NOT be 0x0.",
+  "salt": ""
+}

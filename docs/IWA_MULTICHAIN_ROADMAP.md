@@ -1,6 +1,6 @@
 # Iwa Multichain Roadmap
 
-_Last updated: 2026-09-03_
+_Last updated: 2026-09-10_
 
 ## Purpose
 
@@ -18,22 +18,25 @@ The user should not need to understand which chain is underneath unless they cho
 
 ## Recommendation
 
-Do **not** build Ethereum, Base, BNB, and Solana implementations before the current submission.
+Preserve the live Starknet V1 product and the current EVM/Zama Prize Savings
+implementation. Do not multiply savings-circle implementations until the
+Starknet V2 private payout primitive and chain-neutral protocol are proven.
 
 For the current release:
 
-- Keep the working Starknet deployment.
-- Finish the current product features and final security/release work.
+- Keep the working Starknet V1 deployment and its preserved history.
+- Keep Prize Savings as the current EVM/Zama implementation on Ethereum Sepolia.
 - Preserve the current V1 contracts for existing circles.
-- Keep V2 and multichain work as a deliberate post-submission protocol program.
+- Keep V2 and further multichain work as a deliberate product protocol program.
 - Design all V2 work to be chain-neutral from the beginning.
+- Treat Celo, Nimiq, Base, and other future integrations as planned, not shipped.
 
 Why:
 
 1. Multiple chains multiply audit and maintenance risk.
 2. V2 identity and recovery need a protocol-level redesign first.
 3. The current Starknet implementation already has real users/state and must not be destabilized.
-4. Base, Ethereum, and BNB can later share one audited EVM implementation.
+4. Celo, Base, Ethereum, and other EVM chains can later share an audited EVM adapter family.
 5. Solana requires a separate Rust/Solana implementation and should come after the protocol spec is stable.
 
 ---
@@ -98,6 +101,41 @@ Iwa is:
 
 We do not create separate business logic for each chain.
 
+## Architectural rule
+
+> One Iwa protocol, multiple chain implementations. Chain-specific privacy and
+> settlement primitives must never leak into the core domain.
+
+Made explicit:
+
+- The Iwa core protocol / domain is chain-neutral. It knows `Circle`, `Member`,
+  `Contribution`, `Obligation`, `Payout`, `Standing`, `Credential`, `Identity` —
+  and nothing about a specific chain's wallet API, RPC, proof system, token
+  standard, or transaction envelope.
+- **Portable Trust Credential semantics are chain-neutral.** The claims (Good
+  Standing over N qualifying rounds; Circle Completion on the member's own
+  settled private payout), the canonical artifact, and the proof-of-possession
+  challenge are defined at the protocol level. Only the hash primitive, the
+  signature curve, and the on-chain fact source are supplied by the chain
+  adapter.
+- **Private pot collection semantics are chain-neutral.** "The scheduled member
+  privately collects the round's state-derived amount; no public-ERC20 payout;
+  no admin path; the amount is never caller-supplied" is a protocol rule. How
+  privacy is achieved (STRK20 precommitted note on Starknet; a different
+  mechanism elsewhere) lives entirely in the PrivacyAdapter / PaymentAdapter.
+- The **Starknet implementation** uses Cairo contracts + the STRK20 privacy pool
+  + a browser wallet (Ready X) reached through a Starknet adapter. Cairo types,
+  `sncast`/`snforge`, Poseidon, the Stark curve, and STRK20 server actions are
+  all adapter-internal.
+- **EVM implementations** bring their own payment and privacy adapters (their
+  own settlement path, their own privacy technology — e.g. FHE or a shielded
+  pool), satisfying the same protocol spec and invariant suite.
+- **Solana**, later, uses a Solana-specific adapter (Rust, PDAs, SPL tokens),
+  again against the same spec.
+- **No cross-chain fund bridge is required for the first multichain phase.**
+  Each circle lives entirely on one chain. Portability in this phase is for
+  identity and the Portable Trust Credential, not for circle funds.
+
 A chain-neutral Iwa Protocol Specification must define:
 
 - circle lifecycle
@@ -116,6 +154,20 @@ A chain-neutral Iwa Protocol Specification must define:
 
 Every chain implementation must satisfy the same protocol specification.
 
+The implementation boundary is:
+
+```text
+Iwa Core
+  -> ChainAdapter
+       -> PaymentAdapter
+       -> PrivacyAdapter
+       -> CredentialVerifier
+```
+
+Core concepts are `Circle`, `Member`, `Contribution`, `Obligation`, `Payout`,
+`Standing`, `Credential`, and `Identity`. Chain-specific wallet, RPC,
+cryptography, token, and transaction types stay behind the adapters.
+
 ---
 
 # Current Release
@@ -133,6 +185,19 @@ Starknet mainnet.
 - wallet lifecycle hardening
 - production deployment hardened
 - known V1 payout liveness limitation documented
+- Prize Savings implemented through Zama FHE on Ethereum Sepolia
+- shared frontend wallet management for Starknet and EVM
+- Starknet V2 private payout: shadow-account path **superseded / infrastructure-blocked**
+  (no canonical browser-wallet shadow-account + anonymizer infrastructure on the
+  target network — blocker V2-02). Selected path is **Candidate P**: a
+  precommitted per-circle private destination note against the pinned STRK20
+  pool. V2 contracts (`IwaCircleV2`, `IwaStrk20HelperV2`) are implemented and
+  tested (A2/A3); the V2 frontend payout path is complete; the Portable Trust
+  Credential is implemented. Mainnet declare/deploy and the real-value mainnet
+  proof remain pending.
+- A1 (Ready X `wallet_addDeclareTransaction` support) confirmed on real Ready X
+  against Starknet mainnet — the declare request reached the wallet approval
+  prompt.
 
 ## Do not change before submission
 
@@ -244,7 +309,36 @@ Security properties:
 
 Goal:
 
-Build the first implementation of the V2 protocol.
+Build the first implementation of the V2 protocol only after Phase M3A passes.
+
+### Phase M3A: private payout capability gate
+
+Current result is **B: feasible with a small V2 contract change at the pinned
+source level**.
+
+The originally-identified route (a precommitted per-circle STRK20 *shadow
+account* invoked by an anonymizer) is **superseded / infrastructure-blocked**:
+there is no canonical browser-wallet shadow-account primitive and no verified
+anonymizer deployment on the target network (blocker V2-02). The RED tests that
+red-teamed it are kept for history but ignored/skipped in CI
+(`contracts/starknet/tests/test_private_destination_capability_v2.cairo`,
+`iwa-web/src/chains/strk20/v2/privateDestinationCapability.test.ts`).
+
+The **selected route is Candidate P**: the scheduled member pre-registers a
+private destination note (amount from circle state, destination bound by a
+member-auth-key signature) *before* the STRK20 transaction is assembled; at
+payout the V2 helper settles the state-derived transfer into that precommitted
+note. No inline settlement signature, no caller-supplied amount, no admin path,
+no assembly-time open-note ID to sign. Its production security matrix is
+`contracts/starknet/tests/test_payout_settlement_v2.cairo`; its capability proof
+against the genuine pinned pool is
+`contracts/starknet/tests/test_precommitted_note_payout_v2.cairo`.
+
+Status: V2 contracts implemented and tested (A2/A3 complete); V2 frontend payout
+path complete; Portable Trust Credential implemented. Still pending before
+mainnet: the declare/deploy itself, rotation and private recovery hardening, a
+real minimal-value mainnet receipt, and external audit. Public ERC20 payout
+remains prohibited.
 
 Expected additions:
 
@@ -274,13 +368,16 @@ Address H-2 without giving Iwa custody.
 Preferred direction:
 
 - member-chosen fallback destination
+- private payout and private fallback only
 - fallback committed before funds are at risk
 - long time lock
 - no organizer override
 - no admin override
 - recovery cannot silently change payout order
+- auth and destination epochs are monotonic
+- fresh member authorization resets the fallback timer
 
-Potential pairing:
+Conditional pairing, after the private destination primitive is proven:
 
 - time-locked fallback
 - member recovery key
@@ -425,6 +522,7 @@ Example:
 ```text
 ChainCapabilities {
   privateContributions
+  privatePayouts
   recoverableIdentity
   sponsoredTransactions
   supportedTokens
@@ -435,13 +533,13 @@ ChainCapabilities {
 
 Possible initial model:
 
-| Chain | Savings | Privacy | V2 Identity | Gas Sponsorship | Notes |
-|---|---|---|---|---|---|
-| Starknet | Yes | STRK20 | Planned | Planned | Primary privacy chain |
-| Base | Planned | Transparent first | Planned | Planned | First EVM expansion |
-| Ethereum | Planned | Transparent first | Planned | Optional | Higher fees |
-| BNB | Planned | Transparent first | Planned | Planned | Demand-driven |
-| Solana | Planned | TBD | Planned | TBD | Separate Rust implementation |
+| Chain | Product implementation | Privacy capability | V2 identity | Status |
+|---|---|---|---|---|
+| Starknet | Savings circles V1 + V2 (Candidate P) | STRK20 private inbound; V2 private payout via precommitted destination note | Planned | V1 shipped; V2 contracts + frontend + Portable Trust Credential implemented and tested; mainnet deploy + real-value proof pending |
+| Ethereum Sepolia | Prize Savings | Zama FHE encrypted balances, draw and claim accounting | Not shared with circles V2 | Current testnet implementation |
+| Celo | Payment/agent integration | To be validated | Planned | Planned, not shipped |
+| Nimiq | Pay Mini App integration | To be validated | Planned | Planned, not shipped |
+| Base and other EVM | EVM adapter family | To be declared per deployment | Planned | Planned, not shipped |
 
 Never claim equal privacy where it does not exist.
 
@@ -555,18 +653,18 @@ No "ship everywhere" launches.
 7. Mainnet verification.
 8. Demo and submission.
 
-## Immediately after submission
+## Current V2 sequence
 
-1. Protocol V2 specification.
-2. Member Identity V2 test vectors.
-3. IwaCircle V2.
-4. Payout liveness/recovery V2.
-5. External contract audit.
-6. Starknet V2 testnet.
-7. Embedded account/STRK20 feasibility spike.
-8. Base Solidity implementation.
-9. Ethereum/BNB deployment from audited EVM family.
-10. Solana implementation later.
+1. Private Starknet payout capability gate with exact wallet and contract evidence.
+2. Freeze the chain-neutral Protocol V2 specification and adapter interfaces.
+3. Freeze Member Identity V2 test vectors.
+4. Implement IwaCircle V2 and private recovery test-first only if the gate passes.
+5. Complete the V2 red-team matrix.
+6. Verify Starknet V2 on testnet with a real compatible wallet.
+7. Complete independent external audit review.
+8. Consider the shared EVM circles adapter family.
+9. Plan Celo and Nimiq integrations against actual product demand and capabilities.
+10. Consider Base and other EVM deployments later.
 
 ---
 
@@ -599,6 +697,34 @@ Use this section for future ideas without treating them as approved scope.
 ---
 
 # Decision Log
+
+## 2026-09-10
+
+### Decision
+
+The Starknet V2 private payout path is **Candidate P** (precommitted private
+destination note). The shadow-account / anonymizer path is superseded.
+
+### Reason
+
+The shadow-account path depends on browser-wallet and anonymizer infrastructure
+that does not exist on the target network (blocker V2-02). Candidate P achieves
+the same protocol guarantee — private, state-derived payout with no admin path
+and no public-ERC20 fallback — using only the pinned STRK20 pool that is already
+in production for private contributions. Its RED history is retained but ignored
+in CI.
+
+### Decision
+
+Restate the core architectural rule: chain-specific privacy and settlement
+primitives must never leak into the core domain; Portable Trust Credential and
+private pot collection semantics are chain-neutral.
+
+### Reason
+
+V2 work (Cairo contracts, STRK20 helper, credential library) is the first real
+test of the adapter boundary. Writing the rule down keeps the EVM and Solana
+implementations honest against one protocol spec.
 
 ## 2026-09-03
 
@@ -641,12 +767,18 @@ It requires a separate Rust/Solana architecture, increasing security and mainten
 Keep updating this section.
 
 - What exact V2 member identity construction passes external review?
-- What is the final V2 recovery model?
-- What is the payout fallback delay?
+- Which real browser wallet implements Wallet API `0.10.4-rc.1` shadow
+  commitment and shadow invoke on the target network without exposing a viewing
+  key to the dapp?
+- Which shadow-account anonymizer deployment, class hash, pool binding, account
+  class, and governance posture are acceptable for V2?
+- What is the final V2 private recovery model after shadow-account rotation and
+  fallback timing are tested?
+- What is the payout fallback delay after its attack model is tested?
 - Which account implementation will embedded Iwa accounts use?
 - Can STRK20 privacy work without a traditional wallet client?
 - Can account deployment be sponsored reliably on Starknet?
-- What is the first Base stablecoin configuration?
+- What current user need makes Celo, Nimiq, or Base the next adapter priority?
 - Should EVM circles use upgradeable or immutable contracts?
 - What event schema should be identical across chains?
 - How do Portable Trust Credentials remain unlinkable across chains?

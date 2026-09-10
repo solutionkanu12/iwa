@@ -5,6 +5,10 @@ import "./styles/global.css";
 import { App } from "./App.tsx";
 import { LandingPage } from "./landing/LandingPage.tsx";
 import { Strk20ConsoleView } from "./screens/Strk20ConsoleView.tsx";
+import { DevNoteIdProbeView } from "./screens/DevNoteIdProbeView.tsx";
+import { DevV2PotCollectionView } from "./screens/DevV2PotCollectionView.tsx";
+import { DevV2DeployCapabilityView } from "./screens/DevV2DeployCapabilityView.tsx";
+import { DevCredentialView } from "./screens/DevCredentialView.tsx";
 import { AcceptInviteView } from "./screens/AcceptInviteView.tsx";
 import { WalletProvider } from "./app/WalletProvider.tsx";
 import { SessionProvider } from "./app/SessionProvider.tsx";
@@ -40,6 +44,33 @@ function AppRoot() {
     // rather than rendering a shell around nothing.
     if (OPERATOR_CONSOLE_ENABLED) return <Strk20ConsoleView />;
     return <App route={{ name: "notFound", path: "/strk20" }} navigate={navigate} />;
+  }
+  if (route.name === "devNoteIdProbe") {
+    // TEMPORARY local-only diagnostic. import.meta.env.DEV is true under
+    // `vite dev` (and vitest) and false in any production build, so this page
+    // does not exist once built.
+    if (import.meta.env.DEV) return <DevNoteIdProbeView />;
+    return <App route={{ name: "notFound", path: "/dev/note-id-probe" }} navigate={navigate} />;
+  }
+  if (route.name === "devV2PotCollection") {
+    // TEMPORARY local-only V2 private-pot-collection flow. Dev builds only;
+    // a production build resolves the route but shows notFound.
+    if (import.meta.env.DEV) return <DevV2PotCollectionView />;
+    return (
+      <App route={{ name: "notFound", path: "/dev/v2-pot-collection" }} navigate={navigate} />
+    );
+  }
+  if (route.name === "devV2DeployCapability") {
+    // TEMPORARY local-only Ready X declare/deploy capability check. Dev only.
+    if (import.meta.env.DEV) return <DevV2DeployCapabilityView />;
+    return (
+      <App route={{ name: "notFound", path: "/dev/v2-deploy-capability" }} navigate={navigate} />
+    );
+  }
+  if (route.name === "devCredential") {
+    // TEMPORARY local-only Portable Trust Credential generate / verify flow. Dev only.
+    if (import.meta.env.DEV) return <DevCredentialView />;
+    return <App route={{ name: "notFound", path: "/dev/credential" }} navigate={navigate} />;
   }
   return <App route={route} navigate={navigate} />;
 }

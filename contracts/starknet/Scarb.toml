@@ -25,6 +25,9 @@ snforge_std = "0.63.0"
 
 [features]
 test_erc20 = []
+# Isolated V2 private-payout capability spike (candidate P). Off by default; the
+# spike contracts are compiled only for test_precommitted_note_payout_v2.cairo.
+v2_precommit_spike = []
 
 [lib]
 

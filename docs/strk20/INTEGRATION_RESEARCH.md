@@ -1,10 +1,30 @@
 # STRK20 Integration Research
 
+> **Update 2026-09-10.** The V2 shadow-account route documented in the final
+> section is **superseded / infrastructure-blocked** (blocker V2-02: no
+> browser-wallet shadow-account methods, no verified anonymizer deployment). The
+> selected V2 private payout path is **Candidate P** — a precommitted per-circle
+> private destination note against the pinned STRK20 pool — written up in
+> `docs/strk20/V2_ALT_PRIVATE_PAYOUT_RESEARCH.md` and implemented in
+> `contracts/starknet/src/iwa_circle_v2.cairo` /
+> `contracts/starknet/src/iwa_strk20_helper_v2.cairo`. The shadow-account
+> analysis below is retained as research history.
+
 ## Verification status
 
-Status: CORE PROTOCOL ROUTE VERIFIED
+Status: V1 CORE PROTOCOL ROUTE VERIFIED; V2 PRIVATE PAYOUT = CANDIDATE P (implemented + tested, mainnet deploy pending)
 
 Primary IWA integration route has been verified.
+
+This status applies to V1 inbound settlement and its immutable helper. The V2
+private outbound path is Candidate P (precommitted private destination note).
+The V2 contracts, the Cairo security matrix
+(`contracts/starknet/tests/test_payout_settlement_v2.cairo`), the real-pool
+capability proof (`test_precommitted_note_payout_v2.cairo`), the frontend payout
+flow, and the Portable Trust Credential are implemented and tested. The
+declare/deploy itself, a real minimal-value mainnet proof, rotation / private
+recovery hardening, and an external audit remain gates. The shadow-account
+analysis in the final section is superseded (see the note above).
 
 Remaining before implementation:
 - verify current USDC mainnet address
@@ -81,7 +101,8 @@ Verified baseline:
 
 - Wallet API `>= 0.10.3`
 - STRK20-capable `starknet.js`
-- tested baseline: `starknet@10.4.0`
+- historical tested baseline: `starknet@10.4.0`
+- current installed Iwa frontend: `starknet@10.5.0`
 - tested companion packages:
   - `@starknet-io/get-starknet-discovery@6.0.3`
   - `@starknet-io/get-starknet-wallet-standard@6.0.3`
@@ -762,3 +783,119 @@ contracts/starknet/deploy/iwa-deploy.sh validate <config.json>
 
 which repeats the chain-id check, the pool class and interface probe, and the
 token symbol and decimals checks, and sends nothing.
+
+## V2 private payout capability spike (2026-09-07)
+
+### Scope and exact source baseline
+
+This spike asks whether a member can precommit a private payout identity before
+their round and later receive an Iwa pot privately without backend custody.
+
+Evidence was checked against:
+
+- Iwa's Cairo dependency pin, commit
+  `66e3caae8c0201227a6719696d004e30d90aea65`
+- upstream Privacy SDK `0.14.3-rc.5` at that commit
+- the pinned pool and shadow-account anonymizer Cairo source
+- pinned SDK shadow-account helpers and devnet e2e tests
+- installed `starknet@10.5.0`
+- installed `@starknet-io/types-js@0.10.3` Wallet API declarations
+- Wallet API development specification `0.10.4-rc.1`
+- current upstream release information, checked on 2026-09-07
+
+The exact pinned source was cloned read only to a temporary directory for this
+inspection. No dependency or production file was changed. The bundled freshness
+checker could not run because no Python executable is available. That is a
+tooling limitation, not a passing freshness result.
+
+### Capability matrix
+
+| Capability | Result | Exact evidence |
+|---|---|---|
+| Pre-create an empty open note for a future payout | Unsupported and unnecessary in the selected design | `privacy.cairo:854-904` requires every created open note to be funded in the same applied action set or raises `UNDEPOSITED_OPEN_NOTES`. |
+| Reuse a previously funded open note | Unsupported | `privacy.cairo:1008-1040` requires current amount zero and raises `NOTE_ALREADY_DEPOSITED`. |
+| Know a future note ID before wallet assembly | Unsupported and deliberately not authorized | Installed `components.d.ts:169-177` defines `${openNoteIds[N]}` as a same-transaction placeholder; pinned `client/src/strk20-prover.ts:142-160` resolves it only after compilation. |
+| Derive a future note ID in the dapp | Unsafe | `hashes.cairo:114-132,200-210` binds it to private viewing-key material and a sequential index. Iwa must never receive that material. |
+| Validate that an arbitrary open note belongs to a member | Unsupported | `privacy.cairo:1008-1040` validates note state, token, and amount, but not owner; `get_note` at lines 1073-1075 returns only `Note`. |
+| Precommit a private payout identity | Supported at source and specification level | `shadow_account_anonymizer.cairo:48-58` derives `Poseidon(Poseidon(identity_key,dapp_name),nonce)`. `sdk/src/internal/shadow-accounts.ts` derives the same commitment locally. Wallet API `0.10.4-rc.1` specifies `wallet_strk20ShadowAccountCommitment`. |
+| Authenticate that identity to Iwa | Supported with a small V2 helper change | `shadow_account_anonymizer.cairo:326-367,381-401` deterministically resolves and records the shadow account. The helper can require its caller to equal `get_shadow_account(stored_commitment)`. |
+| Atomically turn a dapp payout into a private note | Supported at source and upstream-test level | `shadow_account_anonymizer.cairo:96-134,302-323,404-446` executes calls and collects `All`, `Diff`, or exact token value into `OpenNoteDeposit`. `e2e/tests/devnet/shadow-account-invoke.test.ts` and `shadow-account-compute-invoke.test.ts` prove the round trip. |
+| Use a real browser wallet today | Unverified | Current Wallet API development spec exposes `STRK20_SHADOW_ACCOUNT_INVOKE_ACTION`, but Iwa's installed `0.10.3` types do not. No target wallet was exercised in this phase. |
+| Trust the target deployment | Unverified | The exact anonymizer address, class hash, pool binding, shadow account class, and governance or upgrade authority were not verified for the target network. |
+
+### Values known at join or destination rotation
+
+The application can know protocol version, chain, V2 circle/helper/pool/token
+addresses, circle ID, circle-scoped member reference, auth epoch, destination
+epoch, the opaque shadow identity commitment, and the deterministic shadow
+account address. The wallet derives the commitment from private identity
+material, the fixed Iwa dapp name, and a per-circle/per-epoch nonce. The dapp
+does not receive the identity key.
+
+The member may also register a separately controlled recovery shadow commitment
+and its time-lock policy. Exact dapp-name, nonce derivation, and serialization
+remain unfrozen until cross-language and wallet tests pass.
+
+### Values known at payout time
+
+The circle state determines the scheduled member, round, token, exact funded
+payout amount, current auth and destination epochs, authorization nonce, expiry,
+and action identifier. The wallet or prover creates the open note, note witness,
+channel material, and final note ID only while assembling the transaction.
+
+### Selected shadow-account flow
+
+1. The wallet precomputes the per-circle, per-epoch shadow identity commitment.
+2. The member registers that opaque commitment with the V2 circle before their
+   payout is due.
+3. The member signs Iwa's versioned payout context against the stored
+   commitment. The open-note ID is not part of this authorization.
+4. At payout, the wallet creates one STRK20 transaction with an open-amount
+   transfer action and a shadow-account invoke action for the fixed Iwa dapp
+   name and nonce.
+5. The pool proof derives the identity commitment. The anonymizer deploys or
+   loads the deterministic shadow account and invokes the narrow V2 helper.
+6. The helper loads the member's stored commitment and requires its caller to
+   equal `get_shadow_account(commitment)`.
+7. The helper and circle validate authorization, state, epochs, nonce, expiry,
+   token, and the state-derived payout amount, then transfer only that amount to
+   the authenticated shadow account.
+8. The anonymizer collects the token balance delta into the wallet-created open
+   note and returns `OpenNoteDeposit` to the pool atomically.
+9. Success consumes authorization and liability exactly once. Any failure
+   reverts the financial state and transfer.
+
+This authenticates the private payout identity without asking the helper to
+infer an arbitrary open-note owner. The private note recipient remains under
+wallet control and is not exposed to the helper.
+
+### Privacy and public metadata
+
+Private values include the identity root, circle secret, shadow identity key,
+auth keys, viewing keys, open-note recipient, note witnesses, unused
+nullifiers, and the link from the shadow account to the recipient's private
+balance. Cross-circle correlation is reduced by deriving a distinct nonce and
+commitment per circle and destination epoch.
+
+Public metadata includes contract, helper, pool, token and shadow-anonymizer
+addresses; transaction timing; the shadow account deployment or use; dapp
+invocation; circle and round state already public in Iwa; open-note token and
+amount under the current protocol; and commitment rotation or fallback events.
+This is not anonymity.
+
+### Verdict
+
+**B. FEASIBLE WITH SMALL V2 CONTRACT CHANGE.**
+
+The selected design is source-backed by the pinned anonymizer and upstream e2e
+tests and is represented in Wallet API development specification `0.10.4-rc.1`.
+It resolves the V1 authorization timing flaw by precommitting a private shadow
+identity rather than an assembly-time open-note ID.
+
+No production implementation or release is authorized by this source spike.
+The next phase, after review, is G1-G5 in
+`docs/superpowers/plans/2026-09-04-iwa-circle-v2.md`: verify a real wallet and
+target deployment, write failing Iwa-specific tests, build only a minimal
+isolated V2 harness, prove atomic private receipt at minimal testnet value, and
+freeze authorization encoding. If any required guarantee fails, downgrade to C
+and stop. Never implement a public payout fallback.

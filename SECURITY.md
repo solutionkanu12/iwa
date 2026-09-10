@@ -541,8 +541,11 @@ problem for a custody problem.
 
 ### Options considered for a future contract version
 
-None of these are implemented. They are recorded so the v2 design starts from an
-argued position rather than from scratch.
+None of these are implemented. The 2026-09-07 capability spike additionally
+established that recovery and normal payout must use a validated private
+destination, and that the currently installed STRK20 wallet/pool seam cannot
+provide one. The options below are therefore requirements to evaluate after a
+private destination primitive is proven, not implementation approval.
 
 **A. Time locked fallback recipient.** After a long, fixed delay with no
 authorization, settlement may proceed to a destination fixed before the circle
@@ -558,9 +561,9 @@ destination rather than the organizer's. *Organizer power:* none, provided the
 organizer never chooses the fallback. *Admin power:* none. *Payout order:*
 unchanged. The rotation and the amounts stay deterministic; only the destination
 of one settlement changes, and only after a published delay. *Privacy:* the
-fallback destination is another note, so the pool model is unchanged, though a
-fallback that fires is publicly visible as a fallback. *Deployment:* new
-contract version.
+fallback must use the same validated private destination mechanism as ordinary
+payout. A public account fallback is rejected. Fallback activation timing is
+public. *Deployment:* new contract version after the capability gate passes.
 
 **B. Member designated recovery key.** A member registers a second public key at
 join time, and either key can authorize their payouts.
@@ -638,8 +641,11 @@ user funds, and this is that, whatever it is called.
   from an ordinary settlement.
 - The privacy model is not weakened silently. Any new disclosure is stated.
 
-Option A with the fallback destination chosen by the member, optionally combined
-with B, satisfies all eight. That is the direction to design against.
+Option A with a private fallback identity chosen by the member, optionally
+combined with B, is the direction to design against. The V2 shadow-account
+design can authenticate a precommitted private identity at the source level,
+but real-wallet support, exact deployment verification, and recovery tests
+remain release blockers.
 
 ## Contract versioning
 
@@ -661,6 +667,122 @@ exists:
   implied.
 
 None of this is implemented.
+
+## Starknet V2 private payout security gate (2026-09-07)
+
+> **Update 2026-09-10 — construction changed, gate unchanged.** The
+> shadow-account / anonymizer construction described in this section is
+> **superseded / infrastructure-blocked** (blocker V2-02: no browser-wallet
+> shadow-account methods in the installed `0.10.3` Wallet API types, no shipping
+> wallet support on the target network, no verified anonymizer deployment). The
+> selected path is **Candidate P**: a precommitted per-circle private
+> destination note against the pinned STRK20 pool (amount from circle state,
+> destination bound by a member-auth-key signature). The RED tests that
+> red-teamed the shadow path are retained for history but ignored/skipped in CI
+> (`contracts/starknet/tests/test_private_destination_capability_v2.cairo` all
+> `#[ignore]`; `iwa-web/src/chains/strk20/v2/privateDestinationCapability.test.ts`
+> six `it.skip`). The non-negotiable invariant, the "Mandatory payout attacks"
+> and "Mandatory credential attacks" lists, and the recovery requirements below
+> are unchanged and now apply to Candidate P. The implemented matrices are
+> `contracts/starknet/tests/test_payout_settlement_v2.cairo` (payout) and
+> `iwa-web/src/lib/credential/credentialSecurity.test.ts` (credential).
+
+### Non-negotiable invariant
+
+A V2 payout is successful only after verified private value movement to a
+member-controlled private destination. A public ERC20 transfer, including one
+followed by optional re-shielding, is not an acceptable payout or recovery
+path.
+
+### Capability verdict
+
+**B. Feasible with a small V2 contract change at the pinned source level.**
+
+The exact pinned pool source and installed wallet types prove:
+
+- unfilled open notes cannot survive an applied action set
+- an open note can be funded only once
+- the final open-note ID is resolved only during same-transaction wallet
+  assembly
+- the pool validates note existence, token, empty state, and amount, but does
+  not expose or validate the owner of an arbitrary open note to the helper
+- the pinned shadow-account anonymizer derives a private identity commitment,
+  resolves its deterministic account, executes the dapp call through that
+  account, and collects its token delta into a wallet-owned open note atomically
+- Wallet API development specification `0.10.4-rc.1` exposes the matching
+  shadow commitment and shadow invoke methods; Iwa's installed `0.10.3` types
+  do not
+
+V2 therefore authenticates the payout caller, not an arbitrary note ID. The
+member precommits a per-circle shadow identity. At payout, the anonymizer calls
+the helper through the corresponding shadow account; the helper compares its
+caller with `get_shadow_account(stored_commitment)`, derives the amount and
+recipient state internally, and transfers to that shadow account. The
+anonymizer then collects the delta into the wallet-created open note in the same
+pool transaction.
+
+This construction is not release ready. A real compatible browser wallet, the
+target-network anonymizer address/class/pool binding/account class, its
+governance and upgrade posture, and Iwa-specific real-pool tests are unverified.
+
+### Required authorization context after capability proof
+
+Exact encoding remains unfrozen. It must bind protocol version, chain ID, V2
+circle contract, privacy adapter/helper, pool, shadow anonymizer, token, circle
+ID, round ID, scheduled member reference, shadow identity commitment, state-derived
+payout amount or commitment, auth epoch, destination epoch, nonce, expiry, and
+action identifier.
+
+Member, token, round, destination commitment, and amount must come from trusted
+contract state. A caller cannot supply arbitrary replacements.
+
+### Recovery requirements
+
+- auth and shadow identity commitments rotate only through member identity proof
+- epochs increase monotonically and stale epochs fail
+- the fallback is a member-committed shadow identity controlled by separately
+  backed-up or recoverable privacy-wallet material
+- fresh member authorization or destination registration resets the timer
+- fallback submission may become permissionless after timeout, but destination
+  selection never does
+- organizer, admin, backend, and helper have no recipient discretion
+
+Until private fallback and timer semantics are validated end to end, H-2
+remains unresolved and V2 release is blocked.
+
+### Mandatory payout attacks
+
+Before testnet, failing tests must cover double collect, payout replay, wrong
+round, wrong member, wrong private destination, wrong amount, stale
+authorization, nonce replay, expiry bypass, chain/domain confusion, contract
+substitution, destination substitution, rotation races, fallback timing,
+organizer/admin escalation, helper abuse, malicious callback/reentrancy,
+liability mismatch, and privacy downgrade.
+
+Every failure must leave state and liability unchanged. Critical or High
+findings block release.
+
+### Mandatory credential attacks
+
+Tests must cover forged credentials, changed threshold N, changed claim type,
+subject substitution, artifact reuse by another wallet, replay across chain,
+contract, or credential version, malformed/truncated artifacts, verifier
+fail-open, cross-circle correlation, raw contribution leakage, member graph
+leakage, logging leakage, false completion, and cured-default laundering.
+
+Good Standing accepts `OnTime` and the approved `LateWithinGrace` policy;
+`MissedDefault` never becomes qualifying because it was cured. Circle Completion
+requires terminal accounting, membership in the payout order, and the member's
+own verified successful private payout or private recovery. Scheduled,
+authorized, pending, public-payout, and `NoFundedRecovery` states never qualify.
+
+Credential artifacts require both integrity verification and a fresh,
+versioned, verifier-bound proof-of-possession challenge. A copied JSON artifact
+is never sufficient.
+
+Internal testing is not an external audit. No V2 testnet or mainnet release is
+authorized until real-wallet, deployment, real-pool, recovery, red-team, and
+review gates pass.
 
 ## Portable Trust Credential security
 

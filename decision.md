@@ -1,8 +1,7 @@
 # IWA — Decisions
 
-Recorded decisions for the Zama Prize Savings bounty track
-(branch `feature/zama-prize-savings`). These are decisions, not status; status
-lives in `STATUS.md` and the live handoff in `handoff.md`.
+Recorded product and architecture decisions. These are decisions, not status;
+status lives in `STATUS.md` and the live handoff in `handoff.md`.
 
 ## Zama bounty decisions
 
@@ -145,6 +144,69 @@ lives in `STATUS.md` and the live handoff in `handoff.md`.
 
 See the historical sections of `ARCHITECTURE.md`, `SECURITY.md` and the
 STRK20 design docs. Nothing in this file overrides the Starknet track.
+
+## Iwa V2 decisions (2026-09-07, updated 2026-09-10)
+
+- **Private Starknet payout is a hard invariant.** A public ERC20 transfer from
+  the helper to the member, including one followed by optional re-shielding, is
+  rejected as the V2 payout or recovery design.
+- **Architectural rule (2026-09-10).** One Iwa protocol, multiple chain
+  implementations. Chain-specific privacy and settlement primitives must never
+  leak into the core domain. The Portable Trust Credential and private pot
+  collection are defined at the protocol level; the Starknet implementation
+  (Cairo + STRK20 + Ready X, via a Starknet adapter) and future EVM / Solana
+  implementations satisfy the same spec behind their own payment/privacy
+  adapters. No cross-chain fund bridge is required for the first multichain
+  phase.
+- **Shadow-account path SUPERSEDED / infrastructure-blocked (2026-09-10,
+  blocker V2-02).** Iwa's installed Wallet API types are `0.10.3` and expose no
+  shadow-account methods; no shipping browser wallet provides them on the target
+  network; there is no verified anonymizer deployment / governance. The route is
+  abandoned. Its RED tests are kept for security history and ignored/skipped in
+  CI (`test_private_destination_capability_v2.cairo` all `#[ignore]`;
+  `privateDestinationCapability.test.ts` six `it.skip`).
+- **Candidate P is the selected V2 private-payout path (2026-09-10).** The
+  scheduled member pre-registers a private destination note (amount from circle
+  state, destination bound by a member-auth-key signature, monotonic destination
+  epoch) before the STRK20 transaction is assembled; the V2 helper settles the
+  state-derived transfer into that note. No inline settlement signature, no
+  caller-supplied amount, no admin path, no assembly-time open-note ID to sign.
+  Production security matrix: `test_payout_settlement_v2.cairo`; real-pool
+  capability proof: `test_precommitted_note_payout_v2.cairo`.
+- **A1 confirmed (2026-09-10).** Ready X supports `wallet_addDeclareTransaction`
+  on Starknet mainnet — verified by a real request reaching the approval prompt.
+  The V2 mainnet declare/deploy will be done from the Ready X wallet (the
+  standard `sncast` deployer is blocked by an Argent guardian). No tx sent.
+- **V2 implementation status (2026-09-10).** V2 contracts (A2), the Cairo
+  security matrix (A3), the frontend payout path, and the Portable Trust
+  Credential are all implemented and tested. Not committed, not pushed, not
+  deployed. Pending: the declare/deploy, a real minimal-value mainnet proof,
+  rotation / private recovery hardening, external audit.
+- **Iwa Core is chain-neutral.** Core concepts are Circle, Member,
+  Contribution, Obligation, Payout, Standing, Credential, and Identity.
+  Implementations use `ChainAdapter`, `PaymentAdapter`, `PrivacyAdapter`, and
+  `CredentialVerifier` boundaries.
+- **Recovery stays member controlled and private.** Auth and destination epochs
+  are monotonic; only member identity proof rotates them; a fallback destination
+  is privately committed by the member and time locked; fresh member
+  authorization resets the timer. No organizer or admin recovery exists.
+- **Credentials remain owner bound.** Good Standing never launders a cured
+  `MissedDefault`. Circle Completion requires terminal accounting, membership in
+  the payout order, and the member's own verified successful private payout
+  (`PrivatelyPaid`) or private recovery (`PrivatelyRecovered`); `Scheduled`,
+  authorized, pending, public-payout, and `NoFundedRecovery` states never
+  qualify. Artifact integrity **and** a fresh, versioned, verifier-bound
+  proof-of-possession are both required; a copied JSON artifact is never
+  sufficient. Verification is fail-closed (Verified / Invalid / Unable to
+  verify); "Unable to verify" is never treated as valid. Good Standing must not
+  reveal raw contributions, balances, the member graph, the payout amount,
+  viewing keys, or full financial history.
+- **V1 and V2 remain separate.** Resource identity is `(contract address,
+  circle id)`, indexed models carry `protocol_version`, the config-pinned
+  registry is primary, and there is no migration, bridge, or V1 rewrite.
+- **Future chains use adapters.** Zama Prize Savings is a current EVM product
+  implementation. Celo, Nimiq, Base, and other integrations remain planned,
+  not shipped.
 
 Zama bounty MVP DRAW_TIMEOUT = 900 seconds (15 minutes).
 

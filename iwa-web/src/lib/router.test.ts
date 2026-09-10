@@ -45,6 +45,44 @@ describe("resolve", () => {
     expect(routeOf("/invite/abc123")).toEqual({ name: "invite", token: "abc123" });
   });
 
+  it("resolves the temporary dev note-id probe route and round-trips it", () => {
+    expect(routeOf("/dev/note-id-probe")).toEqual({ name: "devNoteIdProbe" });
+    expect(routeOf("/dev/note-id-probe/")).toEqual({ name: "devNoteIdProbe" });
+    expect(hrefFor({ name: "devNoteIdProbe" })).toBe("/dev/note-id-probe");
+    expect(routeOf(hrefFor({ name: "devNoteIdProbe" }))).toEqual({ name: "devNoteIdProbe" });
+  });
+
+  it("resolves the temporary dev V2 pot-collection route and round-trips it", () => {
+    expect(routeOf("/dev/v2-pot-collection")).toEqual({ name: "devV2PotCollection" });
+    expect(hrefFor({ name: "devV2PotCollection" })).toBe("/dev/v2-pot-collection");
+    expect(routeOf(hrefFor({ name: "devV2PotCollection" }))).toEqual({
+      name: "devV2PotCollection",
+    });
+  });
+
+  it("resolves the temporary dev V2 deploy-capability route and round-trips it", () => {
+    expect(routeOf("/dev/v2-deploy-capability")).toEqual({ name: "devV2DeployCapability" });
+    expect(hrefFor({ name: "devV2DeployCapability" })).toBe("/dev/v2-deploy-capability");
+    expect(routeOf(hrefFor({ name: "devV2DeployCapability" }))).toEqual({
+      name: "devV2DeployCapability",
+    });
+  });
+
+  it("resolves the temporary dev Portable Trust Credential route and round-trips it", () => {
+    expect(routeOf("/dev/credential")).toEqual({ name: "devCredential" });
+    expect(hrefFor({ name: "devCredential" })).toBe("/dev/credential");
+    expect(routeOf(hrefFor({ name: "devCredential" }))).toEqual({ name: "devCredential" });
+  });
+
+  it("refuses any other /dev path", () => {
+    expect(routeOf("/dev").name).toBe("notFound");
+    expect(routeOf("/dev/other").name).toBe("notFound");
+    expect(routeOf("/dev/note-id-probe/extra").name).toBe("notFound");
+    expect(routeOf("/dev/v2-pot-collection/extra").name).toBe("notFound");
+    expect(routeOf("/dev/v2-deploy-capability/extra").name).toBe("notFound");
+    expect(routeOf("/dev/credential/extra").name).toBe("notFound");
+  });
+
   it("decodes an invitation token that was percent-encoded", () => {
     expect(routeOf("/invite/a%2Bb")).toEqual({ name: "invite", token: "a+b" });
   });
