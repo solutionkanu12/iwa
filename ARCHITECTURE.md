@@ -169,6 +169,18 @@ Current implementation:
 - USDC
 - STRK
 
+### Celo
+
+Celo is a chain adapter for the same IWA product, not a separate product.
+
+Current adapter scope (`iwa-web/src/chains/celo/`):
+
+- Celo transaction send path
+- automatic ERC-8021 attribution tagging (`celo_448874a99d90`) via `@celo/attribution-tags`
+- untagged Celo sends are refused on the adapter path
+
+IWA Core remains chain-neutral. Attribution tagging is Celo-specific and must not leak into other adapters or the domain layer.
+
 ### Future EVM
 
 Potential implementation:

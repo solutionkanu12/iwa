@@ -11,6 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@celo/attribution-tags": "^0.3.0",
     "@starknet-io/get-starknet-discovery": "6.0.3",
     "@starknet-io/get-starknet-wallet-standard": "6.0.3",
     "@starknet-io/types-js": "0.10.3",
