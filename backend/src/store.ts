@@ -122,6 +122,54 @@ export interface CircleAssociation {
   acceptedAt: string | null;
 }
 
+// --- Chain-neutral member <-> account binding ---
+//
+// Separate from CircleDraft/DraftSlot on purpose: those are Starknet-shaped
+// (an on-chain integer circle id, a felt member commitment and settlement
+// key). A binding's circleId/memberRef/chain/account are opaque strings any
+// chain adapter can format, matching core/accountBinding.ts's
+// MemberAccountBinding on the frontend.
+
+export interface AccountBinding {
+  circleId: string;
+  memberRef: string;
+  chain: string;
+  account: string;
+  boundAt: string;
+}
+
+export interface CreateAccountBindInviteInput {
+  circleId: string;
+  memberRef: string;
+  chain: string;
+}
+
+export type CreateAccountBindInviteResult =
+  | { ok: true; inviteToken: string }
+  | { ok: false; reason: "already_invited" };
+
+export interface AcceptAccountBindInput {
+  inviteToken: string;
+  account: string;
+}
+
+/**
+ * memberRef/circleId/chain are never taken from the caller here — they come
+ * from whichever invite the token resolves to. A client cannot choose which
+ * member it is binding; it can only accept the one place its token names.
+ */
+export type AcceptAccountBindResult =
+  | { ok: true; binding: AccountBinding }
+  | { ok: false; reason: "unknown_invite" | "already_used" | "already_bound" };
+
+// --- Celo circle organizer authority ---
+//
+// First-claim, then immutable: see migrations/003_celo_circle_organizers.sql.
+
+export type EstablishCeloOrganizerResult =
+  | { ok: true; organizer: string }
+  | { ok: false; reason: "wrong_organizer" };
+
 export interface Store {
   createDraft(input: CreateDraftInput): Promise<CircleDraft>;
   getDraft(id: string): Promise<CircleDraft | null>;
@@ -134,6 +182,19 @@ export interface Store {
   reorderSlots(id: string, order: string[]): Promise<CircleDraft | null>;
   markCreated(id: string, circleId: number, txHash: string | null): Promise<CircleDraft | null>;
   abandonDraft(id: string): Promise<CircleDraft | null>;
+
+  /**
+   * Records `organizer` as the circle's organizer if none is recorded yet,
+   * or confirms it matches the one already recorded. Never overwrites a
+   * different existing organizer.
+   */
+  establishCeloCircleOrganizer(circleId: string, organizer: string): Promise<EstablishCeloOrganizerResult>;
+  /** Mints a single-use token that may bind exactly this (circleId, memberRef). */
+  createAccountBindInvite(input: CreateAccountBindInviteInput): Promise<CreateAccountBindInviteResult>;
+  /** Consumes an invite token, writing the binding it names. Never replaces an existing binding. */
+  acceptAccountBind(input: AcceptAccountBindInput): Promise<AcceptAccountBindResult>;
+  /** The durable fact, or null if this member has no registered account yet. */
+  getAccountBinding(circleId: string, memberRef: string): Promise<AccountBinding | null>;
 
   upsertIndexedCircle(circle: Omit<IndexedCircle, "updatedAt">): Promise<void>;
   listIndexedCircles(chainId: string): Promise<IndexedCircle[]>;
@@ -207,6 +268,12 @@ export class MemoryStore implements Store {
   private circles = new Map<string, IndexedCircle>();
   private events: CircleEvent[] = [];
   private cursors = new Map<string, { chainId: string; block: number }>();
+  private bindInvites = new Map<
+    string,
+    { circleId: string; memberRef: string; chain: string; inviteToken: string; usedAt: string | null }
+  >();
+  private bindings = new Map<string, AccountBinding>();
+  private celoOrganizers = new Map<string, string>();
 
   async createDraft(input: CreateDraftInput): Promise<CircleDraft> {
     const draft: CircleDraft = {
@@ -311,6 +378,56 @@ export class MemoryStore implements Store {
     if (!draft) return null;
     draft.status = "abandoned";
     return structuredClone(draft);
+  }
+
+  async establishCeloCircleOrganizer(
+    circleId: string,
+    organizer: string,
+  ): Promise<EstablishCeloOrganizerResult> {
+    const existing = this.celoOrganizers.get(circleId);
+    if (existing === undefined) {
+      this.celoOrganizers.set(circleId, organizer);
+      return { ok: true, organizer };
+    }
+    if (existing === organizer) return { ok: true, organizer };
+    return { ok: false, reason: "wrong_organizer" };
+  }
+
+  private static bindKey(circleId: string, memberRef: string): string {
+    return `${circleId} ${memberRef}`;
+  }
+
+  async createAccountBindInvite(
+    input: CreateAccountBindInviteInput,
+  ): Promise<CreateAccountBindInviteResult> {
+    const key = MemoryStore.bindKey(input.circleId, input.memberRef);
+    if (this.bindInvites.has(key)) return { ok: false, reason: "already_invited" };
+    const inviteToken = newInviteToken();
+    this.bindInvites.set(key, { ...input, inviteToken, usedAt: null });
+    return { ok: true, inviteToken };
+  }
+
+  async acceptAccountBind(input: AcceptAccountBindInput): Promise<AcceptAccountBindResult> {
+    const entry = [...this.bindInvites.values()].find((i) => i.inviteToken === input.inviteToken);
+    if (entry === undefined) return { ok: false, reason: "unknown_invite" };
+    if (entry.usedAt !== null) return { ok: false, reason: "already_used" };
+    const key = MemoryStore.bindKey(entry.circleId, entry.memberRef);
+    if (this.bindings.has(key)) return { ok: false, reason: "already_bound" };
+
+    entry.usedAt = new Date().toISOString();
+    const binding: AccountBinding = {
+      circleId: entry.circleId,
+      memberRef: entry.memberRef,
+      chain: entry.chain,
+      account: input.account,
+      boundAt: entry.usedAt,
+    };
+    this.bindings.set(key, binding);
+    return { ok: true, binding };
+  }
+
+  async getAccountBinding(circleId: string, memberRef: string): Promise<AccountBinding | null> {
+    return this.bindings.get(MemoryStore.bindKey(circleId, memberRef)) ?? null;
   }
 
   async upsertIndexedCircle(circle: Omit<IndexedCircle, "updatedAt">): Promise<void> {

@@ -227,6 +227,69 @@ The signed contribution authorization is domain-separated with
 `amount`, and `nonce`. It is not bound to `get_caller_address()` and must not
 contain a wallet private key, viewing key, or invite secret.
 
+## Celo member/account binding
+
+The Celo contribution flow (`iwa-web/src/chains/celo/contribution.ts`) must prove the connected
+wallet is the one bound to the `memberRef` it is about to act as, before preparing or submitting
+any contribution. `core/accountBinding.ts` defines the chain-neutral contract
+(`MemberAccountBinding`, `MemberAccountDirectory`, `assertBoundAccount`); the durable
+implementation is backed by the backend (`backend/migrations/002_account_bindings.sql`,
+`backend/src/store.ts`'s `account_bindings`/`account_bind_invites`), reached over HTTP by
+`iwa-web/src/lib/accountDirectory.ts`.
+
+Fail-closed properties, all verified by tests:
+
+- no binding for a member: refused
+- wrong wallet, wrong chain, or wrong `memberRef`: refused
+- a lookup that fails outright (network error, non-2xx, malformed response) is distinguished from a
+  confirmed absence — it throws rather than resolving to a value that could be mistaken for "no
+  binding" — but both outcomes refuse the action; neither is treated as an allow
+- a binding is never overwritten: `acceptAccountBind` is the only writer, it is single-use per
+  invite token, and an existing binding blocks a second write rather than being replaced
+
+Binding an account is gated by holding a valid, single-use invite token (the same security shape
+as `draft_slots.invite_token`), which stops an unauthenticated client from binding an arbitrary
+`memberRef`/account pair.
+
+### Celo organizer authorization for `POST /api/account-bindings/invites`
+
+**Closed.** Minting a bind invite now requires an EIP-712 signature from the circle's recorded
+organizer, verified server-side in `backend/src/celoAuth.ts`/`celoAuthBinding.ts` — a Celo/EVM
+equivalent of the Starknet draft flow's `draftCreate` signature gate
+(`auth.ts`/`authBinding.ts`), built as its own scheme rather than reusing SNIP-12/felt assumptions
+that don't apply to standard EOA ECDSA signatures.
+
+**Scheme:** `ethers.verifyTypedData` recovers the signer from a typed-data structure with domain
+`{name: "Iwa-Celo", version: "1", chainId: 42220}` and type `AccountBindingInviteAuthorization =
+[action, circleId, memberRef, organizer, nonce, expiresAt]`. The domain's `chainId` is a hardcoded
+server-side constant, not a client-supplied field — there is no way to submit a signature meant for
+another chain id, because verification always recomputes the hash against 42220 regardless of what
+was signed, so a mismatched signature simply fails to recover the claimed address. `circleId` and
+`memberRef` used for recovery are taken from the same top-level request fields the route is already
+acting on, never from a second, client-suppliable copy inside the authorization — mirroring
+`authBinding.ts`'s own stated principle that the server derives every bound value itself.
+
+**Organizer authority:** first-claim. The first wallet to present a valid signature for a given
+`circleId` is recorded in `celo_circle_organizers` (`backend/migrations/003_celo_circle_organizers.sql`)
+and every later invite-mint for that `circleId` must be signed by the same wallet
+(`establishCeloCircleOrganizer`, race-safe via the table's primary key under Postgres and via
+single-threaded Map semantics under `MemoryStore`). This is a coordination record, not an on-chain
+fact — it does not verify that the recorded wallet actually deployed `IwaCircleCelo` at that
+address. Closing that would mean on-chain deployment verification mirroring `chainVerify.ts`'s
+Starknet pattern; not built here, and invite-minting remains unwired from any public organizer UI
+in the meantime, so the gap has no live exposure yet.
+
+**Replay protection:** the client picks its own 32-byte nonce; the server consumes it exactly once
+per organizer address (`CeloAuthNonceStore`), in-process, matching this service's documented
+single-replica deployment (`session.ts`). A signed authorization also expires within 5 minutes
+(`CELO_AUTH_MAX_TTL_SECONDS`) and is rejected outright if its own claimed window is longer than
+that, bounding how long a captured-but-unused signature stays dangerous.
+
+**Fail-closed on:** missing authorization, malformed fields, an unrecoverable signature, a signer
+that doesn't match the claimed organizer, an expired or over-long validity window, a reused nonce,
+and a wallet that isn't the circle's recorded organizer. None of these responses include the
+recorded organizer's address or any other circle/member detail beyond the generic reason code.
+
 ## Asset allowlist
 
 First release:

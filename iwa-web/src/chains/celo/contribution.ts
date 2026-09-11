@@ -106,7 +106,7 @@ export class CeloContributionService {
     const identity = this.celoIdentity(payerAddr);
     // Fail closed before any RPC read: the connected wallet must be the one
     // registered for this member on this circle.
-    assertBoundAccount(
+    await assertBoundAccount(
       this.accounts,
       circle.id,
       obligation.memberRef,
@@ -147,7 +147,7 @@ export class CeloContributionService {
     assertExplicitConfirmation(prepared.action, confirmation);
     this.agent.requireConfirmation(prepared.action, confirmation);
     this.assertCircleBinding(circle);
-    this.assertPreparedFrozen(prepared, obligation);
+    await this.assertPreparedFrozen(prepared, obligation);
     await this.requireMainnet();
 
     if (this.history.get(circle.id, obligation.round, obligation.memberRef)) {
@@ -205,10 +205,10 @@ export class CeloContributionService {
     }
   }
 
-  private assertPreparedFrozen(
+  private async assertPreparedFrozen(
     prepared: PreparedCeloContribution,
     obligation: ContributionObligation,
-  ): void {
+  ): Promise<void> {
     if (prepared.action.request.circleId !== this.binding.circleId) {
       throw new Error("Contribution refused: prepared circle does not match");
     }
@@ -250,7 +250,7 @@ export class CeloContributionService {
     }
     // Re-verify the member/account binding itself, in case the directory
     // changed (e.g. was revoked) between prepare() and submit().
-    assertBoundAccount(
+    await assertBoundAccount(
       this.accounts,
       this.binding.circleId,
       obligation.memberRef,

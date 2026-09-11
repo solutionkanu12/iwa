@@ -31,7 +31,10 @@ import {
   type ChainHealthReader,
 } from "./admin.js";
 import {
+  acceptAccountBindSchema,
   acceptInviteSchema,
+  CHAIN_NEUTRAL_ID,
+  createAccountBindInviteSchema,
   isInviteToken,
   isUuid,
   assertNoSecrets,
@@ -43,6 +46,12 @@ import {
   reorderSchema,
   SN_MAIN,
 } from "./validation.js";
+import {
+  CeloAuthNonceStore,
+  CELO_AUTH_MESSAGES,
+  verifyCeloOrganizerAuthorization,
+} from "./celoAuth.js";
+import { CELO_AUTH_ACTIONS } from "./celoAuthBinding.js";
 
 /**
  * The headers an authenticated organizer request carries, in the order
@@ -82,6 +91,8 @@ export interface AppOptions {
   circleVerifier: CircleVerifier;
   challenges?: ChallengeStore;
   sessions?: SessionStore;
+  /** One-time Celo/EVM organizer-authorization nonces. Injected so tests control the clock. */
+  celoNonces?: CeloAuthNonceStore;
   /**
    * Wallets allowed to read the operator dashboard. Absent or empty means the
    * admin API allows nobody, which is how an unconfigured deployment stays
@@ -232,6 +243,7 @@ export function createApp(options: AppOptions): Express {
 
   const challenges = options.challenges ?? new ChallengeStore(now);
   const sessions = options.sessions ?? new SessionStore(now);
+  const celoNonces = options.celoNonces ?? new CeloAuthNonceStore(now);
   const verifier = options.verifier;
   const circleVerifier = options.circleVerifier;
   const admins = new AdminAllowlist(options.adminAddresses ?? []);
@@ -680,6 +692,110 @@ export function createApp(options: AppOptions): Express {
         slotIndex: result.slotIndex,
         draft: draftFor(result.draft, "public"),
       });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  // --- chain-neutral account bindings ---
+  //
+  // Separate from the Starknet drafts/invites above: circleId/memberRef here
+  // are opaque strings for any chain adapter (Celo today), not a Starknet
+  // draft id and felt commitment. Binding itself is fully gated: a caller
+  // without a valid, unused invite token cannot create a binding for any
+  // member at all, and an existing binding is never overwritten.
+
+  app.post("/api/account-bindings/invites", async (req, res, next) => {
+    if (!mutate(req, res)) return;
+    const parsed = createAccountBindInviteSchema.safeParse(req.body);
+    if (!parsed.success) return badRequest(res, parsed.error.issues);
+    // The signed authorization is verified against exactly this request's
+    // circleId/memberRef — never against a second, client-supplied copy —
+    // so a valid signature for one circle/member cannot be replayed for
+    // another by changing the outer fields.
+    const auth = verifyCeloOrganizerAuthorization(
+      CELO_AUTH_ACTIONS.accountBindingInvite,
+      parsed.data.circleId,
+      parsed.data.memberRef,
+      parsed.data.authorization,
+      celoNonces,
+      now,
+    );
+    if (!auth.ok) {
+      return res.status(401).json({ error: auth.reason, message: CELO_AUTH_MESSAGES[auth.reason] });
+    }
+    try {
+      const organizerCheck = await store.establishCeloCircleOrganizer(
+        parsed.data.circleId,
+        auth.organizer,
+      );
+      if (!organizerCheck.ok) {
+        return res.status(403).json({
+          error: "not_organizer",
+          message: "This wallet is not the recorded organizer for this circle.",
+        });
+      }
+      const result = await store.createAccountBindInvite({
+        circleId: parsed.data.circleId,
+        memberRef: parsed.data.memberRef,
+        chain: parsed.data.chain,
+      });
+      if (!result.ok) {
+        return res.status(409).json({
+          error: result.reason,
+          message: "A binding invite already exists for this member.",
+        });
+      }
+      res.json({ inviteToken: result.inviteToken });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  app.post("/api/account-bindings/accept", async (req, res, next) => {
+    if (!mutate(req, res)) return;
+    const parsed = acceptAccountBindSchema.safeParse(req.body);
+    if (!parsed.success) return badRequest(res, parsed.error.issues);
+    try {
+      const result = await store.acceptAccountBind(parsed.data);
+      if (!result.ok) {
+        const messages: Record<string, string> = {
+          unknown_invite: "This binding invite is not valid.",
+          already_used: "This binding invite has already been used.",
+          already_bound: "This member already has a registered account.",
+        };
+        return res.status(409).json({ error: result.reason, message: messages[result.reason] });
+      }
+      res.json({ binding: result.binding });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  /**
+   * Verifies a claimed identity; does not disclose one. A caller names the
+   * chain/account it already believes is bound, and the response is
+   * identical (404) whether the member has no binding at all or a different
+   * one — nobody can learn who really holds a member's place by guessing.
+   */
+  app.get("/api/account-bindings/:circleId/:memberRef", async (req, res, next) => {
+    const { circleId, memberRef } = req.params;
+    const chain = typeof req.query.chain === "string" ? req.query.chain : "";
+    const account = typeof req.query.account === "string" ? req.query.account : "";
+    if (
+      !CHAIN_NEUTRAL_ID.test(circleId) ||
+      !CHAIN_NEUTRAL_ID.test(memberRef) ||
+      !CHAIN_NEUTRAL_ID.test(chain) ||
+      !CHAIN_NEUTRAL_ID.test(account)
+    ) {
+      return res.status(404).json({ error: "not_found" });
+    }
+    try {
+      const binding = await store.getAccountBinding(circleId, memberRef);
+      if (binding === null || binding.chain !== chain || binding.account !== account) {
+        return res.status(404).json({ error: "not_found" });
+      }
+      res.json({ binding });
     } catch (e) {
       next(e);
     }

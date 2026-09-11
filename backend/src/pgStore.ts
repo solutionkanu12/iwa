@@ -11,13 +11,19 @@ import {
   associationFor,
   deriveStatus,
   newInviteToken,
+  type AcceptAccountBindInput,
+  type AcceptAccountBindResult,
   type AcceptInput,
   type AcceptResult,
+  type AccountBinding,
   type CircleAssociation,
   type CircleDraft,
   type CircleEvent,
+  type CreateAccountBindInviteInput,
+  type CreateAccountBindInviteResult,
   type CreateDraftInput,
   type DraftSlot,
+  type EstablishCeloOrganizerResult,
   type IndexedCircle,
   type Store,
 } from "./store.js";
@@ -327,6 +333,145 @@ export class PgStore implements Store {
     );
     if (r.rowCount === 0) return null;
     return this.loadDraft(this.pool, id);
+  }
+
+  /**
+   * First-claim, race-safe via the table's own primary key: under
+   * concurrent inserts for the same circle_id, Postgres lets exactly one
+   * commit and the rest fall through to ON CONFLICT, so the follow-up read
+   * always reflects the true winner rather than a value this process
+   * guessed at.
+   */
+  async establishCeloCircleOrganizer(
+    circleId: string,
+    organizer: string,
+  ): Promise<EstablishCeloOrganizerResult> {
+    const inserted = await this.pool.query<{ organizer: string }>(
+      `INSERT INTO celo_circle_organizers (circle_id, organizer)
+       VALUES ($1, $2)
+       ON CONFLICT (circle_id) DO NOTHING
+       RETURNING organizer`,
+      [circleId, organizer],
+    );
+    if ((inserted.rowCount ?? 0) > 0) {
+      return { ok: true, organizer };
+    }
+    const existing = await this.pool.query<{ organizer: string }>(
+      "SELECT organizer FROM celo_circle_organizers WHERE circle_id = $1",
+      [circleId],
+    );
+    if (existing.rows[0]?.organizer === organizer) {
+      return { ok: true, organizer };
+    }
+    return { ok: false, reason: "wrong_organizer" };
+  }
+
+  async createAccountBindInvite(
+    input: CreateAccountBindInviteInput,
+  ): Promise<CreateAccountBindInviteResult> {
+    const inviteToken = newInviteToken();
+    try {
+      await this.pool.query(
+        `INSERT INTO account_bind_invites (circle_id, member_ref, chain, invite_token)
+         VALUES ($1, $2, $3, $4)`,
+        [input.circleId, input.memberRef, input.chain, inviteToken],
+      );
+      return { ok: true, inviteToken };
+    } catch (e) {
+      // Primary key violation: an invite already exists for this member.
+      if ((e as { code?: string }).code === "23505") {
+        return { ok: false, reason: "already_invited" };
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Claims a binding atomically. The invite row is locked first so two
+   * requests racing the same token cannot both succeed, and the insert into
+   * account_bindings is guarded by its own primary key so a binding can
+   * never be silently overwritten even if this method were ever called
+   * twice for the same member by mistake.
+   */
+  async acceptAccountBind(input: AcceptAccountBindInput): Promise<AcceptAccountBindResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const invite = await client.query<{
+        circle_id: string;
+        member_ref: string;
+        chain: string;
+        used_at: Date | null;
+      }>("SELECT * FROM account_bind_invites WHERE invite_token = $1 FOR UPDATE", [
+        input.inviteToken,
+      ]);
+      if (invite.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return { ok: false, reason: "unknown_invite" };
+      }
+      const row = invite.rows[0];
+      if (row.used_at !== null) {
+        await client.query("ROLLBACK");
+        return { ok: false, reason: "already_used" };
+      }
+
+      const inserted = await client.query<{ bound_at: Date }>(
+        `INSERT INTO account_bindings (circle_id, member_ref, chain, account)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (circle_id, member_ref) DO NOTHING
+         RETURNING bound_at`,
+        [row.circle_id, row.member_ref, row.chain, input.account],
+      );
+      if (inserted.rowCount === 0) {
+        // A binding already exists for this member. The invite is not
+        // consumed: the caller learns the real reason rather than being told
+        // their invite worked when it did not change anything.
+        await client.query("ROLLBACK");
+        return { ok: false, reason: "already_bound" };
+      }
+
+      await client.query("UPDATE account_bind_invites SET used_at = now() WHERE invite_token = $1", [
+        input.inviteToken,
+      ]);
+      await client.query("COMMIT");
+      return {
+        ok: true,
+        binding: {
+          circleId: row.circle_id,
+          memberRef: row.member_ref,
+          chain: row.chain,
+          account: input.account,
+          boundAt: inserted.rows[0].bound_at.toISOString(),
+        },
+      };
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  async getAccountBinding(circleId: string, memberRef: string): Promise<AccountBinding | null> {
+    const r = await this.pool.query<{
+      circle_id: string;
+      member_ref: string;
+      chain: string;
+      account: string;
+      bound_at: Date;
+    }>("SELECT * FROM account_bindings WHERE circle_id = $1 AND member_ref = $2", [
+      circleId,
+      memberRef,
+    ]);
+    if (r.rowCount === 0) return null;
+    const row = r.rows[0];
+    return {
+      circleId: row.circle_id,
+      memberRef: row.member_ref,
+      chain: row.chain,
+      account: row.account,
+      boundAt: row.bound_at.toISOString(),
+    };
   }
 
   async upsertIndexedCircle(c: Omit<IndexedCircle, "updatedAt">): Promise<void> {

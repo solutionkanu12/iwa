@@ -169,3 +169,57 @@ export const markCreatedSchema = z.object({
   circleId: z.number().int().positive(),
   txHash: felt,
 });
+
+// --- Chain-neutral account-binding schemas ---
+//
+// Unlike every schema above, these are NOT Starknet-specific: `chain` and
+// `account` are opaque identifiers a chain adapter formats (e.g.
+// "celo:42220" / "celo:0x..."), matching core/accountBinding.ts's
+// MemberAccountBinding on the frontend. This service stays chain-neutral
+// even though only Celo uses this table today.
+
+export const CHAIN_NEUTRAL_ID = /^[A-Za-z0-9:_-]{1,128}$/;
+
+export const chainNeutralId = z
+  .string()
+  .regex(CHAIN_NEUTRAL_ID, "must be a short opaque identifier");
+
+/**
+ * A signed Celo/EVM organizer authorization, carried in the request body
+ * rather than headers: a different transport from the Starknet x-iwa-*
+ * scheme, on purpose, so the two credential shapes can never be confused for
+ * each other by a route that reads the wrong one.
+ */
+export const celoOrganizerAuthorizationSchema = z.object({
+  organizer: z.string().regex(/^0x[0-9a-fA-F]{40}$/, "must be a 20-byte EVM address"),
+  nonce: z.string().regex(/^0x[0-9a-fA-F]{64}$/, "must be a 32-byte hex nonce"),
+  expiresAt: z.number().int().positive(),
+  signature: z.string().regex(/^0x[0-9a-fA-F]{130}$/, "must be a 65-byte hex ECDSA signature"),
+});
+
+/**
+ * Mints a single-use token for exactly one (circleId, memberRef). Naming
+ * which chain this invite is for prevents an invite minted for one chain
+ * adapter from being silently reused by another.
+ *
+ * `authorization` is required today because Celo is the only chain that
+ * calls this route; a second chain adapter would need its own signed-
+ * authorization shape and its own dispatch here, not a relaxation of this
+ * one.
+ */
+export const createAccountBindInviteSchema = z.object({
+  circleId: chainNeutralId,
+  memberRef: chainNeutralId,
+  chain: chainNeutralId,
+  authorization: celoOrganizerAuthorizationSchema,
+});
+
+/**
+ * circleId/memberRef/chain are deliberately absent: they come from whichever
+ * invite the token names, never from the caller. A client cannot choose
+ * which member it is binding by supplying one directly.
+ */
+export const acceptAccountBindSchema = z.object({
+  inviteToken: z.string().min(16).max(128).regex(/^[A-Za-z0-9_-]+$/),
+  account: chainNeutralId,
+});

@@ -606,6 +606,38 @@ Allowed responsibilities:
 
 It must not become the source of truth for private financial state.
 
+### Chain-neutral member/account binding
+
+`account_bind_invites` and `account_bindings` (`backend/migrations/002_account_bindings.sql`)
+are a deliberately separate table pair from `circle_drafts`/`draft_slots`: those are
+Starknet-shaped (an on-chain integer circle id, a felt member commitment and settlement key),
+while a binding's `circleId`/`memberRef`/`chain`/`account` are opaque strings any chain adapter
+can format. This is the production backing for the frontend's `MemberAccountDirectory`
+(`iwa-web/src/core/accountBinding.ts`), used today by the Celo adapter
+(`iwa-web/src/lib/accountDirectory.ts`, `iwa-web/src/chains/celo/compose.ts`) and reusable by any
+future chain adapter without a schema change.
+
+A binding is created only by consuming a single-use, per-`(circleId, memberRef)` invite token
+(`POST /api/account-bindings/invites` mints it, `POST /api/account-bindings/accept` consumes it),
+mirroring `draft_slots.invite_token`'s security shape. `memberRef` is never accepted directly from
+a client at bind time — only from whichever invite the token names — so a client cannot choose
+which member it is binding. Once written, a binding has no update path anywhere in `Store`: the
+only way to change one is a direct operator action outside the API surface.
+
+Minting an invite additionally requires a signed EIP-712 authorization from the circle's Celo/EVM
+organizer, verified in `backend/src/celoAuth.ts`/`celoAuthBinding.ts` — a Celo-specific scheme
+alongside (not built on) the Starknet `auth.ts`/`authBinding.ts` machinery, since standard EOA
+ECDSA signatures verify off-chain and don't need Starknet's on-chain `is_valid_signature` call or
+SNIP-12 felt encoding. Organizer authority itself is first-claim, recorded in
+`celo_circle_organizers` (`backend/migrations/003_celo_circle_organizers.sql`). See `SECURITY.md`'s
+"Celo member/account binding" for the full scheme and its accepted residual limitation (organizer
+authority is a coordination record, not verified against on-chain deployment).
+
+The read path (`GET /api/account-bindings/:circleId/:memberRef?chain=&account=`) verifies a
+claimed identity rather than disclosing one: a caller must already name the exact chain/account it
+believes is bound, and the response is identical (404) whether the member has no binding at all or
+a different one, so nobody can learn who holds a member's place by guessing.
+
 ## Backend privacy boundary
 
 Never store:

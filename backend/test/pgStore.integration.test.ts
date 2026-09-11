@@ -56,18 +56,32 @@ suite("PgStore against a real Postgres", () => {
     // Fresh schema every run so a failed run cannot poison the next.
     await pool.query(`
       DROP TABLE IF EXISTS circle_events, draft_slots, circle_drafts,
-        indexed_circles, sync_cursor, schema_migrations CASCADE
+        indexed_circles, sync_cursor, schema_migrations,
+        account_bind_invites, account_bindings, celo_circle_organizers CASCADE
     `);
     const sql = readFileSync(resolve(HERE, "../migrations/001_init.sql"), "utf8");
     await pool.query(sql);
+    const bindingsSql = readFileSync(
+      resolve(HERE, "../migrations/002_account_bindings.sql"),
+      "utf8",
+    );
+    await pool.query(bindingsSql);
+    const organizersSql = readFileSync(
+      resolve(HERE, "../migrations/003_celo_circle_organizers.sql"),
+      "utf8",
+    );
+    await pool.query(organizersSql);
     // Mirror production: RLS on, no policies. The backend connects as the
     // table owner and bypasses it; anon and authenticated get nothing.
     await pool.query(`
-      ALTER TABLE public.circle_drafts    ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE public.draft_slots      ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE public.indexed_circles  ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE public.circle_events    ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE public.sync_cursor      ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.circle_drafts          ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.draft_slots            ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.indexed_circles        ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.circle_events          ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.sync_cursor            ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.account_bind_invites   ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.account_bindings       ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.celo_circle_organizers ENABLE ROW LEVEL SECURITY;
     `);
     store = new PgStore(DATABASE_URL as string, false);
   });
@@ -81,7 +95,8 @@ suite("PgStore against a real Postgres", () => {
   beforeEach(async () => {
     await pool.query(
       `TRUNCATE circle_events, draft_slots, circle_drafts, indexed_circles,
-         sync_cursor RESTART IDENTITY CASCADE`,
+         sync_cursor, account_bind_invites, account_bindings, celo_circle_organizers
+         RESTART IDENTITY CASCADE`,
     );
   });
 
@@ -95,9 +110,93 @@ suite("PgStore against a real Postgres", () => {
       `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`,
     );
     const tables = r.rows.map((x) => x.table_name);
-    for (const t of ["circle_drafts", "draft_slots", "indexed_circles", "circle_events", "sync_cursor"]) {
+    for (const t of [
+      "circle_drafts",
+      "draft_slots",
+      "indexed_circles",
+      "circle_events",
+      "sync_cursor",
+      "account_bind_invites",
+      "account_bindings",
+      "celo_circle_organizers",
+    ]) {
       expect(tables).toContain(t);
     }
+  });
+
+  it("first claim establishes a Celo circle's organizer, race-safe under Postgres's own conflict handling", async () => {
+    const circleId = "0xceloCircleOrganizer1";
+    const organizerA = "celo:0x00000000000000000000000000000000000000aa";
+    const organizerB = "celo:0x00000000000000000000000000000000000000bb";
+
+    const [a, b] = await Promise.all([
+      store.establishCeloCircleOrganizer(circleId, organizerA),
+      store.establishCeloCircleOrganizer(circleId, organizerB),
+    ]);
+    const wins = [a, b].filter((r) => r.ok);
+    const losses = [a, b].filter((r) => !r.ok);
+    expect(wins).toHaveLength(1);
+    expect(losses).toHaveLength(1);
+
+    // Re-establishing with the winning organizer is idempotent.
+    const winner = wins[0]!.ok ? wins[0].organizer : "";
+    const again = await store.establishCeloCircleOrganizer(circleId, winner);
+    expect(again).toEqual({ ok: true, organizer: winner });
+  });
+
+  it("mints an account-bind invite and accepts it into a durable binding", async () => {
+    const circleId = "0xceloCircle1";
+    const memberRef = "m1";
+    const chain = "celo:42220";
+    const account = "celo:0x00000000000000000000000000000000000000aa";
+
+    const invite = await store.createAccountBindInvite({ circleId, memberRef, chain });
+    expect(invite.ok).toBe(true);
+    if (!invite.ok) throw new Error("unreachable");
+
+    const accepted = await store.acceptAccountBind({ inviteToken: invite.inviteToken, account });
+    expect(accepted).toEqual({
+      ok: true,
+      binding: expect.objectContaining({ circleId, memberRef, chain, account }),
+    });
+
+    const resolved = await store.getAccountBinding(circleId, memberRef);
+    expect(resolved).toEqual(expect.objectContaining({ circleId, memberRef, chain, account }));
+  });
+
+  it("does not let a second invite or a replayed token silently replace a binding", async () => {
+    const circleId = "0xceloCircle2";
+    const memberRef = "m1";
+    const chain = "celo:42220";
+
+    const invite = await store.createAccountBindInvite({ circleId, memberRef, chain });
+    if (!invite.ok) throw new Error("unreachable");
+
+    const duplicateInvite = await store.createAccountBindInvite({ circleId, memberRef, chain });
+    expect(duplicateInvite).toEqual({ ok: false, reason: "already_invited" });
+
+    const first = await store.acceptAccountBind({
+      inviteToken: invite.inviteToken,
+      account: "celo:0x00000000000000000000000000000000000000aa",
+    });
+    expect(first.ok).toBe(true);
+
+    const replay = await store.acceptAccountBind({
+      inviteToken: invite.inviteToken,
+      account: "celo:0x00000000000000000000000000000000000000bb",
+    });
+    expect(replay).toEqual({ ok: false, reason: "already_used" });
+
+    const stillOriginal = await store.getAccountBinding(circleId, memberRef);
+    expect(stillOriginal?.account).toBe("celo:0x00000000000000000000000000000000000000aa");
+  });
+
+  it("rejects binding with an unknown/guessed token", async () => {
+    const result = await store.acceptAccountBind({
+      inviteToken: "guessed-token-value-that-was-never-issued",
+      account: "celo:0x00000000000000000000000000000000000000aa",
+    });
+    expect(result).toEqual({ ok: false, reason: "unknown_invite" });
   });
 
   it("creates a draft with one invite per place", async () => {
