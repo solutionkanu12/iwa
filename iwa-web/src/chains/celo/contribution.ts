@@ -5,6 +5,10 @@
 
 import { fromDataSuffix } from "@celo/attribution-tags";
 
+import {
+  assertBoundAccount,
+  type MemberAccountDirectory,
+} from "../../core/accountBinding";
 import { ContributionHistory } from "../../core/contributionHistory";
 import type { Circle, ContributionObligation } from "../../core/domain/types";
 import { IwaSavingsAgent } from "../../core/savingsAgent";
@@ -56,10 +60,26 @@ export class CeloContributionService {
     private readonly binding: CeloCircleBinding,
     provider: CeloProviderLike,
     private readonly history: ContributionHistory,
+    /** Chain-neutral member→account directory. Fail-closed: an unregistered
+     *  or mismatched member/account pair is refused before any RPC read. */
+    private readonly accounts: MemberAccountDirectory,
   ) {
     assertCeloCngnBinding(binding);
     this.provider = wrapCeloProvider(provider);
     this.txs = new CeloTransactionAdapter(this.provider);
+  }
+
+  /** Opaque, adapter-formatted identity components bound into every action. */
+  private celoIdentity(payerAddr: string): {
+    accountRef: string;
+    chainRef: string;
+    assetRef: string;
+  } {
+    return {
+      accountRef: `celo:${payerAddr}`,
+      chainRef: `celo:${CELO_MAINNET.chainIdNumber}`,
+      assetRef: `celo:${CNGN_MAINNET.address.toLowerCase()}`,
+    };
   }
 
   get taggedProvider(): CeloProviderLike {
@@ -82,14 +102,24 @@ export class CeloContributionService {
     payer: string,
   ): Promise<PreparedCeloContribution> {
     this.assertCircleBinding(circle);
-    const action = this.agent.prepareContribution(circle, obligation);
+    const payerAddr = normalizeAddress(payer);
+    const identity = this.celoIdentity(payerAddr);
+    // Fail closed before any RPC read: the connected wallet must be the one
+    // registered for this member on this circle.
+    assertBoundAccount(
+      this.accounts,
+      circle.id,
+      obligation.memberRef,
+      identity.chainRef,
+      identity.accountRef,
+    );
+    const action = this.agent.prepareContribution(circle, obligation, identity);
     if (action.request.amount !== this.binding.contributionAmount) {
       throw new Error("Contribution refused: amount is not the bound circle amount");
     }
     if (action.request.recipientRef !== circleSettlementRef(circle.id)) {
       throw new Error("Contribution refused: settlement recipient is not the circle contract");
     }
-    const payerAddr = normalizeAddress(payer);
     const circleContract = normalizeAddress(this.binding.circleContract);
     const balance = await this.readBalance(payerAddr);
     const amount = parseBaseUnits(action.request.amount);
@@ -203,6 +233,30 @@ export class CeloContributionService {
     if (prepared.payer !== normalizeAddress(prepared.payer)) {
       throw new Error("Contribution refused: payer is invalid");
     }
+    // Re-derive the identity from the payer/binding actually present on the
+    // object about to execute, and require it to still equal what was
+    // frozen into the action at prepare() time. actionId equality alone
+    // only proves the confirmation matches the pristine prepared action; it
+    // does not stop a caller mutating the JS object's fields afterward.
+    const identity = this.celoIdentity(prepared.payer);
+    if (prepared.action.request.accountRef !== identity.accountRef) {
+      throw new Error("Contribution refused: wallet override is not allowed");
+    }
+    if (prepared.action.request.chainRef !== identity.chainRef) {
+      throw new Error("Contribution refused: chain override is not allowed");
+    }
+    if (prepared.action.request.assetRef !== identity.assetRef) {
+      throw new Error("Contribution refused: asset override is not allowed");
+    }
+    // Re-verify the member/account binding itself, in case the directory
+    // changed (e.g. was revoked) between prepare() and submit().
+    assertBoundAccount(
+      this.accounts,
+      this.binding.circleId,
+      obligation.memberRef,
+      identity.chainRef,
+      identity.accountRef,
+    );
   }
 
   private async requireMainnet(): Promise<void> {

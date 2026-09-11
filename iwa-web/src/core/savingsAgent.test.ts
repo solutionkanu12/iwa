@@ -31,6 +31,8 @@ const payout: PayoutState = {
   status: "SCHEDULED",
 };
 
+const IDENTITY = { accountRef: "chain:0xaa", chainRef: "chain:1", assetRef: "chain:token" };
+
 describe("IwaSavingsAgent", () => {
   const agent = new IwaSavingsAgent();
 
@@ -55,29 +57,55 @@ describe("IwaSavingsAgent", () => {
     );
   });
 
-  it("prepares an authorized contribution bound to the circle amount and settlement contract", () => {
-    const prepared = agent.prepareContribution(circle, obligation);
+  it("prepares an authorized contribution bound to the circle amount, settlement contract, and identity", () => {
+    const prepared = agent.prepareContribution(circle, obligation, IDENTITY);
     expect(prepared.request.amount).toBe("5000000");
     expect(prepared.request.recipientRef).toBe(circleSettlementRef("circle-1"));
     expect(prepared.request.memberRef).toBe("m1");
+    expect(prepared.request.accountRef).toBe(IDENTITY.accountRef);
+    expect(prepared.request.chainRef).toBe(IDENTITY.chainRef);
+    expect(prepared.request.assetRef).toBe(IDENTITY.assetRef);
     expect(prepared.requiresApproval).toBe(true);
+  });
+
+  it("binds a different actionId when the account, chain, or asset identity differs", () => {
+    const base = agent.prepareContribution(circle, obligation, IDENTITY);
+    const otherAccount = agent.prepareContribution(circle, obligation, {
+      ...IDENTITY,
+      accountRef: "chain:0xbb",
+    });
+    const otherChain = agent.prepareContribution(circle, obligation, {
+      ...IDENTITY,
+      chainRef: "chain:2",
+    });
+    const otherAsset = agent.prepareContribution(circle, obligation, {
+      ...IDENTITY,
+      assetRef: "chain:other-token",
+    });
+    expect(otherAccount.actionId).not.toBe(base.actionId);
+    expect(otherChain.actionId).not.toBe(base.actionId);
+    expect(otherAsset.actionId).not.toBe(base.actionId);
   });
 
   it("refuses to prepare for the wrong circle, round, member, or status", () => {
     expect(() =>
-      agent.prepareContribution(circle, { ...obligation, circleId: "other" }),
+      agent.prepareContribution(circle, { ...obligation, circleId: "other" }, IDENTITY),
     ).toThrow(/circle/);
     expect(() =>
-      agent.prepareContribution(circle, { ...obligation, round: 2 }),
+      agent.prepareContribution(circle, { ...obligation, round: 2 }, IDENTITY),
     ).toThrow(/round/);
     expect(() =>
-      agent.prepareContribution(circle, { ...obligation, memberRef: "stranger" }),
+      agent.prepareContribution(circle, { ...obligation, memberRef: "stranger" }, IDENTITY),
     ).toThrow(/member/);
     expect(() =>
-      agent.prepareContribution(circle, { ...obligation, status: "ON_TIME" }),
+      agent.prepareContribution(circle, { ...obligation, status: "ON_TIME" }, IDENTITY),
     ).toThrow(/settled/);
     expect(() =>
-      agent.prepareContribution({ ...circle, status: "OPEN_FOR_MEMBERS" }, obligation),
+      agent.prepareContribution(
+        { ...circle, status: "OPEN_FOR_MEMBERS" },
+        obligation,
+        IDENTITY,
+      ),
     ).toThrow(/active/);
   });
 
@@ -88,7 +116,7 @@ describe("IwaSavingsAgent", () => {
     expect(Object.getOwnPropertyNames(IwaSavingsAgent.prototype)).not.toContain(
       "execute",
     );
-    const prepared = agent.prepareContribution(circle, obligation);
+    const prepared = agent.prepareContribution(circle, obligation, IDENTITY);
     expect(() =>
       agent.requireConfirmation(prepared, { confirmed: false }),
     ).toThrow(/explicit confirmation/);

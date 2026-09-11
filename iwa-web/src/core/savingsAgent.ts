@@ -81,12 +81,17 @@ export class IwaSavingsAgent {
   }
 
   /**
-   * Freeze the circle's amount, round, member, and settlement contract.
-   * Does not contact a wallet and does not send.
+   * Freeze the circle's amount, round, member, settlement contract, and the
+   * caller-supplied account/chain/asset identity into one action. Does not
+   * contact a wallet and does not send. Core does not verify `identity` —
+   * it does not know what a wallet or chain is — an adapter must prove the
+   * connected account is bound to `obligation.memberRef` (see
+   * `core/accountBinding.ts`) before calling this.
    */
   prepareContribution(
     circle: Circle,
     obligation: ContributionObligation,
+    identity: { accountRef: string; chainRef: string; assetRef: string },
   ): PreparedContributionAction {
     if (obligation.circleId !== circle.id) {
       throw new Error("Contribution refused: circle and obligation do not match");
@@ -109,6 +114,9 @@ export class IwaSavingsAgent {
       memberRef: obligation.memberRef,
       amount: circle.contributionAmount,
       recipientRef: circleSettlementRef(circle.id),
+      accountRef: identity.accountRef,
+      chainRef: identity.chainRef,
+      assetRef: identity.assetRef,
     };
     return {
       actionId: contributionActionId(request),

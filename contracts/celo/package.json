@@ -6,6 +6,7 @@
   "scripts": {
     "compile": "hardhat compile",
     "test": "hardhat test",
+    "test:mainnet-chainid": "hardhat test test-mainnet-chainid/IwaCircleCelo.mainnetChainId.test.ts --config hardhat.mainnetChainId.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

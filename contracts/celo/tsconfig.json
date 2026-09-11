@@ -10,5 +10,10 @@
     "resolveJsonModule": true,
     "noEmit": true
   },
-  "include": ["hardhat.config.ts", "test/**/*.ts"]
+  "include": [
+    "hardhat.config.ts",
+    "hardhat.mainnetChainId.config.ts",
+    "test/**/*.ts",
+    "test-mainnet-chainid/**/*.ts"
+  ]
 }

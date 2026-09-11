@@ -13,6 +13,12 @@ export interface ContributionPaymentRequest {
   memberRef: string;
   amount: string;
   recipientRef: string;
+  /** Opaque connected-account identity this action is bound to. Adapter-formatted. */
+  accountRef: string;
+  /** Opaque chain identity this action is bound to. Adapter-formatted. */
+  chainRef: string;
+  /** Opaque settlement-asset identity this action is bound to. Adapter-formatted. */
+  assetRef: string;
 }
 
 export interface PreparedContributionAction {
@@ -21,6 +27,12 @@ export interface PreparedContributionAction {
   requiresApproval: boolean;
 }
 
+/**
+ * Every field folded in here becomes part of what a confirmation approves.
+ * If any of them changes after `actionId` is computed, re-deriving this id
+ * from the (possibly tampered) request no longer matches the id the user
+ * actually confirmed.
+ */
 export function contributionActionId(request: ContributionPaymentRequest): string {
   return [
     request.circleId,
@@ -28,6 +40,9 @@ export function contributionActionId(request: ContributionPaymentRequest): strin
     request.memberRef,
     request.amount,
     request.recipientRef,
+    request.accountRef,
+    request.chainRef,
+    request.assetRef,
   ].join(":");
 }
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fromDataSuffix } from "@celo/attribution-tags";
 
+import { InMemoryMemberAccountDirectory } from "../../core/accountBinding";
 import { ContributionHistory } from "../../core/contributionHistory";
 import { standingFrom } from "../../lib/standing";
 import type { Circle, ContributionObligation } from "../../core/domain/types";
@@ -13,9 +14,23 @@ import type { CeloProviderLike } from "./transactions";
 
 const TAG = "celo_448874a99d90";
 const PAYER = "0x00000000000000000000000000000000000000aa";
+const OTHER_WALLET = "0x00000000000000000000000000000000000000dd";
 const CIRCLE = "0x00000000000000000000000000000000000000bb";
 const OTHER = "0x00000000000000000000000000000000000000cc";
 const AMOUNT = "5000000";
+const CHAIN_REF = "celo:42220";
+
+/** Default binding: circle-1's member "m1" is registered to PAYER. */
+function defaultDirectory(): InMemoryMemberAccountDirectory {
+  const dir = new InMemoryMemberAccountDirectory();
+  dir.register({
+    circleId: "circle-1",
+    memberRef: "m1",
+    chain: CHAIN_REF,
+    account: `celo:${PAYER}`,
+  });
+  return dir;
+}
 
 const circle: Circle = {
   id: "circle-1",
@@ -100,7 +115,7 @@ describe("Celo cNGN contribution to IwaCircleCelo", () => {
   it("binds the circle contract, tags contribute() exactly once, and records standing", async () => {
     const inner = mockProvider({ balance: 10_000_000n, allowance: 10_000_000n });
     const history = new ContributionHistory();
-    const service = new CeloContributionService(binding(), inner, history);
+    const service = new CeloContributionService(binding(), inner, history, defaultDirectory());
     const prepared = await service.prepare(circle, obligation, PAYER);
     expect(prepared.amount).toBe(AMOUNT);
     expect(prepared.circleContract).toBe(normalizeAddress(CIRCLE));
@@ -126,7 +141,7 @@ describe("Celo cNGN contribution to IwaCircleCelo", () => {
 
   it("approves the circle contract then calls contribute when allowance is short", async () => {
     const inner = mockProvider({ allowance: 0n, balance: 10_000_000n });
-    const service = new CeloContributionService(binding(), inner, new ContributionHistory());
+    const service = new CeloContributionService(binding(), inner, new ContributionHistory(), defaultDirectory());
     const prepared = await service.prepare(circle, obligation, PAYER);
     expect(prepared.requiresOnChainApproval).toBe(true);
     await service.submit(
@@ -147,7 +162,7 @@ describe("Celo cNGN contribution to IwaCircleCelo", () => {
 
   it("rejects the wrong chain before any send", async () => {
     const inner = mockProvider({ chainId: "0xaa36a7" });
-    const service = new CeloContributionService(binding(), inner, new ContributionHistory());
+    const service = new CeloContributionService(binding(), inner, new ContributionHistory(), defaultDirectory());
     await expect(service.readBalance(PAYER)).rejects.toThrow(/Celo mainnet/);
     expect(inner.sends).toHaveLength(0);
   });
@@ -155,7 +170,7 @@ describe("Celo cNGN contribution to IwaCircleCelo", () => {
   it("rejects amount or circle-contract overrides", async () => {
     const inner = mockProvider({ allowance: 10_000_000n });
     const history = new ContributionHistory();
-    const service = new CeloContributionService(binding(), inner, history);
+    const service = new CeloContributionService(binding(), inner, history, defaultDirectory());
     const prepared = await service.prepare(circle, obligation, PAYER);
     const mutatedAmount = {
       ...prepared,
@@ -197,7 +212,7 @@ describe("Celo cNGN contribution to IwaCircleCelo", () => {
       sendError: new Error("user rejected"),
     });
     const history = new ContributionHistory();
-    const service = new CeloContributionService(binding(), inner, history);
+    const service = new CeloContributionService(binding(), inner, history, defaultDirectory());
     const prepared = await service.prepare(circle, obligation, PAYER);
     await expect(
       service.submit(
@@ -214,7 +229,7 @@ describe("Celo cNGN contribution to IwaCircleCelo", () => {
   it("does not mark a contribution complete when the transaction fails", async () => {
     const inner = mockProvider({ allowance: 10_000_000n, receiptStatus: "0x0" });
     const history = new ContributionHistory();
-    const service = new CeloContributionService(binding(), inner, history);
+    const service = new CeloContributionService(binding(), inner, history, defaultDirectory());
     const prepared = await service.prepare(circle, obligation, PAYER);
     await expect(
       service.submit(
@@ -231,7 +246,7 @@ describe("Celo cNGN contribution to IwaCircleCelo", () => {
   it("refuses to send without explicit confirmation matching the prepared action", async () => {
     const inner = mockProvider({ allowance: 10_000_000n });
     const history = new ContributionHistory();
-    const service = new CeloContributionService(binding(), inner, history);
+    const service = new CeloContributionService(binding(), inner, history, defaultDirectory());
     const prepared = await service.prepare(circle, obligation, PAYER);
     const agent = new IwaSavingsAgent();
     expect(() =>
@@ -255,7 +270,7 @@ describe("Celo cNGN contribution to IwaCircleCelo", () => {
 
   it("refuses an untagged raw send through the adapter provider", async () => {
     const inner = mockProvider({ allowance: 10_000_000n });
-    const service = new CeloContributionService(binding(), inner, new ContributionHistory());
+    const service = new CeloContributionService(binding(), inner, new ContributionHistory(), defaultDirectory());
     await service.prepare(circle, obligation, PAYER);
     await expect(
       service.taggedProvider.request({
@@ -267,10 +282,172 @@ describe("Celo cNGN contribution to IwaCircleCelo", () => {
 
   it("refuses to prepare when the cNGN balance is insufficient", async () => {
     const inner = mockProvider({ balance: 1n });
-    const service = new CeloContributionService(binding(), inner, new ContributionHistory());
+    const service = new CeloContributionService(binding(), inner, new ContributionHistory(), defaultDirectory());
     await expect(service.prepare(circle, obligation, PAYER)).rejects.toThrow(
       /insufficient/,
     );
+    expect(inner.sends).toHaveLength(0);
+  });
+});
+
+describe("Celo member-wallet binding (audit gap 1)", () => {
+  it("prepares and submits for the correct registered member/wallet pair", async () => {
+    const inner = mockProvider({ balance: 10_000_000n, allowance: 10_000_000n });
+    const service = new CeloContributionService(binding(), inner, new ContributionHistory(), defaultDirectory());
+    const prepared = await service.prepare(circle, obligation, PAYER);
+    expect(prepared.action.request.accountRef).toBe(`celo:${PAYER}`);
+    expect(prepared.action.request.chainRef).toBe(CHAIN_REF);
+    await expect(
+      service.submit(
+        circle,
+        obligation,
+        prepared,
+        { confirmed: true, actionId: prepared.action.actionId },
+        900,
+      ),
+    ).resolves.toBeTruthy();
+  });
+
+  it("fails closed on prepare when the connected wallet is not the one registered for the member", async () => {
+    const inner = mockProvider({ balance: 10_000_000n, allowance: 10_000_000n });
+    const service = new CeloContributionService(binding(), inner, new ContributionHistory(), defaultDirectory());
+    // m1 is registered to PAYER, not OTHER_WALLET.
+    await expect(service.prepare(circle, obligation, OTHER_WALLET)).rejects.toThrow(
+      /does not match the registered/,
+    );
+    expect(inner.sends).toHaveLength(0);
+  });
+
+  it("fails closed on prepare for a memberRef that has no registered wallet at all", async () => {
+    const inner = mockProvider({ balance: 10_000_000n, allowance: 10_000_000n });
+    const service = new CeloContributionService(binding(), inner, new ContributionHistory(), defaultDirectory());
+    const unknownMemberObligation = { ...obligation, memberRef: "m2" };
+    await expect(
+      service.prepare(circle, unknownMemberObligation, PAYER),
+    ).rejects.toThrow(/no account is registered/);
+    expect(inner.sends).toHaveLength(0);
+  });
+
+  it("rejects submit when the wallet was swapped on the prepared object after prepare()", async () => {
+    const inner = mockProvider({ balance: 10_000_000n, allowance: 10_000_000n });
+    const service = new CeloContributionService(binding(), inner, new ContributionHistory(), defaultDirectory());
+    const prepared = await service.prepare(circle, obligation, PAYER);
+    const swapped = { ...prepared, payer: OTHER_WALLET };
+    await expect(
+      service.submit(
+        circle,
+        obligation,
+        swapped,
+        { confirmed: true, actionId: prepared.action.actionId },
+        900,
+      ),
+    ).rejects.toThrow(/wallet override is not allowed/);
+    expect(inner.sends).toHaveLength(0);
+  });
+
+  it("rejects submit when the circle changed after prepare()", async () => {
+    const inner = mockProvider({ balance: 10_000_000n, allowance: 10_000_000n });
+    const service = new CeloContributionService(binding(), inner, new ContributionHistory(), defaultDirectory());
+    const prepared = await service.prepare(circle, obligation, PAYER);
+    const mutatedCircle = {
+      ...prepared,
+      action: {
+        ...prepared.action,
+        request: { ...prepared.action.request, circleId: "circle-2" },
+      },
+    };
+    await expect(
+      service.submit(
+        circle,
+        obligation,
+        mutatedCircle,
+        { confirmed: true, actionId: prepared.action.actionId },
+        900,
+      ),
+    ).rejects.toThrow(/circle/);
+    expect(inner.sends).toHaveLength(0);
+  });
+
+  it("rejects submit when the settlement contract changed after prepare()", async () => {
+    const inner = mockProvider({ balance: 10_000_000n, allowance: 10_000_000n });
+    const service = new CeloContributionService(binding(), inner, new ContributionHistory(), defaultDirectory());
+    const prepared = await service.prepare(circle, obligation, PAYER);
+    const mutatedSettlement = { ...prepared, circleContract: normalizeAddress(OTHER) };
+    await expect(
+      service.submit(
+        circle,
+        obligation,
+        mutatedSettlement,
+        { confirmed: true, actionId: prepared.action.actionId },
+        900,
+      ),
+    ).rejects.toThrow(/recipient/);
+    expect(inner.sends).toHaveLength(0);
+  });
+
+  it("rejects submit when the amount changed after prepare()", async () => {
+    const inner = mockProvider({ balance: 10_000_000n, allowance: 10_000_000n });
+    const service = new CeloContributionService(binding(), inner, new ContributionHistory(), defaultDirectory());
+    const prepared = await service.prepare(circle, obligation, PAYER);
+    const mutatedAmount = {
+      ...prepared,
+      action: {
+        ...prepared.action,
+        request: { ...prepared.action.request, amount: "1" },
+      },
+    };
+    await expect(
+      service.submit(
+        circle,
+        obligation,
+        mutatedAmount,
+        { confirmed: true, actionId: prepared.action.actionId },
+        900,
+      ),
+    ).rejects.toThrow(/amount/);
+    expect(inner.sends).toHaveLength(0);
+  });
+
+  it("rejects submit when the chain identity changed after prepare()", async () => {
+    const inner = mockProvider({ balance: 10_000_000n, allowance: 10_000_000n });
+    const service = new CeloContributionService(binding(), inner, new ContributionHistory(), defaultDirectory());
+    const prepared = await service.prepare(circle, obligation, PAYER);
+    const mutatedChain = {
+      ...prepared,
+      action: {
+        ...prepared.action,
+        request: { ...prepared.action.request, chainRef: "celo:11142220" },
+      },
+    };
+    await expect(
+      service.submit(
+        circle,
+        obligation,
+        mutatedChain,
+        { confirmed: true, actionId: prepared.action.actionId },
+        900,
+      ),
+    ).rejects.toThrow(/chain override is not allowed/);
+    expect(inner.sends).toHaveLength(0);
+  });
+
+  it("rejects a replayed confirmation actionId from a different prepared action", async () => {
+    const inner = mockProvider({ balance: 10_000_000n, allowance: 10_000_000n });
+    const service = new CeloContributionService(binding(), inner, new ContributionHistory(), defaultDirectory());
+    const preparedRound1 = await service.prepare(circle, obligation, PAYER);
+    const round2Obligation = { ...obligation, round: 2 };
+    const round2Circle = { ...circle, currentRound: 2 };
+    const preparedRound2 = await service.prepare(round2Circle, round2Obligation, PAYER);
+    // Try to submit round 1's action using round 2's confirmation actionId.
+    await expect(
+      service.submit(
+        circle,
+        obligation,
+        preparedRound1,
+        { confirmed: true, actionId: preparedRound2.action.actionId },
+        900,
+      ),
+    ).rejects.toThrow(/does not match/);
     expect(inner.sends).toHaveLength(0);
   });
 });
