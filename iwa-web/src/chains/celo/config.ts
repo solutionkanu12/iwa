@@ -6,6 +6,24 @@
 /** Registered Celo Builders attribution tag for this repository. */
 export const IWA_CELO_ATTRIBUTION_TAG = "celo_448874a99d90" as const;
 
+/**
+ * Canonical cNGN on Celo Mainnet (Africa Stablecoin Consortium).
+ *
+ * Verified 2026-09-10 against:
+ * - Celo docs Token/Stablecoin contracts (issuer: Africa Stablecoin Consortium / cngn.co)
+ * - Issuer deployments table: wrappedcbdc/stablecoin-cngn README (network CELO)
+ * - Live `eth_call` on https://forno.celo.org: decimals=6, symbol=cNGN, name=cNGN
+ *
+ * Not Mento NGNm (`0xE2702Bd97ee33c88c8f6f92DA3B733608aa76F71`).
+ */
+export const CNGN_MAINNET = {
+  address: "0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f",
+  decimals: 6,
+  symbol: "cNGN",
+  name: "cNGN",
+  chainId: 42220,
+} as const;
+
 export const CELO_MAINNET = {
   chainId: "0xa4ec",
   chainIdNumber: 42220,

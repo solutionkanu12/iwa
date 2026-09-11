@@ -178,8 +178,13 @@ Current adapter scope (`iwa-web/src/chains/celo/`):
 - Celo transaction send path
 - automatic ERC-8021 attribution tagging (`celo_448874a99d90`) via `@celo/attribution-tags`
 - untagged Celo sends are refused on the adapter path
+- cNGN contribution settlement on Celo Mainnet (`0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f`)
+- one immutable `IwaCircleCelo` contract per circle (`contracts/celo/`); no organizer EOA treasury
+- circle/member/obligation remain IWA Core types; Celo only executes the bound payment
 
-IWA Core remains chain-neutral. Attribution tagging is Celo-specific and must not leak into other adapters or the domain layer.
+The Iwa Savings Agent (`iwa-web/src/core/savingsAgent.ts`) reminds, reports status, and prepares an authorized contribution. It cannot send. Money movement requires explicit confirmation plus the Celo adapter.
+
+IWA Core remains chain-neutral. Attribution tagging, cNGN addresses, and RPC stay inside the Celo adapter.
 
 ### Future EVM
 
