@@ -13,6 +13,7 @@ import { InvitationsView } from "./screens/InvitationsView.tsx";
 import { StandingView } from "./screens/StandingView.tsx";
 import { OrganizerCircleView } from "./screens/OrganizerCircleView.tsx";
 import { PrizeSavingsView } from "./screens/PrizeSavingsView.tsx";
+import { CeloCircleView } from "./screens/CeloCircleView.tsx";
 import { AdminView } from "./screens/AdminView.tsx";
 import { shellFor } from "./app/navigation.ts";
 import type { Route } from "./lib/router.ts";
@@ -50,6 +51,9 @@ export function App({ route, navigate }: AppProps) {
       break;
     case "prizeSavings":
       screen = <PrizeSavingsView />;
+      break;
+    case "celoCircle":
+      screen = <CeloCircleView key={route.circleContract} circleContract={route.circleContract} />;
       break;
     case "admin":
       screen = <AdminView navigate={navigate} />;

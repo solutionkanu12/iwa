@@ -29,6 +29,18 @@ export type Route =
   | { name: "create" }
   | { name: "prizeSavings" }
   | { name: "invite"; token: string }
+  /**
+   * A Celo circle, addressed by its deployed IwaCircleCelo contract rather
+   * than a backend-assigned id: there is no "list my Celo circles" backend
+   * capability by design (account bindings are verify-not-disclose), so a
+   * Celo circle is always reached by a direct link, same as Starknet's own
+   * invite-based join before a circle appears in "my circles".
+   */
+  | { name: "celoCircle"; circleContract: string }
+  /** A Celo account-binding invite: a different token namespace and meaning
+   *  from `invite` above (that one joins a circle; this one links a wallet
+   *  to an existing member slot), so it gets its own route. */
+  | { name: "celoBindInvite"; token: string }
   | { name: "console" }
   /**
    * The operator dashboard. Reachable by anybody who types it, and useful to
@@ -72,6 +84,23 @@ export function circlePath(circleId: number): string {
   return `/app/circles/${circleId}`;
 }
 
+const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+
+export function isEvmAddress(segment: string): boolean {
+  return EVM_ADDRESS.test(segment);
+}
+
+/** The path that opens one Celo circle. */
+export function celoCirclePath(circleContract: string): string {
+  if (!isEvmAddress(circleContract)) throw new Error(`not an EVM address: ${circleContract}`);
+  return `/app/celo/${circleContract.toLowerCase()}`;
+}
+
+/** The path for a Celo account-binding invite. */
+export function celoBindInvitePath(token: string): string {
+  return `/celo/bind/${encodeURIComponent(token)}`;
+}
+
 /** The path for a route, for links and for navigation. */
 export function hrefFor(route: Route): string {
   switch (route.name) {
@@ -95,6 +124,10 @@ export function hrefFor(route: Route): string {
       return "/app/prize-savings";
     case "invite":
       return `/invite/${encodeURIComponent(route.token)}`;
+    case "celoCircle":
+      return celoCirclePath(route.circleContract);
+    case "celoBindInvite":
+      return celoBindInvitePath(route.token);
     case "console":
       return "/strk20";
     case "admin":
@@ -143,6 +176,19 @@ export function resolve(pathname: string, search: string): Resolved {
       : { route: { name: "invite", token }, redirectTo: null };
   }
 
+  if (parts[0] === "celo" && parts[1] === "bind") {
+    if (parts.length !== 3) return notFound;
+    let token: string;
+    try {
+      token = decodeURIComponent(parts[2]);
+    } catch {
+      return notFound;
+    }
+    return token.length === 0
+      ? notFound
+      : { route: { name: "celoBindInvite", token }, redirectTo: null };
+  }
+
   if (parts[0] !== "app") return notFound;
 
   if (parts.length === 1) {
@@ -171,6 +217,12 @@ export function resolve(pathname: string, search: string): Resolved {
       : { route: { name: "circle", circleId }, redirectTo: null };
   }
 
+  if (parts.length === 3 && parts[1] === "celo") {
+    return isEvmAddress(parts[2])
+      ? { route: { name: "celoCircle", circleContract: parts[2] }, redirectTo: null }
+      : notFound;
+  }
+
   return notFound;
 }
 
@@ -185,6 +237,7 @@ export function isAppRoute(route: Route): boolean {
     route.name === "standing" ||
     route.name === "create" ||
     route.name === "prizeSavings" ||
+    route.name === "celoCircle" ||
     route.name === "admin" ||
     route.name === "notFound"
   );

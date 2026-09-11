@@ -34,6 +34,7 @@ import {
   acceptAccountBindSchema,
   acceptInviteSchema,
   CHAIN_NEUTRAL_ID,
+  accountBindingStatusSchema,
   createAccountBindInviteSchema,
   isInviteToken,
   isUuid,
@@ -807,6 +808,39 @@ export function createApp(options: AppOptions): Express {
         return res.status(404).json({ error: "not_found" });
       }
       res.json({ binding });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  /**
+   * The organizer-facing binding progress for one member: "none", "invited",
+   * or "bound" — never which account, on purpose. Organizer identity is
+   * re-verified on chain exactly as for minting an invite; this route
+   * creates or changes nothing.
+   */
+  app.post("/api/account-bindings/status", async (req, res, next) => {
+    if (!mutate(req, res)) return;
+    const parsed = accountBindingStatusSchema.safeParse(req.body);
+    if (!parsed.success) return badRequest(res, parsed.error.issues);
+    const auth = await verifyCeloOrganizerAuthorization(
+      CELO_AUTH_ACTIONS.accountBindingStatus,
+      parsed.data.circleId,
+      parsed.data.circleContract,
+      parsed.data.memberRef,
+      parsed.data.authorization,
+      celoNonces,
+      celoOrganizerReader,
+      now,
+    );
+    if (!auth.ok) {
+      return res.status(401).json({ error: auth.reason, message: CELO_AUTH_MESSAGES[auth.reason] });
+    }
+    try {
+      const binding = await store.getAccountBinding(parsed.data.circleId, parsed.data.memberRef);
+      if (binding !== null) return res.json({ status: "bound" });
+      const invited = await store.hasAccountBindInvite(parsed.data.circleId, parsed.data.memberRef);
+      res.json({ status: invited ? "invited" : "none" });
     } catch (e) {
       next(e);
     }

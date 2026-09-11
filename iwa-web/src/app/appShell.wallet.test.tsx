@@ -34,6 +34,10 @@ function walletState(overrides: Partial<WalletState> = {}): WalletState {
     connectEthereum: vi.fn(),
     switchToSepolia: vi.fn(),
     disconnectEthereum: vi.fn(),
+    celo: connectedStarknet,
+    connectCelo: vi.fn(),
+    switchToCeloMainnet: vi.fn(),
+    disconnectCelo: vi.fn(),
     ...overrides,
   };
 }

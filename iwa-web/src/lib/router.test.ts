@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { circlePath, hrefFor, resolve, type Route } from "./router";
+import { celoBindInvitePath, celoCirclePath, circlePath, hrefFor, resolve, type Route } from "./router";
 
 function routeOf(pathname: string, search = ""): Route {
   return resolve(pathname, search).route;
@@ -77,6 +77,26 @@ describe("resolve", () => {
     expect(routeOf("/app/explore/")).toEqual({ name: "explore" });
     expect(routeOf("/app/circles/7/")).toEqual({ name: "circle", circleId: 7 });
   });
+
+  it("reads a Celo circle by its contract address", () => {
+    const addr = "0x" + "0".repeat(37) + "abc";
+    expect(routeOf(`/app/celo/${addr}`)).toEqual({ name: "celoCircle", circleContract: addr });
+  });
+
+  it("refuses a Celo circle path that is not an EVM address", () => {
+    for (const bad of ["not-an-address", "0x123", "7", ""]) {
+      expect(routeOf(`/app/celo/${bad}`).name).toBe("notFound");
+    }
+  });
+
+  it("reads a Celo binding-invite token", () => {
+    expect(routeOf("/celo/bind/abc123")).toEqual({ name: "celoBindInvite", token: "abc123" });
+  });
+
+  it("refuses an empty Celo binding-invite token", () => {
+    expect(routeOf("/celo/bind/").name).toBe("notFound");
+    expect(routeOf("/celo/bind").name).toBe("notFound");
+  });
 });
 
 // The query bridge from the first phase still has links in the wild. They are
@@ -144,5 +164,24 @@ describe("circlePath", () => {
     for (const bad of [0, -3, 2.5, Number.NaN]) {
       expect(() => circlePath(bad)).toThrow();
     }
+  });
+});
+
+describe("celoCirclePath", () => {
+  it("builds a lowercase Celo circle link", () => {
+    const addr = "0x" + "0".repeat(37) + "ABC";
+    expect(celoCirclePath(addr)).toBe(`/app/celo/${addr.toLowerCase()}`);
+  });
+
+  it("refuses to build a link to a malformed address", () => {
+    expect(() => celoCirclePath("not-an-address")).toThrow();
+  });
+});
+
+describe("celoBindInvitePath", () => {
+  it("builds a bind-invite link and round-trips through the parser", () => {
+    const path = celoBindInvitePath("abc123");
+    expect(path).toBe("/celo/bind/abc123");
+    expect(routeOf(path)).toEqual({ name: "celoBindInvite", token: "abc123" });
   });
 });

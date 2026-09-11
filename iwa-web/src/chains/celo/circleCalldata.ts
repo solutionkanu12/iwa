@@ -21,3 +21,8 @@ export function encodeFinalizeDefault(member: string): HexData {
   const addr = normalizeAddress(member).slice(2).padStart(64, "0");
   return `0x${selector("finalizeDefault(address)").slice(2)}${addr}`;
 }
+
+export function encodeRecover(round: number): HexData {
+  const arg = BigInt(round).toString(16).padStart(64, "0");
+  return `0x${selector("recover(uint32)").slice(2)}${arg}` as HexData;
+}

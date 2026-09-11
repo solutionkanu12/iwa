@@ -6,6 +6,7 @@ import { App } from "./App.tsx";
 import { LandingPage } from "./landing/LandingPage.tsx";
 import { Strk20ConsoleView } from "./screens/Strk20ConsoleView.tsx";
 import { AcceptInviteView } from "./screens/AcceptInviteView.tsx";
+import { CeloAcceptBindingView } from "./screens/CeloAcceptBindingView.tsx";
 import { WalletProvider } from "./app/WalletProvider.tsx";
 import { SessionProvider } from "./app/SessionProvider.tsx";
 import { useRoute } from "./lib/router.ts";
@@ -34,6 +35,9 @@ function AppRoot() {
   }
   if (route.name === "invite") {
     return <AcceptInviteView token={route.token} navigate={navigate} />;
+  }
+  if (route.name === "celoBindInvite") {
+    return <CeloAcceptBindingView token={route.token} />;
   }
   if (route.name === "console") {
     // A disabled console is not a route: it falls through to the application

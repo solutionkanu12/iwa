@@ -442,6 +442,14 @@ export class PgStore implements Store {
     };
   }
 
+  async hasAccountBindInvite(circleId: string, memberRef: string): Promise<boolean> {
+    const r = await this.pool.query(
+      "SELECT 1 FROM account_bind_invites WHERE circle_id = $1 AND member_ref = $2",
+      [circleId, memberRef],
+    );
+    return (r.rowCount ?? 0) > 0;
+  }
+
   async upsertIndexedCircle(c: Omit<IndexedCircle, "updatedAt">): Promise<void> {
     await this.pool.query(
       `INSERT INTO indexed_circles

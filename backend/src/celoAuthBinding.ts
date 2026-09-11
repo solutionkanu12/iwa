@@ -36,6 +36,13 @@ export const CELO_MAINNET_CHAIN_ID = 42220;
  */
 export const CELO_AUTH_ACTIONS = {
   accountBindingInvite: "account-binding:invite",
+  /**
+   * Reads one member's binding status (none/invited/bound) without ever
+   * disclosing which account it is bound to. Organizer-only, same on-chain
+   * verification as the invite action, distinct action string so a
+   * signature minted for one can never be spent as the other.
+   */
+  accountBindingStatus: "account-binding:status",
 } as const;
 
 export type CeloAuthAction = (typeof CELO_AUTH_ACTIONS)[keyof typeof CELO_AUTH_ACTIONS];

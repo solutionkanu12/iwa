@@ -21,8 +21,8 @@ export type CircleStatus =
   | "PAUSED_FOR_NEW_ACTIONS"
   | "COMPLETED";
 
-// Initial release supports exactly USDC and STRK (allowlisted).
-export type SupportedAsset = "USDC" | "STRK";
+// Allowlisted settlement assets. cNGN is Celo mainnet's contribution asset.
+export type SupportedAsset = "USDC" | "STRK" | "cNGN";
 
 // A round payout is scheduled deterministically; an unresolved deficit of the
 // scheduled member locks it (DEFERRED_LOCKED) instead of redirecting it.

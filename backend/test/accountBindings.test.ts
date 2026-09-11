@@ -621,6 +621,118 @@ describe("on-chain Celo organizer authorization on POST /api/account-bindings/in
   });
 });
 
+describe("MemoryStore hasAccountBindInvite", () => {
+  it("is false before an invite is minted, true after, regardless of acceptance", async () => {
+    const store = new MemoryStore();
+    expect(await store.hasAccountBindInvite(CIRCLE, MEMBER_1)).toBe(false);
+
+    const invite = await store.createAccountBindInvite({ circleId: CIRCLE, memberRef: MEMBER_1, chain: CHAIN });
+    if (!invite.ok) throw new Error("unreachable");
+    expect(await store.hasAccountBindInvite(CIRCLE, MEMBER_1)).toBe(true);
+
+    await store.acceptAccountBind({ inviteToken: invite.inviteToken, account: ACCOUNT_A });
+    expect(await store.hasAccountBindInvite(CIRCLE, MEMBER_1)).toBe(true);
+  });
+
+  it("does not leak across members or circles", async () => {
+    const store = new MemoryStore();
+    await store.createAccountBindInvite({ circleId: CIRCLE, memberRef: MEMBER_1, chain: CHAIN });
+    expect(await store.hasAccountBindInvite(CIRCLE, MEMBER_2)).toBe(false);
+    expect(await store.hasAccountBindInvite("0xanother-circle", MEMBER_1)).toBe(false);
+  });
+});
+
+describe("POST /api/account-bindings/status (organizer binding-status read)", () => {
+  async function signStatusAuth(wallet: Wallet, overrides: Partial<CeloAuthorizationMessage> = {}) {
+    return signOrganizerAuth(wallet, { action: CELO_AUTH_ACTIONS.accountBindingStatus, ...overrides });
+  }
+
+  async function statusRequest(
+    app: Express,
+    authorization: { organizer: string; nonce: string; expiresAt: number; signature: string },
+    overrides: { circleId?: string; circleContract?: string; memberRef?: string } = {},
+  ): Promise<request.Response> {
+    return request(app)
+      .post("/api/account-bindings/status")
+      .send({
+        circleId: overrides.circleId ?? CIRCLE,
+        circleContract: overrides.circleContract ?? CIRCLE_CONTRACT,
+        memberRef: overrides.memberRef ?? MEMBER_1,
+        authorization,
+      });
+  }
+
+  it("reports none for a member with no invite and no binding", async () => {
+    const app = buildApp(new MemoryStore());
+    const auth = await signStatusAuth(ORGANIZER);
+    const res = await statusRequest(app, auth);
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("none");
+  });
+
+  it("reports invited once the organizer has minted an invite but it is unaccepted", async () => {
+    const store = new MemoryStore();
+    const app = buildApp(store);
+    await store.createAccountBindInvite({ circleId: CIRCLE, memberRef: MEMBER_1, chain: CHAIN });
+
+    const auth = await signStatusAuth(ORGANIZER);
+    const res = await statusRequest(app, auth);
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("invited");
+  });
+
+  it("reports bound once the member has accepted, and never discloses the account", async () => {
+    const store = new MemoryStore();
+    const app = buildApp(store);
+    const invite = await store.createAccountBindInvite({ circleId: CIRCLE, memberRef: MEMBER_1, chain: CHAIN });
+    if (!invite.ok) throw new Error("unreachable");
+    await store.acceptAccountBind({ inviteToken: invite.inviteToken, account: ACCOUNT_A });
+
+    const auth = await signStatusAuth(ORGANIZER);
+    const res = await statusRequest(app, auth);
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("bound");
+    const body = JSON.stringify(res.body);
+    expect(body).not.toContain(ACCOUNT_A);
+    expect(body.toLowerCase()).not.toContain("0x00000000000000000000000000000000000000aa");
+  });
+
+  it("rejects a non-organizer wallet", async () => {
+    const app = buildApp(new MemoryStore()); // legitimateReader(): organizer is ORGANIZER
+    const auth = await signStatusAuth(OTHER_WALLET);
+    const res = await statusRequest(app, auth);
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("wrong_signer");
+  });
+
+  it("a signature minted for the invite action cannot be spent as a status read", async () => {
+    const app = buildApp(new MemoryStore());
+    const inviteAuth = await signOrganizerAuth(ORGANIZER); // default action: accountBindingInvite
+    const res = await statusRequest(app, inviteAuth);
+    expect(res.status).toBe(401);
+    expect(["bad_signature", "wrong_signer"]).toContain(res.body.error);
+  });
+
+  it("rejects a missing authorization", async () => {
+    const app = buildApp(new MemoryStore());
+    const res = await request(app)
+      .post("/api/account-bindings/status")
+      .send({ circleId: CIRCLE, circleContract: CIRCLE_CONTRACT, memberRef: MEMBER_1 });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("invalid_request");
+  });
+
+  it("fails closed on RPC/organizer-read failure rather than reporting a status", async () => {
+    const reader = new StubCeloOrganizerReader();
+    reader.set(CIRCLE_CONTRACT, { ok: false, reason: "rpc_unavailable" });
+    const app = buildApp(new MemoryStore(), { celoOrganizerReader: reader });
+    const auth = await signStatusAuth(ORGANIZER);
+    const res = await statusRequest(app, auth);
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("rpc_unavailable");
+  });
+});
+
 /** Submits an invite-mint request with an already-built authorization object, fully resolved (see mintInvite's note on why this isn't chained with `.expect`). */
 async function mintInviteRaw(
   app: Express,

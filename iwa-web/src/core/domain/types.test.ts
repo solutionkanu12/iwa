@@ -26,7 +26,7 @@ describe("chain-neutral domain types", () => {
       | "PAUSED_FOR_NEW_ACTIONS"
       | "COMPLETED"
     >();
-    expectTypeOf<SupportedAsset>().toEqualTypeOf<"USDC" | "STRK">();
+    expectTypeOf<SupportedAsset>().toEqualTypeOf<"USDC" | "STRK" | "cNGN">();
     expectTypeOf<PayoutStatus>().toEqualTypeOf<
       "SCHEDULED" | "DEFERRED_LOCKED" | "PAID" | "RECOVERED"
     >();

@@ -54,6 +54,10 @@ function walletState(evm: EvmWalletState, starknetAddress: string | null): Walle
     connectEthereum: vi.fn(),
     switchToSepolia: vi.fn(),
     disconnectEthereum: vi.fn(),
+    celo: { status: "disconnected", address: null, chainId: null },
+    connectCelo: vi.fn(),
+    switchToCeloMainnet: vi.fn(),
+    disconnectCelo: vi.fn(),
   };
 }
 

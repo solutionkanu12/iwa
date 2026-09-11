@@ -235,3 +235,16 @@ export const acceptAccountBindSchema = z.object({
   inviteToken: z.string().min(16).max(128).regex(/^[A-Za-z0-9_-]+$/),
   account: chainNeutralId,
 });
+
+/**
+ * Reads one member's binding status. Same organizer-authorization shape as
+ * minting an invite (no `chain` field: the status read does not create or
+ * touch any binding row, only reports none/invited/bound for the one
+ * memberRef named).
+ */
+export const accountBindingStatusSchema = z.object({
+  circleId: chainNeutralId,
+  circleContract: evmAddress,
+  memberRef: chainNeutralId,
+  authorization: celoOrganizerAuthorizationSchema,
+});

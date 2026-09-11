@@ -44,6 +44,11 @@ import {
   switchToSepolia as switchEvmToSepolia,
 } from "../chains/ethereum/wallet";
 import {
+  connectCeloWallet,
+  EXPECTED_CELO_CHAIN_ID,
+  switchToCeloMainnet as switchCeloToMainnet,
+} from "../chains/celo/wallet";
+import {
   DISCONNECTED as EVM_DISCONNECTED,
   EXPECTED_SEPOLIA_CHAIN_ID,
   nextEvmState,
@@ -82,6 +87,19 @@ export interface WalletState {
   switchToSepolia: () => Promise<void>;
   /** Drops the shared EVM slot. The Starknet slot is untouched. */
   disconnectEthereum: () => void;
+  /**
+   * The Celo slot of the same Iwa-level wallet manager. Independent of both
+   * the Starknet slot and the Ethereum/Sepolia slot: connecting any one
+   * never touches the others, even though Celo and Sepolia may resolve to
+   * the same underlying browser extension.
+   */
+  celo: EvmWalletState;
+  /** Connects an EIP-1193 wallet and verifies Celo mainnet, into the shared Celo slot. */
+  connectCelo: () => Promise<void>;
+  /** Asks the connected wallet to switch to Celo mainnet. */
+  switchToCeloMainnet: () => Promise<void>;
+  /** Drops the shared Celo slot. The Starknet and Ethereum slots are untouched. */
+  disconnectCelo: () => void;
 }
 
 const WalletContext = createContext<WalletState | null>(null);
@@ -91,6 +109,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [evm, setEvm] = useState<EvmWalletState>(EVM_DISCONNECTED);
+  const [celo, setCelo] = useState<EvmWalletState>(EVM_DISCONNECTED);
 
   /**
    * The derived identity, held in a ref rather than in state.
@@ -180,6 +199,49 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  /**
+   * Connects an EIP-1193 wallet into the shared Celo slot.
+   *
+   * A third, independent slot: this neither reads nor writes the Starknet
+   * session or the Ethereum/Sepolia slot, even when all three resolve to the
+   * same browser extension.
+   */
+  const connectCelo = useCallback(async (): Promise<void> => {
+    const provider = getEthereumProvider();
+    if (provider === null) {
+      setCelo({ status: "missing", address: null, chainId: null });
+      return;
+    }
+    const result = await connectCeloWallet();
+    const accounts = (await provider.request({ method: "eth_accounts" })) as string[];
+    const chainId = await readChainId(provider);
+    setCelo({
+      status: result === "wrongNetwork" ? "wrongNetwork" : "connected",
+      address: accounts[0] ?? null,
+      chainId: result === "wrongNetwork" ? chainId : EXPECTED_CELO_CHAIN_ID,
+    });
+  }, []);
+
+  const switchToCeloMainnet = useCallback(async (): Promise<void> => {
+    const provider = getEthereumProvider();
+    if (provider === null) {
+      setCelo({ status: "missing", address: null, chainId: null });
+      return;
+    }
+    await switchCeloToMainnet(provider);
+    const chainId = await readChainId(provider);
+    const accounts = (await provider.request({ method: "eth_accounts" })) as string[];
+    setCelo({
+      status: chainId === EXPECTED_CELO_CHAIN_ID ? "connected" : "wrongNetwork",
+      address: accounts[0] ?? null,
+      chainId,
+    });
+  }, []);
+
+  const disconnectCelo = useCallback((): void => {
+    setCelo(EVM_DISCONNECTED);
+  }, []);
+
   const disconnectEthereum = useCallback((): void => {
     setEvm(EVM_DISCONNECTED);
   }, []);
@@ -204,6 +266,40 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         return;
       }
       setEvm((current) => nextEvmState(current, { type: "networkChanged", chainId }, EXPECTED_SEPOLIA_CHAIN_ID));
+    };
+    const target = provider as unknown as {
+      on?: (event: string, cb: (...args: unknown[]) => void) => void;
+      removeListener?: (event: string, cb: (...args: unknown[]) => void) => void;
+    };
+    target.on?.("accountsChanged", onAccounts);
+    target.on?.("chainChanged", onChain);
+    return () => {
+      target.removeListener?.("accountsChanged", onAccounts);
+      target.removeListener?.("chainChanged", onChain);
+    };
+  }, []);
+
+  /**
+   * The same watch, independently, for the Celo slot. The underlying
+   * extension event fires once; each slot interprets it against its own
+   * expected chain id, so a wallet that is "connected" for Sepolia and
+   * "wrongNetwork" for Celo (or vice versa) is represented exactly as that.
+   */
+  useEffect(() => {
+    const provider = getEthereumProvider();
+    if (provider === null) return;
+    const onAccounts = (accounts: unknown) => {
+      const list = Array.isArray(accounts) ? accounts.map(String) : [];
+      setCelo((current) => nextEvmState(current, { type: "accountsChanged", accounts: list }, EXPECTED_CELO_CHAIN_ID));
+    };
+    const onChain = (hex: unknown) => {
+      let chainId: bigint;
+      try {
+        chainId = BigInt(String(hex));
+      } catch {
+        return;
+      }
+      setCelo((current) => nextEvmState(current, { type: "networkChanged", chainId }, EXPECTED_CELO_CHAIN_ID));
     };
     const target = provider as unknown as {
       on?: (event: string, cb: (...args: unknown[]) => void) => void;
@@ -290,6 +386,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       connectEthereum,
       switchToSepolia,
       disconnectEthereum,
+      celo,
+      connectCelo,
+      switchToCeloMainnet,
+      disconnectCelo,
     }),
     // Deliberately not depending on the identity: it arriving must not restart
     // the read that asked for it. Screens that need it call ensureIdentity.
@@ -305,6 +405,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       connectEthereum,
       switchToSepolia,
       disconnectEthereum,
+      celo,
+      connectCelo,
+      switchToCeloMainnet,
+      disconnectCelo,
     ],
   );
 

@@ -181,6 +181,12 @@ export interface Store {
   acceptAccountBind(input: AcceptAccountBindInput): Promise<AcceptAccountBindResult>;
   /** The durable fact, or null if this member has no registered account yet. */
   getAccountBinding(circleId: string, memberRef: string): Promise<AccountBinding | null>;
+  /**
+   * Whether an invite has ever been minted for this (circleId, memberRef),
+   * regardless of whether it has been accepted. Existence only — never
+   * returns the invite token itself.
+   */
+  hasAccountBindInvite(circleId: string, memberRef: string): Promise<boolean>;
 
   upsertIndexedCircle(circle: Omit<IndexedCircle, "updatedAt">): Promise<void>;
   listIndexedCircles(chainId: string): Promise<IndexedCircle[]>;
@@ -400,6 +406,10 @@ export class MemoryStore implements Store {
 
   async getAccountBinding(circleId: string, memberRef: string): Promise<AccountBinding | null> {
     return this.bindings.get(MemoryStore.bindKey(circleId, memberRef)) ?? null;
+  }
+
+  async hasAccountBindInvite(circleId: string, memberRef: string): Promise<boolean> {
+    return this.bindInvites.has(MemoryStore.bindKey(circleId, memberRef));
   }
 
   async upsertIndexedCircle(circle: Omit<IndexedCircle, "updatedAt">): Promise<void> {
