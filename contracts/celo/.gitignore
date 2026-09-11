@@ -2,3 +2,9 @@ node_modules/
 artifacts/
 cache/
 typechain-types/
+
+# Foundry (additional fuzz/invariant test layer; kept separate from Hardhat's
+# artifacts/cache above so the two toolchains never clobber each other).
+lib/
+out-foundry/
+cache-foundry/

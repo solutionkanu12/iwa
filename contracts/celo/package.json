@@ -7,6 +7,9 @@
     "compile": "hardhat compile",
     "test": "hardhat test",
     "test:mainnet-chainid": "hardhat test test-mainnet-chainid/IwaCircleCelo.mainnetChainId.test.ts --config hardhat.mainnetChainId.config.ts",
+    "test:foundry:setup": "forge install --no-git foundry-rs/forge-std",
+    "test:foundry": "forge test",
+    "test:foundry:ci": "FOUNDRY_PROFILE=ci forge test",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

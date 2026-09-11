@@ -1,0 +1,51 @@
+## Foundry fuzz/invariant layer for IwaCircleCelo.
+##
+## Additional to, not a replacement for, the Hardhat suite: `src` points at
+## the SAME contracts/ directory Hardhat compiles, so there is exactly one
+## copy of the production contract. Foundry's own build artifacts/cache live
+## in separate out-foundry/cache-foundry directories so the two toolchains
+## never clobber each other's state.
+##
+## Setup (one-time, not run by `forge test` itself):
+##   forge install --no-git foundry-rs/forge-std
+## lib/ is gitignored, matching how node_modules/ is gitignored for Hardhat:
+## a dependency to install locally, not to vendor in the repo.
+
+[profile.default]
+src = "contracts"
+test = "test-foundry"
+out = "out-foundry"
+cache_path = "cache-foundry"
+libs = ["lib", "node_modules"]
+
+solc_version = "0.8.27"
+# Matches hardhat.config.ts's optimizer settings and its "paris" EVM target
+# (Celo's EVM compatibility historically lagged past Paris — no PUSH0 —
+# so bytecode generated for these tests must not silently target a newer
+# EVM version than the production deployment does).
+optimizer = true
+optimizer_runs = 800
+evm_version = "paris"
+
+remappings = [
+  "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",
+  "forge-std/=lib/forge-std/src/",
+]
+
+# Fuzz/invariant run counts. Overridable per-run with FOUNDRY_PROFILE=ci
+# (below) for a deeper CI-only pass without slowing down local iteration.
+[fuzz]
+runs = 2000
+
+[invariant]
+runs = 250
+depth = 200
+fail_on_revert = true
+
+[profile.ci.fuzz]
+runs = 10000
+
+[profile.ci.invariant]
+runs = 512
+depth = 500
+fail_on_revert = true

@@ -227,6 +227,46 @@ The signed contribution authorization is domain-separated with
 `amount`, and `nonce`. It is not bound to `get_caller_address()` and must not
 contain a wallet private key, viewing key, or invite secret.
 
+## IwaCircleCelo fuzz/invariant coverage (Foundry)
+
+Alongside the Hardhat unit suite (`contracts/celo/test/`), `contracts/celo/test-foundry/` adds a
+Foundry layer that randomizes call sequences and boundary values rather than asserting fixed
+scenarios. It does not replace the Hardhat suite; it is a second, independent tool exercising the
+same production contract (`contracts/celo/contracts/IwaCircleCelo.sol` — unchanged by this addition).
+
+A stateful handler (`test-foundry/handlers/IwaCircleCeloHandler.sol`) drives random sequences of
+`contribute`/`collect`/`lockPayoutAndAdvance`/`finalizeDefault`/`recover`/donations/time-warps/
+unauthorized calls across three member-count configurations (2, 6, and the 32-member maximum), and
+checks, after every call and in dedicated `invariant_*` functions:
+
+- **Accounting**: `token.balanceOf(circle) == totalContributed + totalDonated - totalPaidOut -
+  totalRecovered`, at every step. Donations never inflate what's owed to anyone.
+- **No overpayment / recovery uniqueness**: `collect()` always pays exactly the scheduled member the
+  full pot; a caller who isn't the recipient never gains balance; `recover()` never succeeds unless
+  the contract's own `payoutStatus`/`contributionStatus` views already show the round was
+  DeferredLocked and that member actually paid.
+- **Round progression**: `currentRound` never exceeds `memberCount`, never rewinds, and a circle
+  that reached Completed never leaves it.
+- **Completion terminality**: once Completed, `contribute`/`collect`/`lockPayoutAndAdvance`/
+  `finalizeDefault` all revert with `Inactive`; `recover()` for a previously-locked round remains
+  callable, matching the contract's actual (and intentional) design rather than an invented rule.
+- **Organizer privilege / immutable configuration**: the organizer (deliberately not a circle member
+  in this harness) is refused exactly like any outsider; token, organizer, contributionAmount,
+  cadence, grace, member order, and every round's scheduled recipient never change across a run.
+
+Focused boundary fuzz tests (`test-foundry/fuzz/`) separately cover member count 2..32,
+contribution-amount overflow safety (checked arithmetic reverts rather than silently wrapping),
+due/grace timestamp boundaries including zero-grace, donation timing before/during/after a round,
+multiple simultaneous defaults, and permissionless-caller/non-member behavior. A dedicated file
+(`test-foundry/fuzz/MainnetChainId.t.sol`) exercises the same logic under an emulated chain id 42220
+with the real `CNGN_MAINNET` address (via `vm.etch`), isolated from the default-chainid suites so it
+never weakens or bypasses the production token pin.
+
+Configured: 2000 fuzz runs per property; 250 invariant runs × depth 200 per contract (a `ci` Foundry
+profile raises this to 10,000 fuzz runs / 512×500 invariant runs for deeper, less time-constrained
+passes). Result as of the run that produced this note: 48/48 Foundry tests passing, 0 findings in
+production contract logic.
+
 ## Celo member/account binding
 
 The Celo contribution flow (`iwa-web/src/chains/celo/contribution.ts`) must prove the connected
