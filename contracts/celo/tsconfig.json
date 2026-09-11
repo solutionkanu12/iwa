@@ -14,6 +14,7 @@
     "hardhat.config.ts",
     "hardhat.mainnetChainId.config.ts",
     "test/**/*.ts",
-    "test-mainnet-chainid/**/*.ts"
+    "test-mainnet-chainid/**/*.ts",
+    "deploy/**/*.ts"
   ]
 }

@@ -1,0 +1,10 @@
+{
+  "token": "0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f",
+  "contributionAmount": "5000000",
+  "cadenceSeconds": 604800,
+  "gracePeriodSeconds": 86400,
+  "members": [
+    "0x0000000000000000000000000000000000000001",
+    "0x0000000000000000000000000000000000000002"
+  ]
+}

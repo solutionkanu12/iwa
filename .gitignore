@@ -42,3 +42,7 @@ _run/
 !.env.example
 .stellar/
 .soroban/
+
+# Real Celo circle deployment values (member addresses, amounts) reviewed
+# locally before a deploy — never the product's real data in a tracked file.
+contracts/celo/deploy/circle.local.json
