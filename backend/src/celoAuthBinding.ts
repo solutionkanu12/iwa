@@ -17,11 +17,12 @@
 // against this domain and is rejected as a bad signer, not accepted and then
 // checked.
 //
-// THE SERVER DERIVES circleId AND memberRef FROM THE REQUEST IT IS ACTUALLY
-// HANDLING, exactly as authBinding.ts already documents for the Starknet
-// scheme. Nothing here reads a second, client-supplied copy of those fields
-// to compare against — there is only the one used for recovery, taken from
-// the top-level request body already validated by the route.
+// THE SERVER DERIVES circleId, circleContract, AND memberRef FROM THE
+// REQUEST IT IS ACTUALLY HANDLING, exactly as authBinding.ts already
+// documents for the Starknet scheme. Nothing here reads a second,
+// client-supplied copy of those fields to compare against — there is only
+// the one used for recovery, taken from the top-level request body already
+// validated by the route.
 
 import { verifyTypedData } from "ethers";
 
@@ -42,6 +43,8 @@ export type CeloAuthAction = (typeof CELO_AUTH_ACTIONS)[keyof typeof CELO_AUTH_A
 export interface CeloAuthorizationMessage {
   action: CeloAuthAction;
   circleId: string;
+  /** The deployed IwaCircleCelo address this authorization is for. Checked against organizer() on chain, never trusted from the message alone. */
+  circleContract: string;
   memberRef: string;
   /** The address this authorization claims to be signed by. Verified against the recovered signer, never trusted on its own. */
   organizer: string;
@@ -63,6 +66,7 @@ export function celoAuthorizationTypedData(message: CeloAuthorizationMessage) {
       AccountBindingInviteAuthorization: [
         { name: "action", type: "string" },
         { name: "circleId", type: "string" },
+        { name: "circleContract", type: "address" },
         { name: "memberRef", type: "string" },
         { name: "organizer", type: "address" },
         { name: "nonce", type: "bytes32" },
@@ -72,6 +76,7 @@ export function celoAuthorizationTypedData(message: CeloAuthorizationMessage) {
     message: {
       action: message.action,
       circleId: message.circleId,
+      circleContract: message.circleContract,
       memberRef: message.memberRef,
       organizer: message.organizer,
       nonce: message.nonce,

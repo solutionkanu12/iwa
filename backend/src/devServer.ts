@@ -8,14 +8,17 @@
 //   npm run dev:memory
 
 import { RpcProvider } from "starknet";
+import { JsonRpcProvider } from "ethers";
 
 import { createApp } from "./app.js";
 import { MemoryStore } from "./store.js";
 import { OnChainSignatureVerifier } from "./auth.js";
 import { OnChainCircleVerifier } from "./chainVerify.js";
+import { RpcCeloOrganizerReader } from "./celoChainVerify.js";
 
 const PORT = Number(process.env.PORT ?? 8080);
 const RPC = process.env.STARKNET_RPC_URL ?? "https://api.cartridge.gg/x/starknet/mainnet";
+const CELO_RPC = process.env.CELO_RPC_URL ?? "https://forno.celo.org";
 const ORIGINS = (process.env.CORS_ORIGINS ?? "http://localhost:5173")
   .split(",")
   .map((s) => s.trim())
@@ -25,12 +28,14 @@ const ORIGINS = (process.env.CORS_ORIGINS ?? "http://localhost:5173")
 const IWA_CIRCLE = "0x01f81497b09aa702a38715c0ec149d7672cd557c0caea480714d4802ff6f81be";
 
 const provider = new RpcProvider({ nodeUrl: RPC });
+const celoProvider = new JsonRpcProvider(CELO_RPC, 42220, { staticNetwork: true });
 
 const app = createApp({
   store: new MemoryStore(),
   corsOrigins: ORIGINS,
   verifier: new OnChainSignatureVerifier(provider),
   circleVerifier: new OnChainCircleVerifier(provider, IWA_CIRCLE),
+  celoOrganizerReader: new RpcCeloOrganizerReader(celoProvider),
 });
 
 app.listen(PORT, () => {

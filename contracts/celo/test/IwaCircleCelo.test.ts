@@ -82,6 +82,21 @@ describe("IwaCircleCelo", function () {
       expect(await circle.CELO_MAINNET_CHAIN_ID()).to.equal(42220);
     });
 
+    it("records the deployer as organizer", async function () {
+      expect(await circle.organizer()).to.equal(a.address);
+    });
+
+    it("records whichever account actually sent the deployment transaction, not a chosen member", async function () {
+      const factory = await ethers.getContractFactory("IwaCircleCelo");
+      const deployed = await factory
+        .connect(outsider)
+        .deploy(await token.getAddress(), AMOUNT, CADENCE, GRACE, [a.address, b.address]);
+      await deployed.waitForDeployment();
+      expect(await deployed.organizer()).to.equal(outsider.address);
+      // The deployer need not even be a member of the circle it deploys.
+      expect(await deployed.isMember(outsider.address)).to.equal(false);
+    });
+
     it("rejects a zero-address token", async function () {
       const factory = await ethers.getContractFactory("IwaCircleCelo");
       await expect(
@@ -463,6 +478,65 @@ describe("IwaCircleCelo", function () {
       expect(names).to.not.include("addMember");
       expect(await circle.memberAt(0)).to.equal(a.address);
       expect(await circle.memberAt(1)).to.equal(b.address);
+    });
+
+    it("organizer is immutable: no setter exists anywhere in the ABI", async function () {
+      const names = circle.interface.fragments
+        .filter((f: { type: string }) => f.type === "function")
+        .map((f: { name?: string }) => f.name);
+      for (const banned of ["setOrganizer", "changeOrganizer", "transferOrganizer"]) {
+        expect(names).to.not.include(banned);
+      }
+      // Solidity's own `immutable` keyword additionally makes any setter
+      // impossible to add without changing the compiled bytecode: there is
+      // no storage slot for this value to write to after construction.
+    });
+
+    it("organizer identity confers no fund-moving, payout, or override power", async function () {
+      // A deployer who is deliberately not a member.
+      const factory = await ethers.getContractFactory("IwaCircleCelo");
+      const deployed: any = await factory
+        .connect(outsider)
+        .deploy(await token.getAddress(), AMOUNT, CADENCE, GRACE, [a.address, b.address]);
+      await deployed.waitForDeployment();
+      expect(await deployed.organizer()).to.equal(outsider.address);
+
+      // organizer cannot contribute (not a member) despite being organizer.
+      await token.mint(outsider.address, AMOUNT * 4n);
+      await token.connect(outsider).approve(await deployed.getAddress(), AMOUNT * 4n);
+      await expect(deployed.connect(outsider).contribute()).to.be.revertedWithCustomError(
+        deployed,
+        "NotMember",
+      );
+
+      // organizer cannot collect a round it did not fund into, and collect()
+      // still pays only the scheduled member (a), never the organizer.
+      await token.mint(a.address, AMOUNT * 4n);
+      await token.connect(a).approve(await deployed.getAddress(), AMOUNT * 4n);
+      await token.mint(b.address, AMOUNT * 4n);
+      await token.connect(b).approve(await deployed.getAddress(), AMOUNT * 4n);
+      await deployed.connect(a).contribute();
+      await deployed.connect(b).contribute();
+      const before = await token.balanceOf(a.address);
+      await expect(deployed.connect(outsider).collect())
+        .to.emit(deployed, "Collected")
+        .withArgs(a.address, 1, AMOUNT * 2n);
+      expect(await token.balanceOf(a.address)).to.equal(before + AMOUNT * 2n);
+      // outsider approved but never transferred (contribute() reverted for
+      // it) and collect() paid a, not outsider: token balance is untouched.
+      expect(await token.balanceOf(outsider.address)).to.equal(AMOUNT * 4n);
+
+      // organizer gets exactly the same checks as any other caller here too:
+      // round 2 just started (collect() advanced it), so finalizing a
+      // default is refused for being too early, not granted early because
+      // the caller happens to be the organizer.
+      await expect(
+        deployed.connect(outsider).finalizeDefault(a.address),
+      ).to.be.revertedWithCustomError(deployed, "GraceNotExpired");
+      await expect(deployed.connect(outsider).recover(1)).to.be.revertedWithCustomError(
+        deployed,
+        "NotMember",
+      );
     });
   });
 

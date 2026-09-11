@@ -15,6 +15,8 @@ const schema = z.object({
   /** Set when the provider terminates TLS itself (Railway, Render internal). */
   DATABASE_SSL: z.enum(["true", "false"]).default("false"),
   STARKNET_RPC_URL: z.string().url(),
+  /** Used only to read IwaCircleCelo.organizer() on chain; never signs, never writes. */
+  CELO_RPC_URL: z.string().url().default("https://forno.celo.org"),
   /** Comma-separated exact origins. No wildcard in production. */
   CORS_ORIGINS: z.string().default(""),
   /**
@@ -39,6 +41,7 @@ export type Config = {
   databaseUrl: string;
   databaseSsl: boolean;
   starknetRpcUrl: string;
+  celoRpcUrl: string;
   corsOrigins: string[];
   adminAddresses: string[];
   indexerEnabled: boolean;
@@ -85,6 +88,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     databaseUrl: v.DATABASE_URL,
     databaseSsl: v.DATABASE_SSL === "true",
     starknetRpcUrl: v.STARKNET_RPC_URL,
+    celoRpcUrl: v.CELO_RPC_URL,
     corsOrigins,
     adminAddresses,
     indexerEnabled: v.INDEXER_ENABLED === "true",

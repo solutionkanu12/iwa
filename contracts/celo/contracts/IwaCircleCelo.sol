@@ -57,6 +57,13 @@ contract IwaCircleCelo is ReentrancyGuard {
     uint64 public immutable cadenceSeconds;
     uint64 public immutable gracePeriodSeconds;
     uint8 public immutable memberCount;
+    /// @notice Identity only: the deployer, recorded once. Confers no fund,
+    ///         payout, pause, upgrade, rescue, or override power — every
+    ///         function above ignores this value entirely. It exists so an
+    ///         off-chain caller (e.g. the backend) can read a circle's
+    ///         organizer from the contract itself rather than trust an
+    ///         unverified claim.
+    address public immutable organizer;
 
     CircleStatus public status;
     uint32 public currentRound;
@@ -102,6 +109,7 @@ contract IwaCircleCelo is ReentrancyGuard {
         cadenceSeconds = cadenceSeconds_;
         gracePeriodSeconds = gracePeriodSeconds_;
         memberCount = uint8(n);
+        organizer = msg.sender;
         currentRound = 1;
         roundStartedAt = uint64(block.timestamp);
         status = CircleStatus.Active;

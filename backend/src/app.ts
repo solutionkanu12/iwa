@@ -52,6 +52,8 @@ import {
   verifyCeloOrganizerAuthorization,
 } from "./celoAuth.js";
 import { CELO_AUTH_ACTIONS } from "./celoAuthBinding.js";
+import { RpcCeloOrganizerReader, type CeloOrganizerReader } from "./celoChainVerify.js";
+import { JsonRpcProvider } from "ethers";
 
 /**
  * The headers an authenticated organizer request carries, in the order
@@ -93,6 +95,12 @@ export interface AppOptions {
   sessions?: SessionStore;
   /** One-time Celo/EVM organizer-authorization nonces. Injected so tests control the clock. */
   celoNonces?: CeloAuthNonceStore;
+  /**
+   * Reads `organizer()` from a deployed IwaCircleCelo on chain. Injected so
+   * routes are testable without RPC; defaults to a real reader against
+   * public Celo mainnet, matching `circleVerifier`'s pattern for Starknet.
+   */
+  celoOrganizerReader?: CeloOrganizerReader;
   /**
    * Wallets allowed to read the operator dashboard. Absent or empty means the
    * admin API allows nobody, which is how an unconfigured deployment stays
@@ -244,6 +252,14 @@ export function createApp(options: AppOptions): Express {
   const challenges = options.challenges ?? new ChallengeStore(now);
   const sessions = options.sessions ?? new SessionStore(now);
   const celoNonces = options.celoNonces ?? new CeloAuthNonceStore(now);
+  // staticNetwork skips ethers's own eager network-detection call, so
+  // merely constructing this default (in every test that never exercises
+  // the Celo route) never reaches the network.
+  const celoOrganizerReader =
+    options.celoOrganizerReader ??
+    new RpcCeloOrganizerReader(
+      new JsonRpcProvider("https://forno.celo.org", 42220, { staticNetwork: true }),
+    );
   const verifier = options.verifier;
   const circleVerifier = options.circleVerifier;
   const admins = new AdminAllowlist(options.adminAddresses ?? []);
@@ -710,31 +726,26 @@ export function createApp(options: AppOptions): Express {
     const parsed = createAccountBindInviteSchema.safeParse(req.body);
     if (!parsed.success) return badRequest(res, parsed.error.issues);
     // The signed authorization is verified against exactly this request's
-    // circleId/memberRef — never against a second, client-supplied copy —
-    // so a valid signature for one circle/member cannot be replayed for
-    // another by changing the outer fields.
-    const auth = verifyCeloOrganizerAuthorization(
+    // circleId/circleContract/memberRef — never against a second,
+    // client-supplied copy — so a valid signature for one circle/member
+    // cannot be replayed for another by changing the outer fields. Organizer
+    // authority itself comes only from IwaCircleCelo.organizer() on chain,
+    // read fresh on every call: there is no backend-side record of "the
+    // organizer" this ever falls back to or is satisfied by instead.
+    const auth = await verifyCeloOrganizerAuthorization(
       CELO_AUTH_ACTIONS.accountBindingInvite,
       parsed.data.circleId,
+      parsed.data.circleContract,
       parsed.data.memberRef,
       parsed.data.authorization,
       celoNonces,
+      celoOrganizerReader,
       now,
     );
     if (!auth.ok) {
       return res.status(401).json({ error: auth.reason, message: CELO_AUTH_MESSAGES[auth.reason] });
     }
     try {
-      const organizerCheck = await store.establishCeloCircleOrganizer(
-        parsed.data.circleId,
-        auth.organizer,
-      );
-      if (!organizerCheck.ok) {
-        return res.status(403).json({
-          error: "not_organizer",
-          message: "This wallet is not the recorded organizer for this circle.",
-        });
-      }
       const result = await store.createAccountBindInvite({
         circleId: parsed.data.circleId,
         memberRef: parsed.data.memberRef,

@@ -2,6 +2,7 @@
 // HTTP server, and — unless disabled — runs the public event indexer.
 
 import { RpcProvider } from "starknet";
+import { JsonRpcProvider } from "ethers";
 
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
@@ -9,6 +10,7 @@ import { PgStore } from "./pgStore.js";
 import { CircleIndexer } from "./indexer/events.js";
 import { OnChainSignatureVerifier } from "./auth.js";
 import { OnChainCircleVerifier, RpcChainHealth } from "./chainVerify.js";
+import { RpcCeloOrganizerReader } from "./celoChainVerify.js";
 import { SN_MAIN } from "./validation.js";
 
 const IWA_CIRCLE = "0x01f81497b09aa702a38715c0ec149d7672cd557c0caea480714d4802ff6f81be";
@@ -24,6 +26,9 @@ async function main(): Promise<void> {
   const config = loadConfig();
   const store = new PgStore(config.databaseUrl, config.databaseSsl);
   const provider = new RpcProvider({ nodeUrl: config.starknetRpcUrl });
+  // A standard EOA signature recovers off-chain, so this provider is only
+  // ever used for organizer() reads — never for signing or writing.
+  const celoProvider = new JsonRpcProvider(config.celoRpcUrl, 42220, { staticNetwork: true });
 
   // Signatures are verified by asking the account contract itself, which is the
   // only scheme-agnostic check on Starknet.
@@ -32,6 +37,7 @@ async function main(): Promise<void> {
     corsOrigins: config.corsOrigins,
     verifier: new OnChainSignatureVerifier(provider),
     circleVerifier: new OnChainCircleVerifier(provider, IWA_CIRCLE),
+    celoOrganizerReader: new RpcCeloOrganizerReader(celoProvider),
     // Operators, from the environment and not from the database. An empty list
     // leaves the admin API closed to everybody, which is the safe default for a
     // deployment nobody has configured for operations yet.

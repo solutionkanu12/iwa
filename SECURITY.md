@@ -253,42 +253,61 @@ as `draft_slots.invite_token`), which stops an unauthenticated client from bindi
 
 ### Celo organizer authorization for `POST /api/account-bindings/invites`
 
-**Closed.** Minting a bind invite now requires an EIP-712 signature from the circle's recorded
-organizer, verified server-side in `backend/src/celoAuth.ts`/`celoAuthBinding.ts` — a Celo/EVM
-equivalent of the Starknet draft flow's `draftCreate` signature gate
-(`auth.ts`/`authBinding.ts`), built as its own scheme rather than reusing SNIP-12/felt assumptions
-that don't apply to standard EOA ECDSA signatures.
+**Closed, on-chain.** Minting a bind invite requires an EIP-712 signature from
+`IwaCircleCelo.organizer()` — read fresh from the deployed contract on every request, never from a
+backend-side record — verified server-side in `backend/src/celoAuth.ts`/`celoAuthBinding.ts`/
+`celoChainVerify.ts`. This is a Celo/EVM equivalent of the Starknet draft flow's `draftCreate`
+signature gate (`auth.ts`/`authBinding.ts`), built as its own scheme rather than reusing SNIP-12/
+felt assumptions that don't apply to standard EOA ECDSA signatures.
+
+**The on-chain identity.** `IwaCircleCelo.organizer` (`contracts/celo/contracts/IwaCircleCelo.sol`)
+is `address public immutable`, set once in the constructor to `msg.sender`. It is identity-only:
+every function in the contract ignores it entirely, so it confers no fund, payout, redirect, pause,
+upgrade, rescue, reorder, contribution-override, or default-override power. This is verified by
+dedicated contract tests (`organizer is immutable: no setter exists anywhere in the ABI`,
+`organizer identity confers no fund-moving, payout, or override power`) and by the full existing
+44-test suite remaining green with the field added.
 
 **Scheme:** `ethers.verifyTypedData` recovers the signer from a typed-data structure with domain
 `{name: "Iwa-Celo", version: "1", chainId: 42220}` and type `AccountBindingInviteAuthorization =
-[action, circleId, memberRef, organizer, nonce, expiresAt]`. The domain's `chainId` is a hardcoded
-server-side constant, not a client-supplied field — there is no way to submit a signature meant for
-another chain id, because verification always recomputes the hash against 42220 regardless of what
-was signed, so a mismatched signature simply fails to recover the claimed address. `circleId` and
-`memberRef` used for recovery are taken from the same top-level request fields the route is already
-acting on, never from a second, client-suppliable copy inside the authorization — mirroring
-`authBinding.ts`'s own stated principle that the server derives every bound value itself.
+[action, circleId, circleContract, memberRef, organizer, nonce, expiresAt]`. The domain's `chainId`
+is a hardcoded server-side constant, not a client-supplied field — there is no way to submit a
+signature meant for another chain id, because verification always recomputes the hash against 42220
+regardless of what was signed, so a mismatched signature simply fails to recover the claimed
+address. `circleId`, `circleContract`, and `memberRef` used for recovery are taken from the same
+top-level request fields the route is already acting on, never from a second, client-suppliable
+copy inside the authorization — mirroring `authBinding.ts`'s own stated principle that the server
+derives every bound value itself. `circleContract` (the deployed `IwaCircleCelo` address) is
+distinct from `circleId` (the chain-neutral, app-level table key): only `circleContract` is ever
+used for the RPC read.
 
-**Organizer authority:** first-claim. The first wallet to present a valid signature for a given
-`circleId` is recorded in `celo_circle_organizers` (`backend/migrations/003_celo_circle_organizers.sql`)
-and every later invite-mint for that `circleId` must be signed by the same wallet
-(`establishCeloCircleOrganizer`, race-safe via the table's primary key under Postgres and via
-single-threaded Map semantics under `MemoryStore`). This is a coordination record, not an on-chain
-fact — it does not verify that the recorded wallet actually deployed `IwaCircleCelo` at that
-address. Closing that would mean on-chain deployment verification mirroring `chainVerify.ts`'s
-Starknet pattern; not built here, and invite-minting remains unwired from any public organizer UI
-in the meantime, so the gap has no live exposure yet.
+**Organizer authority: read on chain, every time.** `RpcCeloOrganizerReader.readOrganizer`
+(`celoChainVerify.ts`) checks, in order: the RPC's own reported chain id is 42220; `circleContract`
+has deployed code; `organizer()` answers and decodes to a well-formed address. Only then is that
+address compared against the recovered signer. There is no backend-side cache, claim, or fallback
+that this can be satisfied by instead — the former `celo_circle_organizers` first-claim table is
+dropped (`migrations/004_drop_celo_circle_organizers.sql`) rather than kept as an alternate source,
+specifically so it can never be mistaken for one.
 
 **Replay protection:** the client picks its own 32-byte nonce; the server consumes it exactly once
 per organizer address (`CeloAuthNonceStore`), in-process, matching this service's documented
-single-replica deployment (`session.ts`). A signed authorization also expires within 5 minutes
-(`CELO_AUTH_MAX_TTL_SECONDS`) and is rejected outright if its own claimed window is longer than
-that, bounding how long a captured-but-unused signature stays dangerous.
+single-replica deployment (`session.ts`). Consumption happens last, after the (potentially slower)
+on-chain read, so two concurrent requests for the same signed authorization can both reach that
+read, but only one can win the final, synchronous consume. A signed authorization also expires
+within 5 minutes (`CELO_AUTH_MAX_TTL_SECONDS`) and is rejected outright if its own claimed window is
+longer than that, bounding how long a captured-but-unused signature stays dangerous.
 
 **Fail-closed on:** missing authorization, malformed fields, an unrecoverable signature, a signer
-that doesn't match the claimed organizer, an expired or over-long validity window, a reused nonce,
-and a wallet that isn't the circle's recorded organizer. None of these responses include the
-recorded organizer's address or any other circle/member detail beyond the generic reason code.
+that doesn't match the claimed organizer field, a signer that doesn't match the on-chain
+`organizer()`, an expired or over-long validity window, a reused nonce, no contract code at
+`circleContract`, an `organizer()` call that fails or reverts, a malformed `organizer()` response,
+and an unreachable or wrong-chain RPC connection. None of these responses include the real
+organizer's address or any other circle/member detail beyond the generic reason code.
+
+**Residual, accepted:** the RPC endpoint itself (`CELO_RPC_URL`, default `https://forno.celo.org`)
+is operator-configured and trusted; this module has no independent way to cross-check one RPC
+provider's answer against another. This mirrors the equivalent trust placed in `STARKNET_RPC_URL`
+for the Starknet side and is not new to this change.
 
 ## Asset allowlist
 

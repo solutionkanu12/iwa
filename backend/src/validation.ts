@@ -184,6 +184,10 @@ export const chainNeutralId = z
   .string()
   .regex(CHAIN_NEUTRAL_ID, "must be a short opaque identifier");
 
+export const EVM_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
+
+export const evmAddress = z.string().regex(EVM_ADDRESS_PATTERN, "must be a 20-byte EVM address");
+
 /**
  * A signed Celo/EVM organizer authorization, carried in the request body
  * rather than headers: a different transport from the Starknet x-iwa-*
@@ -191,7 +195,7 @@ export const chainNeutralId = z
  * each other by a route that reads the wrong one.
  */
 export const celoOrganizerAuthorizationSchema = z.object({
-  organizer: z.string().regex(/^0x[0-9a-fA-F]{40}$/, "must be a 20-byte EVM address"),
+  organizer: evmAddress,
   nonce: z.string().regex(/^0x[0-9a-fA-F]{64}$/, "must be a 32-byte hex nonce"),
   expiresAt: z.number().int().positive(),
   signature: z.string().regex(/^0x[0-9a-fA-F]{130}$/, "must be a 65-byte hex ECDSA signature"),
@@ -202,6 +206,13 @@ export const celoOrganizerAuthorizationSchema = z.object({
  * which chain this invite is for prevents an invite minted for one chain
  * adapter from being silently reused by another.
  *
+ * `circleContract` is the deployed IwaCircleCelo address the backend reads
+ * `organizer()` from on chain — the actual authorization source. `circleId`
+ * remains the chain-neutral, app-level identifier used as the table key
+ * (for Celo circles today, that will typically be the same address, but the
+ * two are validated and used separately: `circleId` never touches the RPC
+ * path).
+ *
  * `authorization` is required today because Celo is the only chain that
  * calls this route; a second chain adapter would need its own signed-
  * authorization shape and its own dispatch here, not a relaxation of this
@@ -209,6 +220,7 @@ export const celoOrganizerAuthorizationSchema = z.object({
  */
 export const createAccountBindInviteSchema = z.object({
   circleId: chainNeutralId,
+  circleContract: evmAddress,
   memberRef: chainNeutralId,
   chain: chainNeutralId,
   authorization: celoOrganizerAuthorizationSchema,

@@ -625,13 +625,16 @@ which member it is binding. Once written, a binding has no update path anywhere 
 only way to change one is a direct operator action outside the API surface.
 
 Minting an invite additionally requires a signed EIP-712 authorization from the circle's Celo/EVM
-organizer, verified in `backend/src/celoAuth.ts`/`celoAuthBinding.ts` — a Celo-specific scheme
-alongside (not built on) the Starknet `auth.ts`/`authBinding.ts` machinery, since standard EOA
-ECDSA signatures verify off-chain and don't need Starknet's on-chain `is_valid_signature` call or
-SNIP-12 felt encoding. Organizer authority itself is first-claim, recorded in
-`celo_circle_organizers` (`backend/migrations/003_celo_circle_organizers.sql`). See `SECURITY.md`'s
-"Celo member/account binding" for the full scheme and its accepted residual limitation (organizer
-authority is a coordination record, not verified against on-chain deployment).
+organizer, verified in `backend/src/celoAuth.ts`/`celoAuthBinding.ts`/`celoChainVerify.ts` — a
+Celo-specific scheme alongside (not built on) the Starknet `auth.ts`/`authBinding.ts` machinery,
+since standard EOA ECDSA signatures verify off-chain and don't need Starknet's on-chain
+`is_valid_signature` call or SNIP-12 felt encoding. Organizer authority is read on chain, every
+request, from `IwaCircleCelo.organizer()` (`contracts/celo/contracts/IwaCircleCelo.sol`) — an
+identity-only `immutable` field set to the deployer at construction, granting no fund, payout, or
+override power in the contract. There is no backend-side record of organizer identity: the earlier
+first-claim `celo_circle_organizers` table is dropped
+(`backend/migrations/004_drop_celo_circle_organizers.sql`), not kept as an alternate source. See
+`SECURITY.md`'s "Celo member/account binding" for the full scheme.
 
 The read path (`GET /api/account-bindings/:circleId/:memberRef?chain=&account=`) verifies a
 claimed identity rather than disclosing one: a caller must already name the exact chain/account it

@@ -162,14 +162,6 @@ export type AcceptAccountBindResult =
   | { ok: true; binding: AccountBinding }
   | { ok: false; reason: "unknown_invite" | "already_used" | "already_bound" };
 
-// --- Celo circle organizer authority ---
-//
-// First-claim, then immutable: see migrations/003_celo_circle_organizers.sql.
-
-export type EstablishCeloOrganizerResult =
-  | { ok: true; organizer: string }
-  | { ok: false; reason: "wrong_organizer" };
-
 export interface Store {
   createDraft(input: CreateDraftInput): Promise<CircleDraft>;
   getDraft(id: string): Promise<CircleDraft | null>;
@@ -183,12 +175,6 @@ export interface Store {
   markCreated(id: string, circleId: number, txHash: string | null): Promise<CircleDraft | null>;
   abandonDraft(id: string): Promise<CircleDraft | null>;
 
-  /**
-   * Records `organizer` as the circle's organizer if none is recorded yet,
-   * or confirms it matches the one already recorded. Never overwrites a
-   * different existing organizer.
-   */
-  establishCeloCircleOrganizer(circleId: string, organizer: string): Promise<EstablishCeloOrganizerResult>;
   /** Mints a single-use token that may bind exactly this (circleId, memberRef). */
   createAccountBindInvite(input: CreateAccountBindInviteInput): Promise<CreateAccountBindInviteResult>;
   /** Consumes an invite token, writing the binding it names. Never replaces an existing binding. */
@@ -273,7 +259,6 @@ export class MemoryStore implements Store {
     { circleId: string; memberRef: string; chain: string; inviteToken: string; usedAt: string | null }
   >();
   private bindings = new Map<string, AccountBinding>();
-  private celoOrganizers = new Map<string, string>();
 
   async createDraft(input: CreateDraftInput): Promise<CircleDraft> {
     const draft: CircleDraft = {
@@ -378,19 +363,6 @@ export class MemoryStore implements Store {
     if (!draft) return null;
     draft.status = "abandoned";
     return structuredClone(draft);
-  }
-
-  async establishCeloCircleOrganizer(
-    circleId: string,
-    organizer: string,
-  ): Promise<EstablishCeloOrganizerResult> {
-    const existing = this.celoOrganizers.get(circleId);
-    if (existing === undefined) {
-      this.celoOrganizers.set(circleId, organizer);
-      return { ok: true, organizer };
-    }
-    if (existing === organizer) return { ok: true, organizer };
-    return { ok: false, reason: "wrong_organizer" };
   }
 
   private static bindKey(circleId: string, memberRef: string): string {

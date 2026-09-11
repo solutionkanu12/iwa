@@ -23,7 +23,6 @@ import {
   type CreateAccountBindInviteResult,
   type CreateDraftInput,
   type DraftSlot,
-  type EstablishCeloOrganizerResult,
   type IndexedCircle,
   type Store,
 } from "./store.js";
@@ -333,37 +332,6 @@ export class PgStore implements Store {
     );
     if (r.rowCount === 0) return null;
     return this.loadDraft(this.pool, id);
-  }
-
-  /**
-   * First-claim, race-safe via the table's own primary key: under
-   * concurrent inserts for the same circle_id, Postgres lets exactly one
-   * commit and the rest fall through to ON CONFLICT, so the follow-up read
-   * always reflects the true winner rather than a value this process
-   * guessed at.
-   */
-  async establishCeloCircleOrganizer(
-    circleId: string,
-    organizer: string,
-  ): Promise<EstablishCeloOrganizerResult> {
-    const inserted = await this.pool.query<{ organizer: string }>(
-      `INSERT INTO celo_circle_organizers (circle_id, organizer)
-       VALUES ($1, $2)
-       ON CONFLICT (circle_id) DO NOTHING
-       RETURNING organizer`,
-      [circleId, organizer],
-    );
-    if ((inserted.rowCount ?? 0) > 0) {
-      return { ok: true, organizer };
-    }
-    const existing = await this.pool.query<{ organizer: string }>(
-      "SELECT organizer FROM celo_circle_organizers WHERE circle_id = $1",
-      [circleId],
-    );
-    if (existing.rows[0]?.organizer === organizer) {
-      return { ok: true, organizer };
-    }
-    return { ok: false, reason: "wrong_organizer" };
   }
 
   async createAccountBindInvite(

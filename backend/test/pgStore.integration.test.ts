@@ -71,17 +71,26 @@ suite("PgStore against a real Postgres", () => {
       "utf8",
     );
     await pool.query(organizersSql);
+    // Applied in order, exactly as the real migration runner would: 003
+    // creates celo_circle_organizers, 004 drops it again. Organizer
+    // authority is now read on chain (celoChainVerify.ts), never from this
+    // table, and this suite exercises that same real sequence rather than
+    // skipping straight to the end state.
+    const dropOrganizersSql = readFileSync(
+      resolve(HERE, "../migrations/004_drop_celo_circle_organizers.sql"),
+      "utf8",
+    );
+    await pool.query(dropOrganizersSql);
     // Mirror production: RLS on, no policies. The backend connects as the
     // table owner and bypasses it; anon and authenticated get nothing.
     await pool.query(`
-      ALTER TABLE public.circle_drafts          ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE public.draft_slots            ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE public.indexed_circles        ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE public.circle_events          ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE public.sync_cursor            ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE public.account_bind_invites   ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE public.account_bindings       ENABLE ROW LEVEL SECURITY;
-      ALTER TABLE public.celo_circle_organizers ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.circle_drafts        ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.draft_slots          ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.indexed_circles      ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.circle_events        ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.sync_cursor          ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.account_bind_invites ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.account_bindings     ENABLE ROW LEVEL SECURITY;
     `);
     store = new PgStore(DATABASE_URL as string, false);
   });
@@ -95,7 +104,7 @@ suite("PgStore against a real Postgres", () => {
   beforeEach(async () => {
     await pool.query(
       `TRUNCATE circle_events, draft_slots, circle_drafts, indexed_circles,
-         sync_cursor, account_bind_invites, account_bindings, celo_circle_organizers
+         sync_cursor, account_bind_invites, account_bindings
          RESTART IDENTITY CASCADE`,
     );
   });
@@ -118,30 +127,12 @@ suite("PgStore against a real Postgres", () => {
       "sync_cursor",
       "account_bind_invites",
       "account_bindings",
-      "celo_circle_organizers",
     ]) {
       expect(tables).toContain(t);
     }
-  });
-
-  it("first claim establishes a Celo circle's organizer, race-safe under Postgres's own conflict handling", async () => {
-    const circleId = "0xceloCircleOrganizer1";
-    const organizerA = "celo:0x00000000000000000000000000000000000000aa";
-    const organizerB = "celo:0x00000000000000000000000000000000000000bb";
-
-    const [a, b] = await Promise.all([
-      store.establishCeloCircleOrganizer(circleId, organizerA),
-      store.establishCeloCircleOrganizer(circleId, organizerB),
-    ]);
-    const wins = [a, b].filter((r) => r.ok);
-    const losses = [a, b].filter((r) => !r.ok);
-    expect(wins).toHaveLength(1);
-    expect(losses).toHaveLength(1);
-
-    // Re-establishing with the winning organizer is idempotent.
-    const winner = wins[0]!.ok ? wins[0].organizer : "";
-    const again = await store.establishCeloCircleOrganizer(circleId, winner);
-    expect(again).toEqual({ ok: true, organizer: winner });
+    // Superseded by on-chain organizer verification (celoChainVerify.ts);
+    // migration 004 drops it, and this proves that actually took effect.
+    expect(tables).not.toContain("celo_circle_organizers");
   });
 
   it("mints an account-bind invite and accepts it into a durable binding", async () => {
