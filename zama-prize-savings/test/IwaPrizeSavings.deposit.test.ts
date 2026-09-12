@@ -122,6 +122,11 @@ describe("P1 - IwaPrizeSavings deposit", function () {
     expect(await decryptTotal()).to.equal(40n);
     expect(await decryptPoolTokenBalance()).to.equal(40n);
     expect(await decryptUserTokenBalance(addrA, walletA)).to.equal(60n);
+    // Depositing alone does NOT join the round - that is now explicit.
+    expect(await pool.participantCount()).to.equal(0n);
+    expect(await pool.isParticipant(addrA)).to.equal(false);
+
+    await (await pool.connect(walletA).joinRound()).wait();
     expect(await pool.participantCount()).to.equal(1n);
     expect(await pool.isParticipant(addrA)).to.equal(true);
   });
@@ -132,6 +137,7 @@ describe("P1 - IwaPrizeSavings deposit", function () {
 
     await depositAs(walletA, addrA, 40n);
     await depositAs(walletA, addrA, 20n);
+    await (await pool.connect(walletA).joinRound()).wait();
 
     expect(await decryptUserCredited(addrA, walletA)).to.equal(60n);
     expect(await decryptTotal()).to.equal(60n);
@@ -240,99 +246,35 @@ describe("P1 - IwaPrizeSavings deposit", function () {
 
   // ---------------------------------------------------------------------
   // Participant cap and anti-grief
+  //
+  // NOTE (multi-round redesign): deposit() no longer registers a
+  // participant or enforces any cap - saving and joining a round are now
+  // separate actions (joinRound()). deposit() itself has NO participant
+  // limit at all (only the MAX_POOL_TOTAL headroom clamp, covered in
+  // IwaPrizeSavings.cap.test.ts). The per-round 16-participant cap, its
+  // "round full" revert, the zero-transfer anti-grief property, and the
+  // "the cap resets every round" property now live on joinRound() and are
+  // covered by IwaPrizeSavings.rounds.test.ts (P5, P6, P7).
   // ---------------------------------------------------------------------
 
-  it("H: participant cap - the 17th distinct wallet is rejected with 'pool full'", async function () {
+  it("H: deposit() itself has no participant cap - many distinct wallets can all deposit freely", async function () {
     for (let i = 0; i < 16; i++) {
-      const wallet = (await ethers.getSigners())[i + 3]; // deployer + A + B + 16 more
-      const addr = await wallet.getAddress();
-      await mintAndWrapAs(wallet, addr, 100n);
-      await setOperatorAs(wallet, (await ethers.provider.getBlock("latest"))!.timestamp + 3600);
-      await depositAs(wallet, addr, 10n);
-    }
-    expect(await pool.participantCount()).to.equal(16n);
-
-    // 17th distinct wallet.
-    const wallet17 = (await ethers.getSigners())[19];
-    const addr17 = await wallet17.getAddress();
-    await mintAndWrapAs(wallet17, addr17, 100n);
-    await setOperatorAs(wallet17, (await ethers.provider.getBlock("latest"))!.timestamp + 3600);
-
-    let reverted = false;
-    let message = "";
-    try {
-      await depositAs(wallet17, addr17, 10n);
-    } catch (err: any) {
-      reverted = true;
-      message = String(err?.message ?? "");
-    }
-    expect(reverted, "17th wallet must be rejected").to.be.true;
-    expect(message).to.contain("pool full");
-    expect(await pool.participantCount()).to.equal(16n);
-    expect(await decryptPoolTokenBalance()).to.equal(160n);
-  });
-
-  it("I: existing participants can keep depositing after the cap is reached", async function () {
-    for (let i = 0; i < 15; i++) {
       const wallet = (await ethers.getSigners())[i + 3];
       const addr = await wallet.getAddress();
       await mintAndWrapAs(wallet, addr, 100n);
       await setOperatorAs(wallet, (await ethers.provider.getBlock("latest"))!.timestamp + 3600);
       await depositAs(wallet, addr, 10n);
     }
-    await mintAndWrapAs(walletA, addrA, 100n);
-    await setOperatorAs(walletA, (await ethers.provider.getBlock("latest"))!.timestamp + 3600);
-    await depositAs(walletA, addrA, 10n);
-    expect(await pool.participantCount()).to.equal(16n);
+    // deposit() alone never registers anyone (see joinRound cap tests).
+    expect(await pool.participantCount()).to.equal(0n);
 
-    // Wallet A (already a participant) deposits again: must NOT revert.
-    await depositAs(walletA, addrA, 25n);
-    expect(await decryptUserCredited(addrA, walletA)).to.equal(35n);
-    expect(await pool.participantCount()).to.equal(16n);
-  });
-
-  it("J: repeated zero-transfer attempts cannot grief the cap - one slot per wallet, pool stays functional", async function () {
-    // Wallet Z holds NO confidential tokens and makes 5 shortfall deposits.
-    const walletZ = (await ethers.getSigners())[3];
-    const addrZ = await walletZ.getAddress();
-    await setOperatorAs(walletZ, (await ethers.provider.getBlock("latest"))!.timestamp + 3600);
-
-    for (let i = 0; i < 5; i++) {
-      await depositAs(walletZ, addrZ, 100n);
-    }
-    expect(await pool.participantCount(), "Z must occupy exactly one slot").to.equal(1n);
-    expect(await decryptUserCredited(addrZ, walletZ)).to.equal(0n);
-    expect(await decryptTotal()).to.equal(0n);
-
-    // 15 more real wallets fill the remaining slots.
-    for (let i = 0; i < 15; i++) {
-      const wallet = (await ethers.getSigners())[i + 4];
-      const addr = await wallet.getAddress();
-      await mintAndWrapAs(wallet, addr, 100n);
-      await setOperatorAs(wallet, (await ethers.provider.getBlock("latest"))!.timestamp + 3600);
-      await depositAs(wallet, addr, 10n);
-    }
-    expect(await pool.participantCount()).to.equal(16n);
-
-    // 17th wallet rejected.
     const wallet17 = (await ethers.getSigners())[19];
     const addr17 = await wallet17.getAddress();
     await mintAndWrapAs(wallet17, addr17, 100n);
     await setOperatorAs(wallet17, (await ethers.provider.getBlock("latest"))!.timestamp + 3600);
-    let reverted = false;
-    try {
-      await depositAs(wallet17, addr17, 10n);
-    } catch {
-      reverted = true;
-    }
-    expect(reverted, "17th wallet must be rejected").to.be.true;
+    await depositAs(wallet17, addr17, 10n); // must NOT revert - no cap on deposit
 
-    // Z can still deposit for real after all those attempts - the pool is
-    // functional and Z's slot was never consumed more than once.
-    await mintAndWrapAs(walletZ, addrZ, 40n);
-    await depositAs(walletZ, addrZ, 40n);
-    expect(await decryptUserCredited(addrZ, walletZ)).to.equal(40n);
-    expect(await decryptTotal()).to.equal(190n); // 15*10 + 40
+    expect(await decryptPoolTokenBalance()).to.equal(170n);
   });
 
   // ---------------------------------------------------------------------
@@ -354,24 +296,31 @@ describe("P1 - IwaPrizeSavings deposit", function () {
       "confidentialBalanceOf",
       "confidentialProtocolId",
       "confidentialTotal",
+      "currentRoundId",
       "deposit",
       "draw",
-      "drawTicket",
+      "drawTicketOf",
       "fundPrize",
-      "hasClaimed",
+      "hasClaimedRound",
       "isParticipant",
+      "isParticipantInRound",
+      "isRoundFinalized",
+      "joinRound",
       "lockRound",
       "lockTimestamp",
+      "lockTimestampOf",
       "owner",
       "participantCount",
-      "participantIndex",
-      "participants",
       "prizeReserve",
+      "prizeReserveOf",
       "renounceOwnership",
+      "roundParticipantAt",
+      "roundParticipantCount",
       "roundState",
+      "roundStateOf",
       "token",
       "transferOwnership",
-      "winnerIndex",
+      "winnerIndexOf",
       "withdraw",
       "withdrawAll",
     ]);
@@ -406,9 +355,10 @@ describe("P1 - IwaPrizeSavings deposit", function () {
       }
     }
 
-    // The Deposited event itself carries no data at all. (The
-    // ParticipantRegistered event legitimately carries the PUBLIC participant
-    // index - membership is public by design - but never an amount.)
+    // The Deposited event itself carries no data at all. (The JoinedRound
+    // event, emitted only by the separate joinRound() call, legitimately
+    // carries the PUBLIC participant index - membership is public by
+    // design - but never an amount.)
     const depositedTopic = ethers.id("Deposited(address)");
     const depositedLog = ourLogs.find((l: any) => l.topics[0] === depositedTopic);
     expect(depositedLog, "expected a Deposited event").to.not.be.undefined;

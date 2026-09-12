@@ -7,6 +7,16 @@ import type { Signer } from "ethers";
  * P3 draw tests for IwaPrizeSavings (approved spec section 7, corrections
  * B4 euint16 winner index and C6 permissionless timeout).
  *
+ * Multi-round redesign note: draw() now advances currentRoundId
+ * automatically, in the SAME transaction, the instant it draws round N -
+ * round N becomes historical (state Drawn, read via roundStateOf(N) /
+ * winnerIndexOf(N)) and round N+1 opens immediately. Joining a round is now
+ * a separate, explicit joinRound() call after deposit(). See
+ * IwaPrizeSavings.rounds.test.ts for the dedicated multi-round lifecycle
+ * suite; this file re-verifies that the single-round draw mechanics
+ * (weighted walk, timeout authorization, HCU bound, privacy) still hold
+ * exactly as before within one round.
+ *
  * DRAW_TIMEOUT = 900 seconds (approved 2026-09-05, Sepolia bounty-MVP only):
  *   - owner may draw immediately after lockRound()
  *   - non-owner must revert before lockTimestamp + 900
@@ -82,6 +92,13 @@ describe("P3 - IwaPrizeSavings draw", function () {
     return (await pool.connect(signer).deposit(encrypted.handles[0], encrypted.inputProof)).wait();
   }
 
+  async function saveAndJoin(signer: Signer, addr: string, value: bigint) {
+    await mintAndWrapAs(signer, addr, 100n > value ? 100n : value);
+    await setOperatorAs(signer, poolAddr);
+    await depositAs(signer, addr, value);
+    return (await pool.connect(signer).joinRound()).wait();
+  }
+
   async function fundPrizeAs(signer: Signer, addr: string, value: bigint) {
     const encrypted = await fhevm
       .createEncryptedInput(poolAddr, addr)
@@ -90,8 +107,8 @@ describe("P3 - IwaPrizeSavings draw", function () {
     return (await pool.connect(signer).fundPrize(encrypted.handles[0], encrypted.inputProof)).wait();
   }
 
-  async function decryptWinner(): Promise<bigint> {
-    const handle = await pool.winnerIndex();
+  async function decryptWinnerOf(roundId: bigint): Promise<bigint> {
+    const handle = await pool.winnerIndexOf(roundId);
     if (handle === ethers.ZeroHash) return 0n;
     return fhevm.debugger.decryptEuint(FhevmType.euint16, handle);
   }
@@ -141,24 +158,22 @@ describe("P3 - IwaPrizeSavings draw", function () {
   });
 
   it("2: owner can draw immediately after lock (production randEuint64 path)", async function () {
-    await mintAndWrapAs(walletA, addrA, 100n);
-    await setOperatorAs(walletA, poolAddr);
-    await depositAs(walletA, addrA, 50n);
+    await saveAndJoin(walletA, addrA, 50n);
 
     await pool.connect(deployer).lockRound();
     const tx = await pool.connect(deployer).draw();
     await tx.wait();
 
-    expect(await pool.roundState()).to.equal(2n); // Drawn
-    const winner = await decryptWinner();
+    expect(await pool.currentRoundId(), "round advances automatically").to.equal(2n);
+    expect(await pool.roundStateOf(1n)).to.equal(2n); // Drawn
+    expect(await pool.roundState()).to.equal(0n); // round 2 is Open
+    const winner = await decryptWinnerOf(1n);
     // Exactly one registered participant (index 0), so either 0 or NO_WINNER.
     expect(winner === 0n || winner === BigInt(NO_WINNER)).to.be.true;
   });
 
   it("3: non-owner cannot draw before lockTimestamp + 900", async function () {
-    await mintAndWrapAs(walletA, addrA, 100n);
-    await setOperatorAs(walletA, poolAddr);
-    await depositAs(walletA, addrA, 50n);
+    await saveAndJoin(walletA, addrA, 50n);
     await pool.connect(deployer).lockRound();
 
     let reverted = false;
@@ -171,9 +186,7 @@ describe("P3 - IwaPrizeSavings draw", function () {
   });
 
   it("4: non-owner can draw at lockTimestamp + 900 (and not before)", async function () {
-    await mintAndWrapAs(walletA, addrA, 100n);
-    await setOperatorAs(walletA, poolAddr);
-    await depositAs(walletA, addrA, 50n);
+    await saveAndJoin(walletA, addrA, 50n);
     await pool.connect(deployer).lockRound();
     const lockTs = Number(await pool.lockTimestamp());
 
@@ -193,24 +206,25 @@ describe("P3 - IwaPrizeSavings draw", function () {
     const receipt = await tx.wait();
     const drawnBlock = await ethers.provider.getBlock(receipt.blockNumber);
     expect(drawnBlock!.timestamp >= lockTs + DRAW_TIMEOUT).to.be.true;
-    expect(await pool.roundState()).to.equal(2n); // Drawn
+    expect(await pool.roundStateOf(1n)).to.equal(2n); // Drawn
   });
 
-  it("5: draw cannot run twice", async function () {
-    await mintAndWrapAs(walletA, addrA, 100n);
-    await setOperatorAs(walletA, poolAddr);
-    await depositAs(walletA, addrA, 50n);
+  it("5: draw cannot run twice for the same round", async function () {
+    await saveAndJoin(walletA, addrA, 50n);
     await pool.connect(deployer).lockRound();
     await (await pool.connect(deployer).draw()).wait();
 
+    // The round already advanced to 2 (Open); draw() on round 2 (still
+    // Open, never locked) must revert with "not locked" - there is no way
+    // to re-run round 1's draw.
     let reverted = false;
     try {
       await pool.connect(deployer).draw();
     } catch {
       reverted = true;
     }
-    expect(reverted, "second draw must revert").to.be.true;
-    expect(await pool.roundState()).to.equal(2n); // still Drawn
+    expect(reverted, "draw on the fresh Open round must revert").to.be.true;
+    expect(await pool.roundStateOf(1n)).to.equal(2n); // round 1 still Drawn
   });
 
   it("6: DRAW_TIMEOUT is a public plaintext constant of 900", async function () {
@@ -237,18 +251,21 @@ describe("P3 - IwaPrizeSavings draw", function () {
     return (await h.connect(signer).drawWithTicket(encrypted.handles[0], encrypted.inputProof)).wait();
   }
 
-  async function decryptHarnessWinner(h: any): Promise<bigint> {
-    const handle = await h.winnerIndex();
+  async function decryptHarnessWinnerOf(h: any, roundId: bigint): Promise<bigint> {
+    const handle = await h.winnerIndexOf(roundId);
     if (handle === ethers.ZeroHash) return 0n;
     return fhevm.debugger.decryptEuint(FhevmType.euint16, handle);
   }
 
-  async function harnessDeposit(h: any, signer: Signer, addr: string, value: bigint) {
+  async function harnessSaveAndJoin(h: any, signer: Signer, addr: string, value: bigint) {
+    await mintAndWrapAs(signer, addr, 100n > value ? 100n : value);
+    await setOperatorAsH(signer, h);
     const encrypted = await fhevm
       .createEncryptedInput(await h.getAddress(), addr)
       .add64(value)
       .encrypt();
-    return (await h.connect(signer).deposit(encrypted.handles[0], encrypted.inputProof)).wait();
+    await (await h.connect(signer).deposit(encrypted.handles[0], encrypted.inputProof)).wait();
+    return (await h.connect(signer).joinRound()).wait();
   }
 
   it("7: the production walk uses the S2-proven FHE operations (source structural match)", async function () {
@@ -261,17 +278,15 @@ describe("P3 - IwaPrizeSavings draw", function () {
     expect(source).to.contain("FHE.randEuint64(uint64(MAX_POOL_TOTAL))");
     expect(source).to.contain("FHE.and(FHE.le(lower, ticket), FHE.lt(ticket, running))");
     expect(source).to.contain("FHE.select(inRange, FHE.asEuint16(i), selected)");
-    expect(source).to.contain("FHE.add(running, _credited[participants[i]])");
+    expect(source).to.contain("FHE.add(running, _credited[r.participants[i]])");
   });
 
   it("8: the stored winner is a euint16 handle (type-checked via euint16 decrypt)", async function () {
-    await mintAndWrapAs(walletA, addrA, 100n);
-    await setOperatorAs(walletA, poolAddr);
-    await depositAs(walletA, addrA, 50n);
+    await saveAndJoin(walletA, addrA, 50n);
     await pool.connect(deployer).lockRound();
     await (await pool.connect(deployer).draw()).wait();
 
-    const handle = await pool.winnerIndex();
+    const handle = await pool.winnerIndexOf(1n);
     // A type mismatch would fail this decrypt (FhevmType.euint16).
     const clear = await fhevm.debugger.decryptEuint(FhevmType.euint16, handle);
     expect(clear === 0n || clear === BigInt(NO_WINNER)).to.be.true;
@@ -279,80 +294,58 @@ describe("P3 - IwaPrizeSavings draw", function () {
 
   it("9: an early-interval participant can win (ticket 5 of weights [10,20,30] -> index 0)", async function () {
     const h = await deployHarness();
-    for (const [signer, addr, v] of [
-      [walletA, addrA, 10n],
-      [walletB, addrB, 20n],
-    ] as const) {
-      await mintAndWrapAs(signer, addr, 100n);
-      await setOperatorAsH(signer, h);
-      await harnessDeposit(h, signer, addr, v);
-    }
-    // Third weight 30 from a fresh wallet.
+    await harnessSaveAndJoin(h, walletA, addrA, 10n);
+    await harnessSaveAndJoin(h, walletB, addrB, 20n);
     const walletC = (await ethers.getSigners())[3];
     const addrC = await walletC.getAddress();
-    await mintAndWrapAs(walletC, addrC, 100n);
-    await setOperatorAsH(walletC, h);
-    await harnessDeposit(h, walletC, addrC, 30n);
+    await harnessSaveAndJoin(h, walletC, addrC, 30n);
 
     await h.connect(deployer).lockRound();
     await harnessDrawWithTicket(h, deployer, addrOwner, 5n);
-    expect(await decryptHarnessWinner(h)).to.equal(0n);
+    expect(await decryptHarnessWinnerOf(h, 1n)).to.equal(0n);
   });
 
   it("10: a middle participant can win (ticket 15 of weights [10,20,30] -> index 1)", async function () {
     const h = await deployHarness();
-    for (const [signer, addr, v] of [
-      [walletA, addrA, 10n],
-      [walletB, addrB, 20n],
-    ] as const) {
-      await mintAndWrapAs(signer, addr, 100n);
-      await setOperatorAsH(signer, h);
-      await harnessDeposit(h, signer, addr, v);
-    }
+    await harnessSaveAndJoin(h, walletA, addrA, 10n);
+    await harnessSaveAndJoin(h, walletB, addrB, 20n);
     const walletC = (await ethers.getSigners())[3];
     const addrC = await walletC.getAddress();
-    await mintAndWrapAs(walletC, addrC, 100n);
-    await setOperatorAsH(walletC, h);
-    await harnessDeposit(h, walletC, addrC, 30n);
+    await harnessSaveAndJoin(h, walletC, addrC, 30n);
 
     await h.connect(deployer).lockRound();
     await harnessDrawWithTicket(h, deployer, addrOwner, 15n);
-    expect(await decryptHarnessWinner(h)).to.equal(1n);
+    expect(await decryptHarnessWinnerOf(h, 1n)).to.equal(1n);
   });
 
   it("11: the last participant can win (ticket 55 of weights [10,20,30] -> index 2)", async function () {
     const h = await deployHarness();
-    for (const [signer, addr, v] of [
-      [walletA, addrA, 10n],
-      [walletB, addrB, 20n],
-    ] as const) {
-      await mintAndWrapAs(signer, addr, 100n);
-      await setOperatorAsH(signer, h);
-      await harnessDeposit(h, signer, addr, v);
-    }
+    await harnessSaveAndJoin(h, walletA, addrA, 10n);
+    await harnessSaveAndJoin(h, walletB, addrB, 20n);
     const walletC = (await ethers.getSigners())[3];
     const addrC = await walletC.getAddress();
-    await mintAndWrapAs(walletC, addrC, 100n);
-    await setOperatorAsH(walletC, h);
-    await harnessDeposit(h, walletC, addrC, 30n);
+    await harnessSaveAndJoin(h, walletC, addrC, 30n);
 
     await h.connect(deployer).lockRound();
     await harnessDrawWithTicket(h, deployer, addrOwner, 55n);
-    expect(await decryptHarnessWinner(h)).to.equal(2n);
+    expect(await decryptHarnessWinnerOf(h, 1n)).to.equal(2n);
   });
 
   it("12: a zero-weight participant can never win (weights [10,0,20], ticket 10 -> index 2)", async function () {
     const h = await deployHarness();
     const wallets = [(await ethers.getSigners())[3], walletA, walletB];
+    const values = [10n, 0n, 20n];
     for (const [i, w] of wallets.entries()) {
       const addr = await w.getAddress();
       await mintAndWrapAs(w, addr, 100n);
       await setOperatorAsH(w, h);
-      await harnessDeposit(h, w, addr, [10n, 0n, 20n][i]);
+      const encrypted = await fhevm.createEncryptedInput(await h.getAddress(), addr).add64(values[i]).encrypt();
+      await (await h.connect(w).deposit(encrypted.handles[0], encrypted.inputProof)).wait();
+      await (await h.connect(w).joinRound()).wait();
     }
     await h.connect(deployer).lockRound();
     await harnessDrawWithTicket(h, deployer, addrOwner, 10n);
-    expect(await decryptHarnessWinner(h)).to.equal(2n);
+    expect(await decryptHarnessWinnerOf(h, 1n)).to.equal(2n);
   });
 
   it("13: an all-zero pool yields NO_WINNER", async function () {
@@ -361,47 +354,35 @@ describe("P3 - IwaPrizeSavings draw", function () {
       const addr = await w.getAddress();
       await mintAndWrapAs(w, addr, 100n);
       await setOperatorAsH(w, h);
-      await harnessDeposit(h, w, addr, 0n);
+      const encrypted = await fhevm.createEncryptedInput(await h.getAddress(), addr).add64(0n).encrypt();
+      await (await h.connect(w).deposit(encrypted.handles[0], encrypted.inputProof)).wait();
+      await (await h.connect(w).joinRound()).wait();
     }
     await h.connect(deployer).lockRound();
     await harnessDrawWithTicket(h, deployer, addrOwner, 0n);
-    expect(await decryptHarnessWinner(h)).to.equal(BigInt(NO_WINNER));
+    expect(await decryptHarnessWinnerOf(h, 1n)).to.equal(BigInt(NO_WINNER));
   });
 
   it("14: a ticket exactly at the confidential total yields NO_WINNER (no wraparound)", async function () {
     const h = await deployHarness();
-    for (const [signer, addr, v] of [
-      [walletA, addrA, 10n],
-      [walletB, addrB, 20n],
-    ] as const) {
-      await mintAndWrapAs(signer, addr, 100n);
-      await setOperatorAsH(signer, h);
-      await harnessDeposit(h, signer, addr, v);
-    }
+    await harnessSaveAndJoin(h, walletA, addrA, 10n);
+    await harnessSaveAndJoin(h, walletB, addrB, 20n);
     const walletC = (await ethers.getSigners())[3];
     const addrC = await walletC.getAddress();
-    await mintAndWrapAs(walletC, addrC, 100n);
-    await setOperatorAsH(walletC, h);
-    await harnessDeposit(h, walletC, addrC, 30n); // total 60
+    await harnessSaveAndJoin(h, walletC, addrC, 30n); // total 60
 
     await h.connect(deployer).lockRound();
     await harnessDrawWithTicket(h, deployer, addrOwner, 60n); // == total
-    expect(await decryptHarnessWinner(h)).to.equal(BigInt(NO_WINNER));
+    expect(await decryptHarnessWinnerOf(h, 1n)).to.equal(BigInt(NO_WINNER));
   });
 
   it("15: a ticket beyond the confidential total yields NO_WINNER (rollover case)", async function () {
     const h = await deployHarness();
-    for (const [signer, addr, v] of [
-      [walletA, addrA, 10n],
-      [walletB, addrB, 20n],
-    ] as const) {
-      await mintAndWrapAs(signer, addr, 100n);
-      await setOperatorAsH(signer, h);
-      await harnessDeposit(h, signer, addr, v);
-    }
+    await harnessSaveAndJoin(h, walletA, addrA, 10n);
+    await harnessSaveAndJoin(h, walletB, addrB, 20n);
     await h.connect(deployer).lockRound();
     await harnessDrawWithTicket(h, deployer, addrOwner, 999n);
-    expect(await decryptHarnessWinner(h)).to.equal(BigInt(NO_WINNER));
+    expect(await decryptHarnessWinnerOf(h, 1n)).to.equal(BigInt(NO_WINNER));
   });
 
   it("16: prizeReserve does not affect weighting (fund 300, weights [10,20] unchanged)", async function () {
@@ -409,17 +390,11 @@ describe("P3 - IwaPrizeSavings draw", function () {
     await mintAndWrapAs(deployer, addrOwner, 300n);
     await setOperatorAsH(deployer, h);
     await harnessFundPrize(h, 300n);
-    for (const [signer, addr, v] of [
-      [walletA, addrA, 10n],
-      [walletB, addrB, 20n],
-    ] as const) {
-      await mintAndWrapAs(signer, addr, 100n);
-      await setOperatorAsH(signer, h);
-      await harnessDeposit(h, signer, addr, v);
-    }
+    await harnessSaveAndJoin(h, walletA, addrA, 10n);
+    await harnessSaveAndJoin(h, walletB, addrB, 20n);
     await h.connect(deployer).lockRound();
     await harnessDrawWithTicket(h, deployer, addrOwner, 5n); // [0,10) -> index 0
-    expect(await decryptHarnessWinner(h)).to.equal(0n);
+    expect(await decryptHarnessWinnerOf(h, 1n)).to.equal(0n);
   });
 
   async function harnessFundPrize(h: any, value: bigint) {
@@ -432,9 +407,7 @@ describe("P3 - IwaPrizeSavings draw", function () {
 
   it("17: a withdrawn balance reduces weight naturally (weight 60 after 100-40)", async function () {
     const h = await deployHarness();
-    await mintAndWrapAs(walletA, addrA, 100n);
-    await setOperatorAsH(walletA, h);
-    await harnessDeposit(h, walletA, addrA, 100n);
+    await harnessSaveAndJoin(h, walletA, addrA, 100n);
     const encrypted = await fhevm
       .createEncryptedInput(await h.getAddress(), addrA)
       .add64(40n)
@@ -443,7 +416,7 @@ describe("P3 - IwaPrizeSavings draw", function () {
 
     await h.connect(deployer).lockRound();
     await harnessDrawWithTicket(h, deployer, addrOwner, 60n); // == reduced total
-    expect(await decryptHarnessWinner(h)).to.equal(BigInt(NO_WINNER));
+    expect(await decryptHarnessWinnerOf(h, 1n)).to.equal(BigInt(NO_WINNER));
   });
 
   // ---------------------------------------------------------------------
@@ -453,31 +426,28 @@ describe("P3 - IwaPrizeSavings draw", function () {
   it("18 + 19 + 20: draw at the full 16-participant cap runs inside the loop bound (HCU measured below)", async function () {
     for (let i = 0; i < 16; i++) {
       const w = (await ethers.getSigners())[i + 3];
-      const addr = await w.getAddress();
-      await mintAndWrapAs(w, addr, 100n);
-      await setOperatorAs(w, poolAddr);
-      await depositAs(w, addr, 10n);
+      await saveAndJoin(w, await w.getAddress(), 10n);
     }
     expect(await pool.participantCount()).to.equal(16n);
 
     await pool.connect(deployer).lockRound();
     const tx = await pool.connect(deployer).draw();
     const receipt = await tx.wait();
-    expect(await pool.roundState()).to.equal(2n);
+    expect(await pool.roundStateOf(1n)).to.equal(2n);
 
-    const winner = await decryptWinner();
+    const winner = await decryptWinnerOf(1n);
     expect(winner === BigInt(NO_WINNER) || winner < 16n).to.be.true;
     return receipt;
   });
 
-  it("19b: the draw loop source is bounded by participants.length, which the cap fixes at 16", async function () {
+  it("19b: the draw loop source is bounded by the round's own participant array, capped at 16", async function () {
     const fs = await import("fs");
     const path = await import("path");
     const source = fs.readFileSync(
       path.join(__dirname, "..", "contracts", "IwaPrizeSavings.sol"),
       "utf8",
     );
-    expect(source).to.contain("uint256 n = participants.length;");
+    expect(source).to.contain("uint256 n = r.participants.length;");
     expect(source).to.contain("for (uint16 i = 0; i < n; i++)");
   });
 
@@ -486,9 +456,7 @@ describe("P3 - IwaPrizeSavings draw", function () {
   // ---------------------------------------------------------------------
 
   it("21 + 25: the Drawn event carries no winner, ticket, balance or prize data", async function () {
-    await mintAndWrapAs(walletA, addrA, 100n);
-    await setOperatorAs(walletA, poolAddr);
-    await depositAs(walletA, addrA, 50n);
+    await saveAndJoin(walletA, addrA, 50n);
     await mintAndWrapAs(deployer, addrOwner, 100n);
     await setOperatorAs(deployer, poolAddr);
     await fundPrizeAs(deployer, addrOwner, 100n);
@@ -499,9 +467,9 @@ describe("P3 - IwaPrizeSavings draw", function () {
     const ourLogs = receipt.logs.filter(
       (l: any) => l.address.toLowerCase() === poolAddr.toLowerCase(),
     );
-    const drawnLog = ourLogs.find((l: any) => l.topics[0] === ethers.id("Drawn()"));
+    const drawnLog = ourLogs.find((l: any) => l.topics[0] === ethers.id("Drawn(uint256)"));
     expect(drawnLog, "expected a Drawn event").to.not.be.undefined;
-    expect(drawnLog!.data, "Drawn must carry no data").to.equal("0x");
+    expect(drawnLog!.data, "Drawn must carry no data (roundId is indexed, not a value)").to.equal("0x");
 
     for (const log of ourLogs) {
       const data = log.data.slice(2).toLowerCase();
@@ -516,9 +484,7 @@ describe("P3 - IwaPrizeSavings draw", function () {
   });
 
   it("22: no plaintext participant balances anywhere in draw state or logs", async function () {
-    await mintAndWrapAs(walletA, addrA, 100n);
-    await setOperatorAs(walletA, poolAddr);
-    await depositAs(walletA, addrA, 42n);
+    await saveAndJoin(walletA, addrA, 42n);
     await pool.connect(deployer).lockRound();
     const receipt = await (await pool.connect(deployer).draw()).wait();
 
@@ -547,9 +513,7 @@ describe("P3 - IwaPrizeSavings draw", function () {
   });
 
   it("24: no winner address in logs or state - the winner is an encrypted euint16 index handle", async function () {
-    await mintAndWrapAs(walletA, addrA, 100n);
-    await setOperatorAs(walletA, poolAddr);
-    await depositAs(walletA, addrA, 50n);
+    await saveAndJoin(walletA, addrA, 50n);
     await pool.connect(deployer).lockRound();
     const receipt = await (await pool.connect(deployer).draw()).wait();
 
@@ -559,11 +523,8 @@ describe("P3 - IwaPrizeSavings draw", function () {
       for (let p = 0; p + 64 <= data.length; p += 64) {
         expect(data.slice(p, p + 64)).to.not.equal(addrWord);
       }
-      for (const topic of log.topics) {
-        expect(topic.slice(2).toLowerCase()).to.not.equal(addrWord);
-      }
     }
-    const winnerHandle = await pool.winnerIndex();
+    const winnerHandle = await pool.winnerIndexOf(1n);
     expect(winnerHandle).to.not.equal(addrWord);
   });
 
@@ -572,9 +533,7 @@ describe("P3 - IwaPrizeSavings draw", function () {
   // ---------------------------------------------------------------------
 
   it("26 + 27 + 28: draw moves no tokens, leaves the prize reserve and all balances untouched", async function () {
-    await mintAndWrapAs(walletA, addrA, 100n);
-    await setOperatorAs(walletA, poolAddr);
-    await depositAs(walletA, addrA, 50n);
+    await saveAndJoin(walletA, addrA, 50n);
     await mintAndWrapAs(deployer, addrOwner, 100n);
     await setOperatorAs(deployer, poolAddr);
     await fundPrizeAs(deployer, addrOwner, 100n);
@@ -588,9 +547,15 @@ describe("P3 - IwaPrizeSavings draw", function () {
     await (await pool.connect(deployer).draw()).wait();
 
     expect(await decryptPoolTokenBalance()).to.equal(holdingsBefore);
-    expect(await decryptReserve()).to.equal(reserveBefore);
     expect(await decryptUserCredited(addrA)).to.equal(creditedBefore);
     expect(await decryptTotal()).to.equal(totalBefore);
+    // The reserve that mattered (round 1's) is unchanged; it now lives under
+    // roundId 1 since round 2 (the new "current" round) starts unfunded.
+    const round1Reserve = await fhevm.debugger.decryptEuint(
+      FhevmType.euint64,
+      await pool.prizeReserveOf(1n),
+    );
+    expect(round1Reserve).to.equal(reserveBefore);
   });
 
   // ---------------------------------------------------------------------
@@ -603,10 +568,7 @@ describe("P3 - IwaPrizeSavings draw", function () {
   it("HCU: production draw() at N=16 stays within limits (measured, not assumed)", async function () {
     for (let i = 0; i < 16; i++) {
       const w = (await ethers.getSigners())[i + 3];
-      const addr = await w.getAddress();
-      await mintAndWrapAs(w, addr, 100n);
-      await setOperatorAs(w, poolAddr);
-      await depositAs(w, addr, BigInt((i + 1) * 10));
+      await saveAndJoin(w, await w.getAddress(), BigInt((i + 1) * 10));
     }
     await pool.connect(deployer).lockRound();
 

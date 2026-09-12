@@ -22,8 +22,10 @@ import {
   isOperator,
   isPoolOwner,
   mintMockUSD,
+  readLastRound,
   readPool,
   readUserState,
+  sendClaim,
   sendPoolNoArg,
   sendPoolOwnerNoArg,
   sendPoolOwnerTx,
@@ -37,10 +39,12 @@ import {
   claimOffer,
   depositOffer,
   formatUnits6,
+  joinOffer,
   ownerOffer,
   parseUnits6,
   PRIZE_SAVINGS_COPY as C,
   stageOf,
+  type LastRoundFacts,
   type PoolFacts,
 } from "../lib/prizeSavings/flow.ts";
 import styles from "./PrizeSavingsView.module.css";
@@ -53,6 +57,7 @@ export function PrizeSavingsView() {
   );
   const [account, setAccount] = useState<string | null>(null);
   const [facts, setFacts] = useState<PoolFacts | null>(null);
+  const [lastRound, setLastRound] = useState<LastRoundFacts | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -77,15 +82,18 @@ export function PrizeSavingsView() {
       const user = await readUserState(account);
       const operator = await isOperator(account);
       const owner = await isPoolOwner(account);
+      const last = await readLastRound(account, pool.currentRoundId);
       setFacts({
+        currentRoundId: pool.currentRoundId,
         roundState: pool.roundState,
         participantCount: pool.participantCount,
         maxParticipants: pool.maxParticipants,
-        isParticipant: user.isParticipant,
-        hasClaimed: user.hasClaimed,
+        hasSavings: user.hasSavings,
+        isParticipantInCurrentRound: user.isParticipantInCurrentRound,
         isOwner: owner,
         operatorGranted: operator,
       });
+      setLastRound(last);
       setLoadFailed(false);
     } catch {
       setLoadFailed(true);
@@ -289,13 +297,19 @@ export function PrizeSavingsView() {
     [run, refresh],
   );
 
-  const claim = useCallback(
-    () => run("claim", () => sendPoolNoArg("claim"), refresh),
+  const joinRound = useCallback(
+    () => run("join", () => sendPoolNoArg("joinRound"), refresh),
     [run, refresh],
   );
 
+  const claim = useCallback(() => {
+    if (lastRound === null) return;
+    return run("claim", () => sendClaim(lastRound.roundId), refresh);
+  }, [run, refresh, lastRound]);
+
   const depositView = depositOffer(stage);
-  const claimView = claimOffer(facts);
+  const joinView = joinOffer(stage, facts);
+  const claimView = claimOffer(lastRound);
   const ownerView = ownerOffer(facts);
 
   return (
@@ -344,7 +358,9 @@ export function PrizeSavingsView() {
       {stage === "open" || stage === "locked" || stage === "drawn" || stage === "claimable" ? (
         <>
           <Island className={styles.card}>
-            <h2 className={styles.h2}>Your side</h2>
+            <h2 className={styles.h2}>
+              {facts !== null ? `Round ${facts.currentRoundId}` : "Your side"}
+            </h2>
             <p className={styles.meta}>
               {facts !== null
                 ? `${facts.participantCount} of ${facts.maxParticipants} places taken. `
@@ -357,6 +373,7 @@ export function PrizeSavingsView() {
                     ? C.drawn
                     : C.claimable}
             </p>
+            <p className={styles.meta}>{C.principalNote}</p>
 
             {mockBalance === null ? (
               <div className={styles.row}>
@@ -402,7 +419,7 @@ export function PrizeSavingsView() {
                 <input
                   className={styles.input}
                   inputMode="decimal"
-                  placeholder="Amount to deposit"
+                  placeholder="Amount to save"
                   value={depositInput}
                   onChange={(e) => setDepositInput(e.target.value)}
                 />
@@ -412,6 +429,24 @@ export function PrizeSavingsView() {
               </div>
             ) : null}
             {depositView.reason !== null ? <p className={styles.meta}>{depositView.reason}</p> : null}
+
+            <div className={styles.stack}>
+              {joinView.alreadyJoined ? (
+                <p className={styles.meta}>{C.joinedRound}</p>
+              ) : (
+                <>
+                  <Button
+                    onClick={() => void joinRound()}
+                    disabled={busy !== null || !joinView.canJoin}
+                  >
+                    {C.joinRound}
+                  </Button>
+                  {joinView.reason !== null ? (
+                    <p className={styles.meta}>{joinView.reason}</p>
+                  ) : null}
+                </>
+              )}
+            </div>
 
             <div className={styles.row}>
               <input
@@ -486,21 +521,22 @@ export function PrizeSavingsView() {
             </Island>
           ) : null}
 
-          {claimView.canClaim || claimView.reason !== null ? (
+          {claimView.visible ? (
             <Island className={styles.card}>
-              <h2 className={styles.h2}>This round's draw</h2>
-              {claimView.reason !== null ? <p className={styles.meta}>{claimView.reason}</p> : null}
+              <h2 className={styles.h2}>
+                {claimView.canClaim ? "Prize ready to claim" : "Last round"}
+              </h2>
+              {claimView.message !== null ? <p className={styles.meta}>{claimView.message}</p> : null}
               {claimView.canClaim ? (
                 <div className={styles.stack}>
                   <Button onClick={() => void claim()} disabled={busy !== null}>
                     {claimView.claimLabel}
                   </Button>
                 </div>
-              ) : null}
-              <p className={styles.meta}>
-                A round without a winner rolls the reward over untouched - everyone simply keeps
-                their principal.
-              </p>
+              ) : (
+                <p className={styles.meta}>{claimView.claimLabel}</p>
+              )}
+              <p className={styles.meta}>{C.noWinner}</p>
             </Island>
           ) : null}
 

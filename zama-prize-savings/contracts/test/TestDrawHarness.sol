@@ -19,12 +19,16 @@ contract TestDrawHarness is IwaPrizeSavings {
 
     /// @dev Same state + authorization rules as the production draw(), with
     ///      the ticket supplied instead of drawn from FHE.randEuint64.
+    ///      Drives the CURRENT round, exactly as production draw() does,
+    ///      including the automatic advance to the next round.
     function drawWithTicket(externalEuint64 ticketInput, bytes calldata inputProof) external {
-        require(roundState == RoundState.Locked, "not locked");
+        uint256 roundId = currentRoundId;
+        Round storage r = _rounds[roundId];
+        require(r.state == RoundState.Locked, "not locked");
         require(
-            msg.sender == owner() || block.timestamp >= lockTimestamp + DRAW_TIMEOUT,
+            msg.sender == owner() || block.timestamp >= r.lockTimestamp + DRAW_TIMEOUT,
             "not authorized"
         );
-        _runDraw(FHE.fromExternal(ticketInput, inputProof));
+        _runDraw(roundId, FHE.fromExternal(ticketInput, inputProof));
     }
 }

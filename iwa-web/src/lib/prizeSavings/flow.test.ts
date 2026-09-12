@@ -7,18 +7,22 @@ import {
   claimOffer,
   depositOffer,
   formatUnits6,
+  joinOffer,
   ownerOffer,
   parseUnits6,
+  PRIZE_SAVINGS_COPY,
   stageOf,
+  type LastRoundFacts,
   type PoolFacts,
 } from "./flow";
 
 const openFacts: PoolFacts = {
+  currentRoundId: 3,
   roundState: "Open",
   participantCount: 3,
   maxParticipants: 16,
-  isParticipant: true,
-  hasClaimed: false,
+  hasSavings: true,
+  isParticipantInCurrentRound: true,
   isOwner: false,
   operatorGranted: true,
 };
@@ -69,6 +73,19 @@ describe("stageOf", () => {
       ).toBe(state.toLowerCase());
     }
   });
+
+  it("never gets permanently stuck: Open remains reachable after any state", () => {
+    // The multi-round redesign's whole point: there is no terminal stage.
+    for (const state of ["Open", "Locked", "Drawn", "Claimable"] as const) {
+      const stage = stageOf({
+        wallet: "connected",
+        onSepolia: true,
+        facts: { ...openFacts, roundState: state },
+        loadFailed: false,
+      });
+      expect(["open", "locked", "drawn", "claimable"]).toContain(stage);
+    }
+  });
 });
 
 describe("depositOffer", () => {
@@ -79,7 +96,7 @@ describe("depositOffer", () => {
     expect(offer.reason).toBeNull();
   });
 
-  it("stops deposits after the round closes but keeps withdrawals open", () => {
+  it("stops new savings while the round finishes but keeps withdrawals open", () => {
     for (const stage of ["locked", "drawn", "claimable"] as const) {
       const offer = depositOffer(stage);
       expect(offer.canDeposit, stage).toBe(false);
@@ -89,26 +106,90 @@ describe("depositOffer", () => {
   });
 });
 
+describe("joinOffer", () => {
+  it("lets an eligible saver join while the round is open", () => {
+    const offer = joinOffer("open", { ...openFacts, isParticipantInCurrentRound: false });
+    expect(offer.canJoin).toBe(true);
+    expect(offer.alreadyJoined).toBe(false);
+  });
+
+  it("reports already-joined once the wallet is in the current round", () => {
+    const offer = joinOffer("open", { ...openFacts, isParticipantInCurrentRound: true });
+    expect(offer.canJoin).toBe(false);
+    expect(offer.alreadyJoined).toBe(true);
+  });
+
+  it("requires savings before joining - no automatic opt-in from a bare deposit-less wallet", () => {
+    const offer = joinOffer("open", {
+      ...openFacts,
+      isParticipantInCurrentRound: false,
+      hasSavings: false,
+    });
+    expect(offer.canJoin).toBe(false);
+    expect(offer.reason).toMatch(/savings/i);
+  });
+
+  it("closes joining once the round is no longer open", () => {
+    for (const stage of ["locked", "drawn", "claimable"] as const) {
+      const offer = joinOffer(stage, { ...openFacts, isParticipantInCurrentRound: false });
+      expect(offer.canJoin, stage).toBe(false);
+      expect(offer.reason).not.toBeNull();
+    }
+  });
+
+  it("closes joining once the round is full", () => {
+    const offer = joinOffer("open", {
+      ...openFacts,
+      isParticipantInCurrentRound: false,
+      participantCount: 16,
+      maxParticipants: 16,
+    });
+    expect(offer.canJoin).toBe(false);
+    expect(offer.reason).toMatch(/full/i);
+  });
+
+  it("returns nothing actionable before facts load", () => {
+    const offer = joinOffer("load", null);
+    expect(offer.canJoin).toBe(false);
+    expect(offer.alreadyJoined).toBe(false);
+  });
+});
+
 describe("claimOffer", () => {
-  it("offers claim to an unclaimed participant after the draw", () => {
-    const offer = claimOffer({ ...openFacts, roundState: "Drawn" });
+  const drawnRound: LastRoundFacts = {
+    roundId: 1,
+    state: "Drawn",
+    participated: true,
+    claimed: false,
+  };
+
+  it("offers claim to an unclaimed participant of the last finished round", () => {
+    const offer = claimOffer(drawnRound);
+    expect(offer.visible).toBe(true);
     expect(offer.canClaim).toBe(true);
   });
 
-  it("refuses a second claim", () => {
-    const offer = claimOffer({ ...openFacts, roundState: "Claimable", hasClaimed: true });
+  it("refuses a second claim and labels it Claimed", () => {
+    const offer = claimOffer({ ...drawnRound, claimed: true });
     expect(offer.canClaim).toBe(false);
     expect(offer.claimLabel).toBe("Claimed");
   });
 
-  it("refuses non-participants", () => {
-    const offer = claimOffer({ ...openFacts, roundState: "Drawn", isParticipant: false });
+  it("hides the claim area for a non-participant", () => {
+    const offer = claimOffer({ ...drawnRound, participated: false });
+    expect(offer.visible).toBe(false);
     expect(offer.canClaim).toBe(false);
   });
 
-  it("says claims open after the draw while the round is still open", () => {
-    const offer = claimOffer({ ...openFacts, roundState: "Open" });
+  it("hides the claim area when there is no finished round yet", () => {
+    const offer = claimOffer(null);
+    expect(offer.visible).toBe(false);
     expect(offer.canClaim).toBe(false);
+  });
+
+  it("names the round in the message, so an old claim stays legible after later rounds open", () => {
+    const offer = claimOffer({ ...drawnRound, roundId: 7 });
+    expect(offer.message).toContain("7");
   });
 });
 
@@ -132,6 +213,14 @@ describe("ownerOffer", () => {
     expect(offer.canFund).toBe(false);
     expect(offer.canLock).toBe(false);
     expect(offer.canDraw).toBe(false);
+  });
+});
+
+describe("product copy", () => {
+  it("never uses an em dash or en dash", () => {
+    for (const [key, value] of Object.entries(PRIZE_SAVINGS_COPY)) {
+      expect(value, key).not.toMatch(/[–—]/);
+    }
   });
 });
 

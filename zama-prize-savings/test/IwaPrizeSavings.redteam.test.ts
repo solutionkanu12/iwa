@@ -108,6 +108,10 @@ describe("P6 - red team", function () {
     return fhevm.debugger.decryptEuint(FhevmType.euint64, handle);
   }
 
+  async function joinAs(signer: Signer) {
+    return (await pool.connect(signer).joinRound()).wait();
+  }
+
   async function assertSolvency() {
     const sum = (await credited(addrAlice, alice)) + (await credited(addrBob, bob));
     const r = await reserve();
@@ -156,6 +160,7 @@ describe("P6 - red team", function () {
     await wrapAs(alice, addrAlice, 100n);
     await setOperatorAs(alice);
     await depositAs(alice, addrAlice, 100n);
+    await joinAs(alice);
     await wrapAs(deployer, addrOwner, 100n);
     await setOperatorAs(deployer);
 
@@ -169,7 +174,7 @@ describe("P6 - red team", function () {
     await pool.connect(deployer).lockRound();
     await (await pool.connect(deployer).draw()).wait();
 
-    await (await pool.connect(alice).claim()).wait();
+    await (await pool.connect(alice).claim(1n)).wait();
     const claimed = await credited(addrAlice, alice);
     expect(claimed === 100n || claimed === 150n).to.be.true; // principal, or principal+prize
     await assertSolvency();
@@ -240,14 +245,16 @@ describe("P6 - red team", function () {
     await withdrawAs(alice, addrAlice, 15n);
     await depositAs(bob, addrBob, 5n);
     await withdrawAs(alice, addrAlice, 200n); // clamps to balance
+    await joinAs(alice);
+    await joinAs(bob);
 
     const f = await fhevm.createEncryptedInput(poolAddr, addrOwner).add64(25n).encrypt();
     await (await pool.connect(deployer).fundPrize(f.handles[0], f.inputProof)).wait();
 
     await pool.connect(deployer).lockRound();
     await (await pool.connect(deployer).draw()).wait();
-    await (await pool.connect(alice).claim()).wait();
-    await (await pool.connect(bob).claim()).wait();
+    await (await pool.connect(alice).claim(1n)).wait();
+    await (await pool.connect(bob).claim(1n)).wait();
     await withdrawAs(alice, addrAlice, 5n);
     await (await pool.connect(bob).withdrawAll()).wait();
 
@@ -280,9 +287,11 @@ describe("P6 - red team", function () {
     await wrapAs(alice, addrAlice, 100n);
     await setOperatorAs(alice);
     await depositAs(alice, addrAlice, 60n);
+    await joinAs(alice);
     await wrapAs(bob, addrBob, 100n);
     await setOperatorAs(bob);
     await depositAs(bob, addrBob, 40n);
+    await joinAs(bob);
     await wrapAs(deployer, addrOwner, 100n);
     await setOperatorAs(deployer);
     const f = await fhevm.createEncryptedInput(poolAddr, addrOwner).add64(20n).encrypt();
@@ -293,12 +302,12 @@ describe("P6 - red team", function () {
     await twoParticipantWorld();
     await pool.connect(deployer).lockRound();
     await (await pool.connect(deployer).draw()).wait();
-    const winnerBefore = await pool.winnerIndex();
+    const winnerBefore = await pool.winnerIndexOf(1n);
 
-    await (await pool.connect(alice).claim()).wait();
-    await (await pool.connect(bob).claim()).wait();
+    await (await pool.connect(alice).claim(1n)).wait();
+    await (await pool.connect(bob).claim(1n)).wait();
 
-    expect(await pool.winnerIndex()).to.equal(winnerBefore);
+    expect(await pool.winnerIndexOf(1n)).to.equal(winnerBefore);
     const abi = JSON.parse(pool.interface.formatJson());
     const names = abi.filter((e: any) => e.type === "function").map((e: any) => e.name);
     expect(names).to.not.include("setWinner");
@@ -319,6 +328,7 @@ describe("P6 - red team", function () {
       await (await wrapper.connect(w).setOperator(hAddr, (await ethers.provider.getBlock("latest"))!.timestamp + 3600)).wait();
       const e = await fhevm.createEncryptedInput(hAddr, addr).add64(amounts[i]).encrypt();
       await (await h.connect(w).deposit(e.handles[0], e.inputProof)).wait();
+      await (await h.connect(w).joinRound()).wait();
     }
     await wrapAs(deployer, addrOwner, 100n);
     await (await wrapper.connect(deployer).setOperator(hAddr, (await ethers.provider.getBlock("latest"))!.timestamp + 3600)).wait();
@@ -329,9 +339,9 @@ describe("P6 - red team", function () {
     const t = await fhevm.createEncryptedInput(hAddr, addrOwner).add64(15n).encrypt(); // interval [10,30) = index 1 = Bob
     await (await h.connect(deployer).drawWithTicket(t.handles[0], t.inputProof)).wait();
 
-    await (await h.connect(bob).claim()).wait();
-    await (await h.connect(alice).claim()).wait();
-    await (await h.connect(signers[3]).claim()).wait();
+    await (await h.connect(bob).claim(1n)).wait();
+    await (await h.connect(alice).claim(1n)).wait();
+    await (await h.connect(signers[3]).claim(1n)).wait();
 
     const bobCred = await (async () => {
       const hh = await h.confidentialBalanceOf(addrBob);
@@ -364,13 +374,14 @@ describe("P6 - red team", function () {
       await (await wrapper.connect(w).setOperator(hAddr, (await ethers.provider.getBlock("latest"))!.timestamp + 3600)).wait();
       const e = await fhevm.createEncryptedInput(hAddr, addr).add64(64n).encrypt();
       await (await h.connect(w).deposit(e.handles[0], e.inputProof)).wait();
+      await (await h.connect(w).joinRound()).wait();
     }
     await (await h.connect(deployer).lockRound()).wait();
 
     // Ticket 1023 lands in the last interval [960,1024) -> index 15.
     const t = await fhevm.createEncryptedInput(hAddr, addrOwner).add64(1023n).encrypt();
     await (await h.connect(deployer).drawWithTicket(t.handles[0], t.inputProof)).wait();
-    const wHandle = await h.winnerIndex();
+    const wHandle = await h.winnerIndexOf(1n);
     const wIdx = await fhevm.debugger.decryptEuint(FhevmType.euint16, wHandle);
     expect(wIdx).to.equal(15n); // a valid winner index, NOT the 65535 sentinel
   });
@@ -382,7 +393,7 @@ describe("P6 - red team", function () {
 
     let reverted = false;
     try {
-      await pool.connect(deployer).claim(); // owner is not a participant
+      await pool.connect(deployer).claim(1n); // owner is not a participant
     } catch {
       reverted = true;
     }
@@ -393,16 +404,18 @@ describe("P6 - red team", function () {
     await wrapAs(deployer, addrOwner, 100n);
     await setOperatorAs(deployer);
     await depositAs(deployer, addrOwner, 10n);
+    await joinAs(deployer);
     await wrapAs(alice, addrAlice, 100n);
     await setOperatorAs(alice);
     await depositAs(alice, addrAlice, 40n);
+    await joinAs(alice);
 
     await pool.connect(deployer).lockRound();
     await (await pool.connect(deployer).draw()).wait();
-    await (await pool.connect(deployer).claim()).wait();
+    await (await pool.connect(deployer).claim(1n)).wait();
 
-    expect(await pool.hasClaimed(addrOwner)).to.equal(true);
-    expect(await pool.hasClaimed(addrAlice)).to.equal(false);
+    expect(await pool.hasClaimedRound(1n, addrOwner)).to.equal(true);
+    expect(await pool.hasClaimedRound(1n, addrAlice)).to.equal(false);
     expect(await credited(addrAlice, alice)).to.equal(40n); // untouched
   });
 
@@ -412,18 +425,18 @@ describe("P6 - red team", function () {
 
   it("C1: participant ordering is immutable - no function can reorder or remove entries", async function () {
     await twoParticipantWorld();
-    const before = [await pool.participants(0), await pool.participants(1)];
+    const before = [await pool.roundParticipantAt(1n, 0), await pool.roundParticipantAt(1n, 1)];
     expect(before[0].toLowerCase()).to.equal(addrAlice.toLowerCase());
     expect(before[1].toLowerCase()).to.equal(addrBob.toLowerCase());
 
     await pool.connect(deployer).lockRound();
     await (await pool.connect(deployer).draw()).wait();
-    await (await pool.connect(alice).claim()).wait();
-    await (await pool.connect(bob).claim()).wait();
+    await (await pool.connect(alice).claim(1n)).wait();
+    await (await pool.connect(bob).claim(1n)).wait();
 
-    expect(await pool.participants(0)).to.equal(before[0]);
-    expect(await pool.participants(1)).to.equal(before[1]);
-    expect(await pool.participantCount()).to.equal(2n);
+    expect(await pool.roundParticipantAt(1n, 0)).to.equal(before[0]);
+    expect(await pool.roundParticipantAt(1n, 1)).to.equal(before[1]);
+    expect(await pool.roundParticipantCount(1n)).to.equal(2n);
   });
 
   it("C2: randomness is single-source and unbounded-only - no rem, no rebias, no second draw", async function () {
@@ -444,15 +457,17 @@ describe("P6 - red team", function () {
     await twoParticipantWorld();
     await pool.connect(deployer).lockRound();
     await (await pool.connect(deployer).draw()).wait();
-    await (await pool.connect(alice).claim()).wait(); // -> Claimable
+    await (await pool.connect(alice).claim(1n)).wait(); // round 1 -> Claimable
 
+    // The round that is actually draw()-able now is round 2 (current), and
+    // it was never locked - there is no way to re-run round 1's draw.
     let reverted = false;
     try {
       await pool.connect(deployer).draw();
     } catch {
       reverted = true;
     }
-    expect(reverted, "draw in Claimable must revert").to.be.true;
+    expect(reverted, "draw on an un-locked round must revert").to.be.true;
   });
 
   it("C4: zero-weight and all-zero pools still draw safely (no HCU surprise, NO_WINNER)", async function () {
@@ -464,6 +479,7 @@ describe("P6 - red team", function () {
       await setOperatorAs(w);
       const e = await fhevm.createEncryptedInput(poolAddr, addr).add64(0n).encrypt();
       await (await pool.connect(w).deposit(e.handles[0], e.inputProof)).wait();
+      await joinAs(w);
     }
     expect(await pool.participantCount()).to.equal(16n);
     await pool.connect(deployer).lockRound();
@@ -471,17 +487,24 @@ describe("P6 - red team", function () {
     const receipt = await tx.wait();
     const hcu = fhevm.computeTransactionHCU(receipt);
     expect(hcu.maxHCUDepth).to.be.lessThan(5_000_000);
-    const w = await pool.winnerIndex();
+    const w = await pool.winnerIndexOf(1n);
     expect(await fhevm.debugger.decryptEuint(FhevmType.euint16, w)).to.equal(65535n);
   });
 
   // =====================================================================
-  // D. ZERO-TRANSFER SLOT DoS (the known carried risk, red-teamed)
+  // D. ZERO-TRANSFER SLOT DoS (bounded by the multi-round redesign)
   // =====================================================================
+  //
+  // Under the original single-round contract this attack was PERMANENT: a
+  // lifetime participant list meant 16 zero-transfer wallets bricked the
+  // pool forever (decision.md F1, accepted only for the single-round bounty
+  // MVP, documented as blocking any production deployment). Per-round
+  // participant scoping (IwaPrizeSavings.rounds.test.ts, P7) fixes exactly
+  // this: the attack can still fill ONE round, but never blocks any later
+  // round. Re-verified here as a red-team row.
 
-  it("D: 16 zero-transfer wallets permanently fill the pool - real users can never join", async function () {
-    // 1. 16 distinct wallets attempt zero-transfer deposits (operator granted,
-    //    zero balance): each is registered and each registers exactly once.
+  it("D: 16 zero-transfer wallets fill ONE round, but real users can join the very next round", async function () {
+    // 1. 16 distinct wallets attempt zero-transfer deposits, then join.
     const signers = await ethers.getSigners();
     for (let i = 0; i < 16; i++) {
       const w = signers[i + 3];
@@ -489,64 +512,48 @@ describe("P6 - red team", function () {
       await setOperatorAs(w);
       const e = await fhevm.createEncryptedInput(poolAddr, addr).add64(100n).encrypt();
       await (await pool.connect(w).deposit(e.handles[0], e.inputProof)).wait();
+      await joinAs(w);
     }
     expect(await pool.participantCount()).to.equal(16n);
     expect(await total()).to.equal(0n);
     expect(await holdings()).to.equal(0n);
 
-    // 2. A real funded wallet tries to join: permanently rejected.
+    // 2. A real funded wallet is rejected from THIS round only.
     await wrapAs(alice, addrAlice, 100n);
     await setOperatorAs(alice);
+    await depositAs(alice, addrAlice, 60n); // deposit itself has no cap
     let reverted = false;
     let message = "";
     try {
-      await depositAs(alice, addrAlice, 60n);
+      await pool.connect(alice).joinRound();
     } catch (err: any) {
       reverted = true;
       message = String(err?.message ?? "");
     }
-    expect(reverted, "funded real user must be rejected").to.be.true;
-    expect(message).to.contain("pool full");
+    expect(reverted, "round 1 is full").to.be.true;
+    expect(message).to.contain("round full");
     expect(await pool.isParticipant(addrAlice)).to.equal(false);
 
-    // 3. Permanence: no function removes a participant; owner cannot help.
+    // 3. No function removes a participant; the owner cannot evict anyone.
     const abi = JSON.parse(pool.interface.formatJson());
     const names = abi.filter((e: any) => e.type === "function").map((e: any) => e.name);
     expect(names).to.not.include("removeParticipant");
     expect(names).to.not.include("kickParticipant");
-    expect(await pool.participantCount()).to.equal(16n);
 
-    // 4. Existing participants remain fully usable (they can deposit for real).
-    await wrapAs(signers[3], await signers[3].getAddress(), 50n);
-    const e = await fhevm.createEncryptedInput(poolAddr, await signers[3].getAddress()).add64(40n).encrypt();
-    await (await pool.connect(signers[3]).deposit(e.handles[0], e.inputProof)).wait();
-    expect(await total()).to.equal(40n);
-
-    // 5. The draw still works at the filled cap (weighted by the 40 real).
+    // 4. The draw still works at the filled cap.
     await pool.connect(deployer).lockRound();
     const tx = await pool.connect(deployer).draw();
     const receipt = await tx.wait();
     const hcu = fhevm.computeTransactionHCU(receipt);
     expect(hcu.maxHCUDepth).to.be.lessThan(5_000_000);
 
-    // 6. The prize cannot be stolen: fund, then NO-WINNER-or-valid draw, and
-    //    no unregistered wallet can claim.
-    const f = await fhevm.createEncryptedInput(poolAddr, addrOwner).add64(100n).encrypt();
-    let fundReverted = false;
-    try {
-      await (await pool.connect(deployer).fundPrize(f.handles[0], f.inputProof)).wait();
-    } catch {
-      fundReverted = true; // round already Drawn - funding closed, reserve untouched
-    }
-    expect(fundReverted).to.be.true;
-    expect(await reserve()).to.equal(0n);
-    let claimReverted = false;
-    try {
-      await pool.connect(alice).claim(); // unregistered
-    } catch {
-      claimReverted = true;
-    }
-    expect(claimReverted).to.be.true;
+    // 5. THE FIX: round 2 is now open, and alice - rejected from round 1 -
+    //    joins round 2 without any restriction from the attack.
+    expect(await pool.currentRoundId()).to.equal(2n);
+    await (await pool.connect(alice).joinRound()).wait();
+    expect(await pool.isParticipant(addrAlice)).to.equal(true);
+    expect(await pool.participantCount()).to.equal(1n); // fresh round, fresh cap
+
     await assertSolvency();
   });
 
@@ -774,10 +781,11 @@ describe("P6 - red team", function () {
   // =====================================================================
 
   it("H1: illegal transitions all revert (full matrix)", async function () {
-    // Open: deposit/fund OK, claim/draw/lockRound-twice blocked.
+    // Open: deposit/join/fund OK, claim/draw/lockRound-twice blocked.
     await wrapAs(alice, addrAlice, 100n);
     await setOperatorAs(alice);
     await depositAs(alice, addrAlice, 10n);
+    await joinAs(alice);
     await wrapAs(deployer, addrOwner, 100n);
     await setOperatorAs(deployer);
     const f = await fhevm.createEncryptedInput(poolAddr, addrOwner).add64(5n).encrypt();
@@ -785,7 +793,7 @@ describe("P6 - red team", function () {
 
     let reverted = false;
     try {
-      await pool.connect(alice).claim();
+      await pool.connect(alice).claim(1n);
     } catch {
       reverted = true;
     }
@@ -798,7 +806,7 @@ describe("P6 - red team", function () {
     }
     expect(reverted, "Open->draw must revert").to.be.true;
 
-    // Locked: deposit/fundPrize/claim blocked; withdraw allowed.
+    // Locked: deposit/fundPrize/join/claim blocked; withdraw allowed.
     await pool.connect(deployer).lockRound();
     reverted = false;
     try {
@@ -809,6 +817,13 @@ describe("P6 - red team", function () {
     expect(reverted, "Locked->deposit must revert").to.be.true;
     reverted = false;
     try {
+      await pool.connect(bob).joinRound();
+    } catch {
+      reverted = true;
+    }
+    expect(reverted, "Locked->joinRound must revert").to.be.true;
+    reverted = false;
+    try {
       await (await pool.connect(deployer).fundPrize(f.handles[0], f.inputProof)).wait();
     } catch {
       reverted = true;
@@ -816,34 +831,34 @@ describe("P6 - red team", function () {
     expect(reverted, "Locked->fundPrize must revert").to.be.true;
     reverted = false;
     try {
-      await pool.connect(alice).claim();
+      await pool.connect(alice).claim(1n);
     } catch {
       reverted = true;
     }
     expect(reverted, "Locked->claim must revert").to.be.true;
     await withdrawAs(alice, addrAlice, 5n); // withdrawal is allowed in Locked
 
-    // Drawn: second draw blocked; claim allowed.
+    // Drawn: second draw on the SAME round is impossible (round advances);
+    // claim on round 1 is allowed.
     await (await pool.connect(deployer).draw()).wait();
+    expect(await pool.currentRoundId(), "round auto-advances on draw").to.equal(2n);
     reverted = false;
     try {
-      await pool.connect(deployer).draw();
+      await pool.connect(deployer).claim(1n); // owner never joined round 1
     } catch {
       reverted = true;
     }
-    expect(reverted, "Drawn->draw must revert").to.be.true;
+    expect(reverted, "non-participant claim must revert").to.be.true;
 
-    // Claimable: deposit/fundPrize blocked; withdraw/withdrawAll allowed.
-    await (await pool.connect(alice).claim()).wait();
-    reverted = false;
-    try {
-      await depositAs(alice, addrAlice, 10n);
-    } catch {
-      reverted = true;
-    }
-    expect(reverted, "Claimable->deposit must revert").to.be.true;
+    // Claimable (round 1): withdraw/withdrawAll still allowed.
+    await (await pool.connect(alice).claim(1n)).wait();
     await (await pool.connect(alice).withdrawAll()).wait();
     expect(await credited(addrAlice, alice)).to.equal(0n);
+
+    // The NEW round (2) is Open - this is the fix under test: deposits and
+    // joins reopen automatically instead of staying permanently closed.
+    expect(await pool.roundState()).to.equal(0n); // Open
+    await depositAs(alice, addrAlice, 1n); // must NOT revert
     await assertSolvency();
   });
 
@@ -858,15 +873,18 @@ describe("P6 - red team", function () {
     await setOperatorAs(attacker);
     const z = await fhevm.createEncryptedInput(poolAddr, addrAttacker).add64(100n).encrypt();
     await (await pool.connect(attacker).deposit(z.handles[0], z.inputProof)).wait();
+    await joinAs(attacker);
     expect(await pool.participantCount()).to.equal(1n);
 
-    // Real users deposit.
+    // Real users deposit and join.
     await wrapAs(alice, addrAlice, 100n);
     await setOperatorAs(alice);
     await depositAs(alice, addrAlice, 60n);
+    await joinAs(alice);
     await wrapAs(bob, addrBob, 100n);
     await setOperatorAs(bob);
     await depositAs(bob, addrBob, 40n);
+    await joinAs(bob);
     expect(await total()).to.equal(100n);
 
     // Users withdraw/redeposit around the lock.
@@ -891,11 +909,15 @@ describe("P6 - red team", function () {
 
     await ethers.provider.send("evm_increaseTime", [900]);
     await (await pool.connect(alice).draw()).wait(); // permissionless after timeout
-    expect(await pool.roundState()).to.equal(2n);
+    expect(await pool.roundStateOf(1n)).to.equal(2n);
 
-    // Non-winner claims first, winner claims later - per-user flags hold.
-    await (await pool.connect(bob).claim()).wait();
-    await (await pool.connect(alice).claim()).wait();
+    // Non-winner claims first, winner claims later, then the zero-weight
+    // attacker claims too - per-user flags hold, and once every round-1
+    // participant has claimed the leftover reserve safely rolls into
+    // round 2 (the round now open).
+    await (await pool.connect(bob).claim(1n)).wait();
+    await (await pool.connect(alice).claim(1n)).wait();
+    await (await pool.connect(attacker).claim(1n)).wait();
     await assertSolvency();
 
     // Winner/partial/full exits.
@@ -906,7 +928,9 @@ describe("P6 - red team", function () {
 
     // The real random draw decides the winner (or rolls over); no principal
     // is ever lost: each of Alice/Bob ends with 100-120 tokens, and the 20
-    // prize stays within the participant set (or remains as a backed reserve).
+    // prize stays within the participant set (or remains as a backed
+    // reserve, now rolled forward into round 2 - reserve() reads the
+    // CURRENT round, which is round 2 since round 1 has fully settled).
     const aliceEnd = await userTokens(addrAlice);
     const bobEnd = await userTokens(addrBob);
     expect(aliceEnd >= 100n && aliceEnd <= 120n).to.be.true;

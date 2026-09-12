@@ -25,22 +25,30 @@ const CMOCK_USD_ABI = [
   "function rate() view returns (uint256)",
 ] as const;
 
+// Multi-round pool ABI. Saving (deposit/withdraw) is lifetime and
+// round-independent; joining a round (joinRound) is a separate, explicit
+// action; claiming names the round it claims (claim(roundId)), since a
+// round's own draw/claim history stays valid forever, no matter how many
+// later rounds have opened since (see IwaPrizeSavings.sol).
 const POOL_ABI = [
   "function deposit(bytes32 amount, bytes inputProof)",
   "function withdraw(bytes32 amount, bytes inputProof)",
   "function withdrawAll()",
   "function fundPrize(bytes32 amount, bytes inputProof)",
+  "function joinRound()",
   "function lockRound()",
   "function draw()",
-  "function claim()",
+  "function claim(uint256 roundId)",
+  "function currentRoundId() view returns (uint256)",
   "function roundState() view returns (uint8)",
+  "function roundStateOf(uint256 roundId) view returns (uint8)",
   "function owner() view returns (address)",
   "function isParticipant(address) view returns (bool)",
-  "function hasClaimed(address) view returns (bool)",
+  "function isParticipantInRound(uint256 roundId, address user) view returns (bool)",
+  "function hasClaimedRound(uint256 roundId, address user) view returns (bool)",
   "function participantCount() view returns (uint256)",
   "function confidentialBalanceOf(address) view returns (bytes32)",
   "function prizeReserve() view returns (bytes32)",
-  "function winnerIndex() view returns (bytes32)",
   "function MAX_PARTICIPANTS() view returns (uint256)",
   "function MAX_POOL_TOTAL() view returns (uint256)",
   "function DRAW_TIMEOUT() view returns (uint256)",
@@ -74,12 +82,15 @@ function poolContract(address?: string): Contract | null {
   return new Contract(address ?? IWA_PRIZE_SAVINGS.IwaPrizeSavings, POOL_ABI, new BrowserProvider(provider));
 }
 
-/** Read-only views against the deployed pool. */
+/** Read-only views against the deployed pool. All facts here describe the
+ *  CURRENT round; a finished round's own facts are read separately (see
+ *  readLastRound), since they must stay valid after later rounds open. */
 export async function readPool(address?: string) {
   const pool = poolContract(address);
   if (pool === null) throw new Error("No Ethereum wallet found in this browser");
-  const [roundState, owner, participantCount, maxParticipants, maxPoolTotal, drawTimeout] =
+  const [currentRoundId, roundState, owner, participantCount, maxParticipants, maxPoolTotal, drawTimeout] =
     await Promise.all([
+      pool.currentRoundId(),
       pool.roundState(),
       pool.owner(),
       pool.participantCount(),
@@ -88,6 +99,7 @@ export async function readPool(address?: string) {
       pool.DRAW_TIMEOUT(),
     ]);
   return {
+    currentRoundId: Number(currentRoundId),
     roundState: roundStateName(Number(roundState)),
     owner: String(owner),
     participantCount: Number(participantCount),
@@ -100,17 +112,40 @@ export async function readPool(address?: string) {
 export async function readUserState(user: string, address?: string) {
   const pool = poolContract(address);
   if (pool === null) throw new Error("No Ethereum wallet found in this browser");
-  const [isParticipant, hasClaimed, credited, lockTimestamp] = await Promise.all([
+  const [isParticipantInCurrentRound, credited, lockTimestamp] = await Promise.all([
     pool.isParticipant(user),
-    pool.hasClaimed(user),
     pool.confidentialBalanceOf(user),
     pool.lockTimestamp(),
   ]);
   return {
-    isParticipant: Boolean(isParticipant),
-    hasClaimed: Boolean(hasClaimed),
+    isParticipantInCurrentRound: Boolean(isParticipantInCurrentRound),
+    // Saving and joining are separate: a live encrypted balance handle means
+    // the wallet has saved at least once, which is what makes it eligible
+    // to join a round (see IwaPrizeSavings.joinRound).
+    hasSavings: String(credited) !== ZERO_HANDLE,
     credited: String(credited),
     lockTimestamp: Number(lockTimestamp),
+  };
+}
+
+/** The most recently finished round's draw/claim facts for `user`, or null
+ *  if no round has finished yet (currentRoundId is still round 1). */
+export async function readLastRound(user: string, currentRoundId: number, address?: string) {
+  if (currentRoundId <= 1) return null;
+  const pool = poolContract(address);
+  if (pool === null) throw new Error("No Ethereum wallet found in this browser");
+  const lastRoundId = currentRoundId - 1;
+  const [state, participated, claimed] = await Promise.all([
+    pool.roundStateOf(lastRoundId),
+    pool.isParticipantInRound(lastRoundId, user),
+    pool.hasClaimedRound(lastRoundId, user),
+  ]);
+  const stateName = roundStateName(Number(state));
+  return {
+    roundId: lastRoundId,
+    state: (stateName === "Claimable" ? "Claimable" : "Drawn") as "Drawn" | "Claimable",
+    participated: Boolean(participated),
+    claimed: Boolean(claimed),
   };
 }
 
@@ -186,13 +221,25 @@ export async function sendPoolTx(
 }
 
 export async function sendPoolNoArg(
-  method: "withdrawAll" | "claim",
+  method: "withdrawAll" | "joinRound",
 ): Promise<string> {
   const provider = eip1193Provider();
   if (provider === null) throw new Error("No Ethereum wallet found in this browser");
   const signer = await new BrowserProvider(provider).getSigner();
   const pool = new Contract(IWA_PRIZE_SAVINGS.IwaPrizeSavings, POOL_ABI, signer);
   const tx = await pool[method]();
+  await tx.wait();
+  return String(tx.hash);
+}
+
+/** Claims a SPECIFIC round's prize. A round's own claim stays valid no
+ *  matter how many later rounds have opened since. */
+export async function sendClaim(roundId: number): Promise<string> {
+  const provider = eip1193Provider();
+  if (provider === null) throw new Error("No Ethereum wallet found in this browser");
+  const signer = await new BrowserProvider(provider).getSigner();
+  const pool = new Contract(IWA_PRIZE_SAVINGS.IwaPrizeSavings, POOL_ABI, signer);
+  const tx = await pool.claim(roundId);
   await tx.wait();
   return String(tx.hash);
 }

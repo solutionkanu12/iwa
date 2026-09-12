@@ -141,7 +141,7 @@ describe("P5 - full confidential prize-savings lifecycle", function () {
   }
 
   async function winner(): Promise<bigint> {
-    const handle = await harness.winnerIndex();
+    const handle = await harness.winnerIndexOf(1n);
     if (handle === ethers.ZeroHash) return 0n;
     return fhevm.debugger.decryptEuint(FhevmType.euint16, handle);
   }
@@ -164,10 +164,12 @@ describe("P5 - full confidential prize-savings lifecycle", function () {
     receipts.push(await wrapAs(alice, addrAlice, 100n));
     receipts.push(await setOperatorAs(alice));
     receipts.push(await depositAs(alice, addrAlice, 60n));
+    receipts.push(await (await harness.connect(alice).joinRound()).wait());
 
     receipts.push(await wrapAs(bob, addrBob, 100n));
     receipts.push(await setOperatorAs(bob));
     receipts.push(await depositAs(bob, addrBob, 40n));
+    receipts.push(await (await harness.connect(bob).joinRound()).wait());
 
     receipts.push(await wrapAs(deployer, addrOwner, 100n));
     receipts.push(await setOperatorAs(deployer));
@@ -197,36 +199,40 @@ describe("P5 - full confidential prize-savings lifecycle", function () {
     // Draw (deterministic ticket 30 -> Alice, index 0, interval [0,60)).
     receipts.push(await drawWithTicketAs(30n));
     expect(await winner()).to.equal(0n);
-    expect(await harness.roundState()).to.equal(2n);
-    // The draw moves nothing.
-    expect(await reserve()).to.equal(20n);
+    expect(await harness.roundStateOf(1n)).to.equal(2n);
+    // The draw moves nothing. Round 1 hasn't been fully claimed yet, so its
+    // reserve has not rolled over into round 2 (the now-current round) -
+    // check it directly by roundId.
+    const reserveOf1 = async () =>
+      fhevm.debugger.decryptEuint(FhevmType.euint64, await harness.prizeReserveOf(1n));
+    expect(await reserveOf1()).to.equal(20n);
     expect(await holdings()).to.equal(120n);
     await assertSolvency();
 
-    // Alice claims (winner): +20 prize, reserve -> 0.
-    receipts.push(await (await harness.connect(alice).claim()).wait());
+    // Alice claims (winner): +20 prize, round 1's reserve -> 0.
+    receipts.push(await (await harness.connect(alice).claim(1n)).wait());
     expect(await credited(addrAlice, alice)).to.equal(80n);
-    expect(await reserve()).to.equal(0n);
-    expect(await harness.hasClaimed(addrAlice)).to.equal(true);
+    expect(await reserveOf1()).to.equal(0n);
+    expect(await harness.hasClaimedRound(1n, addrAlice)).to.equal(true);
     await assertSolvency();
 
     // Bob claims (non-winner): +0, no revert.
-    receipts.push(await (await harness.connect(bob).claim()).wait());
+    receipts.push(await (await harness.connect(bob).claim(1n)).wait());
     expect(await credited(addrBob, bob)).to.equal(40n);
-    expect(await harness.hasClaimed(addrBob)).to.equal(true);
+    expect(await harness.hasClaimedRound(1n, addrBob)).to.equal(true);
     await assertSolvency();
 
     // Claim replay: neither can claim twice; one never blocks the other.
     let reverted = false;
     try {
-      await harness.connect(alice).claim();
+      await harness.connect(alice).claim(1n);
     } catch {
       reverted = true;
     }
     expect(reverted, "winner second claim must revert").to.be.true;
     reverted = false;
     try {
-      await harness.connect(bob).claim();
+      await harness.connect(bob).claim(1n);
     } catch {
       reverted = true;
     }
@@ -277,8 +283,8 @@ describe("P5 - full confidential prize-savings lifecycle", function () {
     expect(await winner()).to.equal(65535n); // NO_WINNER
 
     // Everyone claims: encrypted zero, no reverts.
-    await (await harness.connect(alice).claim()).wait();
-    await (await harness.connect(bob).claim()).wait();
+    await (await harness.connect(alice).claim(1n)).wait();
+    await (await harness.connect(bob).claim(1n)).wait();
     expect(await credited(addrAlice, alice)).to.equal(60n);
     expect(await credited(addrBob, bob)).to.equal(40n);
     expect(await reserve(), "reserve must remain intact for rollover").to.equal(20n);
@@ -286,7 +292,7 @@ describe("P5 - full confidential prize-savings lifecycle", function () {
     // Claim replay still enforced.
     let reverted = false;
     try {
-      await harness.connect(alice).claim();
+      await harness.connect(alice).claim(1n);
     } catch {
       reverted = true;
     }
@@ -315,8 +321,8 @@ describe("P5 - full confidential prize-savings lifecycle", function () {
     const receipts: any[] = await buildPool();
     await (await harness.connect(deployer).lockRound()).wait();
     receipts.push(await drawWithTicketAs(30n));
-    receipts.push(await (await harness.connect(alice).claim()).wait());
-    receipts.push(await (await harness.connect(bob).claim()).wait());
+    receipts.push(await (await harness.connect(alice).claim(1n)).wait());
+    receipts.push(await (await harness.connect(bob).claim(1n)).wait());
     receipts.push(await withdrawAs(alice, addrAlice, 30n));
     receipts.push(await (await harness.connect(alice).withdrawAll()).wait());
     receipts.push(await (await harness.connect(bob).withdrawAll()).wait());
@@ -351,8 +357,9 @@ describe("P5 - full confidential prize-savings lifecycle", function () {
       }
     }
 
-    // Claim events carry no data at all, for winners and non-winners alike.
-    const claimTopic = ethers.id("Claimed(address)");
+    // Claim events carry no non-indexed data at all, for winners and
+    // non-winners alike (the roundId is indexed, not a value payload).
+    const claimTopic = ethers.id("Claimed(address,uint256)");
     let sawWinnerClaim = false;
     let sawNonWinnerClaim = false;
     for (const receipt of receipts) {
@@ -368,7 +375,7 @@ describe("P5 - full confidential prize-savings lifecycle", function () {
     expect(sawWinnerClaim && sawNonWinnerClaim).to.be.true;
 
     // Winner handle and credited handles are ciphertexts, not plaintext.
-    const winnerHandle = await harness.winnerIndex();
+    const winnerHandle = await harness.winnerIndexOf(1n);
     expect(winnerHandle.slice(2).toLowerCase()).to.not.equal(winnerWord);
     expect((await harness.confidentialBalanceOf(addrAlice)).slice(2).toLowerCase()).to.not.equal(
       ethers.toBeHex(80, 32).slice(2).toLowerCase(),

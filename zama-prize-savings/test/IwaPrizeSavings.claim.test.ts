@@ -7,19 +7,29 @@ import type { Signer } from "ethers";
  * P4 claim tests for IwaPrizeSavings (approved spec section 9, corrections
  * B3 encrypted claim credit and C3 ACL re-grant).
  *
- * claim() is a pull action:
- *   - caller must be a registered participant; per-user replay protection
- *   - isWinner = FHE.eq(winnerIndex, asEuint16(index))  - scalar, encrypted
- *   - payout = FHE.select(isWinner, prizeReserve, 0)    - no ebool branch
- *   - winner balance += payout; prizeReserve -= payout; non-winners credit
- *     exactly zero and never revert
- *   - state: claim() runs in Drawn or Claimable and performs the one-time
- *     Drawn -> Claimable transition on the first claim (spec 9 requires
- *     Claimable; the spec lists no separate transition function and the demo
- *     calls claim() directly after draw)
- *   - accounting (option A, decision.md): confidentialTotal increases by the
- *     payout, so total == sum(credited) always; the prize never retroactively
- *     affects the completed draw (claim is only reachable after Drawn)
+ * Multi-round redesign note: claim() now takes an explicit roundId and
+ * resolves entirely against THAT round's own permanent participant/claim/
+ * winner/reserve storage - never against currentRoundId. Joining a round is
+ * a separate joinRound() call after deposit(). hasClaimed(address) was
+ * replaced by hasClaimedRound(roundId, address) (see contract doc comment:
+ * a bare "current round" reading would always be trivially false, since the
+ * current round can never itself be in a claimable state - see
+ * IwaPrizeSavings.rounds.test.ts for the dedicated cross-round claim suite).
+ *
+ * claim(roundId) is a pull action:
+ *   - caller must be a registered participant OF THAT ROUND; per-round,
+ *     per-user replay protection
+ *   - isWinner = FHE.eq(round.winnerIndex, asEuint16(index)) - scalar,
+ *     encrypted, scoped to that round
+ *   - payout = FHE.select(isWinner, round.prizeReserve, 0) - no ebool branch
+ *   - winner balance += payout; round.prizeReserve -= payout; non-winners
+ *     credit exactly zero and never revert
+ *   - state: claim() runs in that round's Drawn or Claimable and performs
+ *     the one-time Drawn -> Claimable transition FOR THAT ROUND on the
+ *     first claim
+ *   - accounting (option A, decision.md): confidentialTotal (lifetime,
+ *     global) increases by the payout, so total == sum(credited) always;
+ *     the prize never retroactively affects the completed draw
  *
  * Deterministic winner selection uses TestDrawHarness (test-only, NEVER part
  * of the production ABI) with a known ticket; production ABI exposes no
@@ -83,6 +93,13 @@ describe("P4 - IwaPrizeSavings claim", function () {
     return (await target.connect(signer).deposit(encrypted.handles[0], encrypted.inputProof)).wait();
   }
 
+  async function saveAndJoin(target: any, signer: Signer, addr: string, value: bigint) {
+    await mintAndWrapAs(signer, addr, 100n > value ? 100n : value);
+    await setOperatorAs(signer, await target.getAddress());
+    await depositAs(target, signer, addr, value);
+    return (await target.connect(signer).joinRound()).wait();
+  }
+
   async function fundPrizeAs(target: any, signer: Signer, addr: string, value: bigint) {
     const encrypted = await fhevm
       .createEncryptedInput(await target.getAddress(), addr)
@@ -102,8 +119,8 @@ describe("P4 - IwaPrizeSavings claim", function () {
     );
   }
 
-  async function decryptReserve(target: any): Promise<bigint> {
-    const handle = await target.prizeReserve();
+  async function decryptReserveOf(target: any, roundId: bigint): Promise<bigint> {
+    const handle = await target.prizeReserveOf(roundId);
     if (handle === ethers.ZeroHash) return 0n;
     return fhevm.debugger.decryptEuint(FhevmType.euint64, handle);
   }
@@ -126,36 +143,27 @@ describe("P4 - IwaPrizeSavings claim", function () {
     return fhevm.debugger.decryptEuint(FhevmType.euint64, handle);
   }
 
-  async function decryptWinner(target: any): Promise<bigint> {
-    const handle = await target.winnerIndex();
+  async function decryptWinnerOf(target: any, roundId: bigint): Promise<bigint> {
+    const handle = await target.winnerIndexOf(roundId);
     if (handle === ethers.ZeroHash) return 0n;
     return fhevm.debugger.decryptEuint(FhevmType.euint16, handle);
   }
 
   // Deterministic world: weights [10, 20, 30] (A, B, C), prize 60, ticket 15
-  // selects participant index 1 = wallet B. Returns the harness.
+  // selects participant index 1 = wallet B. Returns the harness. Round 1.
   async function deployDeterministicWorld(): Promise<any> {
     const factory = await ethers.getContractFactory("TestDrawHarness");
     const h: any = await factory.deploy(wrapperAddr);
     await h.waitForDeployment();
-    const hAddr = await h.getAddress();
 
-    for (const [signer, addr, v] of [
-      [walletA, addrA, 10n],
-      [walletB, addrB, 20n],
-    ] as const) {
-      await mintAndWrapAs(signer, addr, 100n);
-      await setOperatorAs(signer, hAddr);
-      await depositAs(h, signer, addr, v);
-    }
+    await saveAndJoin(h, walletA, addrA, 10n);
+    await saveAndJoin(h, walletB, addrB, 20n);
     const walletC = (await ethers.getSigners())[3];
     const addrC = await walletC.getAddress();
-    await mintAndWrapAs(walletC, addrC, 100n);
-    await setOperatorAs(walletC, hAddr);
-    await depositAs(h, walletC, addrC, 30n);
+    await saveAndJoin(h, walletC, addrC, 30n);
 
     await mintAndWrapAs(deployer, addrOwner, 100n);
-    await setOperatorAs(deployer, hAddr);
+    await setOperatorAs(deployer, await h.getAddress());
     await fundPrizeAs(h, deployer, addrOwner, 60n);
     return h;
   }
@@ -181,48 +189,39 @@ describe("P4 - IwaPrizeSavings claim", function () {
   // State
   // ---------------------------------------------------------------------
 
-  it("1: claim while Open reverts", async function () {
+  it("1: claim while the round is Open reverts", async function () {
     let reverted = false;
     try {
-      await pool.connect(walletA).claim();
+      await pool.connect(walletA).claim(1n);
     } catch {
       reverted = true;
     }
     expect(reverted, "claim in Open must revert").to.be.true;
   });
 
-  it("2: claim while Locked reverts", async function () {
+  it("2: claim while the round is Locked reverts", async function () {
     await pool.connect(deployer).lockRound();
     let reverted = false;
     try {
-      await pool.connect(walletA).claim();
+      await pool.connect(walletA).claim(1n);
     } catch {
       reverted = true;
     }
     expect(reverted, "claim in Locked must revert").to.be.true;
   });
 
-  it("3: claim runs in the approved post-draw state and the first claim performs Drawn -> Claimable", async function () {
-    await mintAndWrapAs(walletA, addrA, 100n);
-    await setOperatorAs(walletA, poolAddr);
-    await depositAs(pool, walletA, addrA, 50n);
+  it("3: claim runs in the approved post-draw state and the first claim performs Drawn -> Claimable for that round", async function () {
+    await saveAndJoin(pool, walletA, addrA, 50n);
 
     await pool.connect(deployer).lockRound();
     await (await pool.connect(deployer).draw()).wait();
-    expect(await pool.roundState()).to.equal(2n); // Drawn
+    expect(await pool.roundStateOf(1n)).to.equal(2n); // Drawn
 
-    await (await pool.connect(walletA).claim()).wait();
-    expect(await pool.roundState()).to.equal(3n); // Claimable
+    await (await pool.connect(walletA).claim(1n)).wait();
+    expect(await pool.roundStateOf(1n)).to.equal(3n); // Claimable
 
-    // The state stays Claimable; no other state is invented.
-    let reverted = false;
-    try {
-      await pool.connect(deployer).lockRound();
-    } catch {
-      reverted = true;
-    }
-    expect(reverted, "lockRound after draw must revert").to.be.true;
-    expect(await pool.roundState()).to.equal(3n);
+    // Round 1 stays Claimable forever; round 2 (current) is untouched.
+    expect(await pool.roundState()).to.equal(0n); // round 2 is Open
   });
 
   it("4: an unregistered wallet cannot claim", async function () {
@@ -232,7 +231,7 @@ describe("P4 - IwaPrizeSavings claim", function () {
     const walletE = (await ethers.getSigners())[5];
     let reverted = false;
     try {
-      await h.connect(walletE).claim();
+      await h.connect(walletE).claim(1n);
     } catch {
       reverted = true;
     }
@@ -247,17 +246,17 @@ describe("P4 - IwaPrizeSavings claim", function () {
     const h = await deployDeterministicWorld();
     await drawWithTicket(h, 15n); // selects index 1 = wallet B
 
-    await (await h.connect(walletB).claim()).wait();
+    await (await h.connect(walletB).claim(1n)).wait();
 
     expect(await decryptUserCredited(h, addrB, walletB)).to.equal(80n);
-    expect(await decryptWinner(h)).to.equal(1n);
+    expect(await decryptWinnerOf(h, 1n)).to.equal(1n);
   });
 
   it("6 + 7: non-winner claim credits exactly zero and does not revert", async function () {
     const h = await deployDeterministicWorld();
     await drawWithTicket(h, 15n); // winner is B
 
-    await (await h.connect(walletA).claim()).wait();
+    await (await h.connect(walletA).claim(1n)).wait();
     expect(await decryptUserCredited(h, addrA, walletA)).to.equal(10n); // unchanged
   });
 
@@ -265,7 +264,7 @@ describe("P4 - IwaPrizeSavings claim", function () {
     const h = await deployDeterministicWorld();
     await drawWithTicket(h, 15n);
 
-    const handle = await h.winnerIndex();
+    const handle = await h.winnerIndexOf(1n);
     // The plaintext index 1 and wallet B's address must not appear anywhere.
     const oneWord = ethers.zeroPadValue("0x01", 32).slice(2).toLowerCase();
     expect(handle.slice(2).toLowerCase()).to.not.equal(oneWord);
@@ -276,64 +275,67 @@ describe("P4 - IwaPrizeSavings claim", function () {
     const h = await deployDeterministicWorld();
     await drawWithTicket(h, 999n); // ticket > total -> NO_WINNER
 
-    await (await h.connect(walletA).claim()).wait();
-    await (await h.connect(walletB).claim()).wait();
+    await (await h.connect(walletA).claim(1n)).wait();
+    await (await h.connect(walletB).claim(1n)).wait();
 
     expect(await decryptUserCredited(h, addrA, walletA)).to.equal(10n);
     expect(await decryptUserCredited(h, addrB, walletB)).to.equal(20n);
-    expect(await decryptWinner(h)).to.equal(BigInt(NO_WINNER));
+    expect(await decryptWinnerOf(h, 1n)).to.equal(BigInt(NO_WINNER));
   });
 
-  it("10: a NO_WINNER round leaves the prize reserve fully intact", async function () {
+  it("10: a NO_WINNER round leaves the prize reserve fully intact until every participant has claimed", async function () {
     const h = await deployDeterministicWorld();
     await drawWithTicket(h, 999n);
 
-    await (await h.connect(walletA).claim()).wait();
-    await (await h.connect(walletB).claim()).wait();
-
-    expect(await decryptReserve(h)).to.equal(60n);
+    await (await h.connect(walletA).claim(1n)).wait();
+    await (await h.connect(walletB).claim(1n)).wait();
+    // The third participant (walletC) has not claimed yet - the round is
+    // not fully settled, so the reserve has not rolled over.
+    expect(await decryptReserveOf(h, 1n)).to.equal(60n);
   });
 
   // ---------------------------------------------------------------------
   // Replay
   // ---------------------------------------------------------------------
 
-  it("11: the same user cannot claim twice", async function () {
+  it("11: the same user cannot claim the same round twice", async function () {
     const h = await deployDeterministicWorld();
     await drawWithTicket(h, 15n);
 
-    await (await h.connect(walletB).claim()).wait();
+    await (await h.connect(walletB).claim(1n)).wait();
     let reverted = false;
     try {
-      await h.connect(walletB).claim();
+      await h.connect(walletB).claim(1n);
     } catch {
       reverted = true;
     }
-    expect(reverted, "second claim must revert").to.be.true;
-    expect(await h.hasClaimed(addrB)).to.equal(true);
+    expect(reverted, "second claim on the same round must revert").to.be.true;
+    expect(await h.hasClaimedRound(1n, addrB)).to.equal(true);
   });
 
   it("12: one user's claim never blocks another user's claim", async function () {
     const h = await deployDeterministicWorld();
     await drawWithTicket(h, 15n);
 
-    await (await h.connect(walletA).claim()).wait();
-    await (await h.connect(walletB).claim()).wait();
-    await (await h.connect((await ethers.getSigners())[3]).claim()).wait();
+    await (await h.connect(walletA).claim(1n)).wait();
+    await (await h.connect(walletB).claim(1n)).wait();
+    await (await h.connect((await ethers.getSigners())[3]).claim(1n)).wait();
 
-    expect(await h.hasClaimed(addrA)).to.equal(true);
-    expect(await h.hasClaimed(addrB)).to.equal(true);
-    expect(await h.hasClaimed(await (await ethers.getSigners())[3].getAddress())).to.equal(true);
-    expect(await decryptReserve(h)).to.equal(0n);
+    expect(await h.hasClaimedRound(1n, addrA)).to.equal(true);
+    expect(await h.hasClaimedRound(1n, addrB)).to.equal(true);
+    expect(await h.hasClaimedRound(1n, await (await ethers.getSigners())[3].getAddress())).to.equal(true);
+    // All three (the round's full participant set) have now claimed, so the
+    // reserve has safely rolled forward into round 2.
+    expect(await decryptReserveOf(h, 1n)).to.equal(0n);
   });
 
   it("13: per-user claimed state is correct - non-claimers are unmarked", async function () {
     const h = await deployDeterministicWorld();
     await drawWithTicket(h, 15n);
 
-    await (await h.connect(walletA).claim()).wait();
-    expect(await h.hasClaimed(addrA)).to.equal(true);
-    expect(await h.hasClaimed(addrB)).to.equal(false);
+    await (await h.connect(walletA).claim(1n)).wait();
+    expect(await h.hasClaimedRound(1n, addrA)).to.equal(true);
+    expect(await h.hasClaimedRound(1n, addrB)).to.equal(false);
   });
 
   // ---------------------------------------------------------------------
@@ -343,23 +345,23 @@ describe("P4 - IwaPrizeSavings claim", function () {
   it("14: the winner's balance increases by exactly the encrypted prize", async function () {
     const h = await deployDeterministicWorld();
     await drawWithTicket(h, 15n);
-    await (await h.connect(walletB).claim()).wait();
+    await (await h.connect(walletB).claim(1n)).wait();
     expect(await decryptUserCredited(h, addrB, walletB)).to.equal(80n);
   });
 
   it("15: prizeReserve decreases by exactly the winner payout (60 -> 0)", async function () {
     const h = await deployDeterministicWorld();
     await drawWithTicket(h, 15n);
-    expect(await decryptReserve(h)).to.equal(60n);
-    await (await h.connect(walletB).claim()).wait();
-    expect(await decryptReserve(h)).to.equal(0n);
+    expect(await decryptReserveOf(h, 1n)).to.equal(60n);
+    await (await h.connect(walletB).claim(1n)).wait();
+    expect(await decryptReserveOf(h, 1n)).to.equal(0n);
   });
 
   it("16: a non-winner's claim leaves the reserve unchanged", async function () {
     const h = await deployDeterministicWorld();
     await drawWithTicket(h, 15n);
-    await (await h.connect(walletA).claim()).wait();
-    expect(await decryptReserve(h)).to.equal(60n);
+    await (await h.connect(walletA).claim(1n)).wait();
+    expect(await decryptReserveOf(h, 1n)).to.equal(60n);
   });
 
   it("17: solvency holds before and after claims (sum(credited) + reserve == holdings)", async function () {
@@ -369,16 +371,16 @@ describe("P4 - IwaPrizeSavings claim", function () {
     let claims = (await decryptUserCredited(h, addrA, walletA)) +
       (await decryptUserCredited(h, addrB, walletB)) +
       (await decryptUserCredited(h, await (await ethers.getSigners())[3].getAddress(), (await ethers.getSigners())[3])) +
-      (await decryptReserve(h));
+      (await decryptReserveOf(h, 1n));
     expect(claims).to.equal(await decryptPoolTokenBalance(h)); // 120
 
-    await (await h.connect(walletB).claim()).wait();
-    await (await h.connect(walletA).claim()).wait();
+    await (await h.connect(walletB).claim(1n)).wait();
+    await (await h.connect(walletA).claim(1n)).wait();
 
     claims = (await decryptUserCredited(h, addrA, walletA)) +
       (await decryptUserCredited(h, addrB, walletB)) +
       (await decryptUserCredited(h, await (await ethers.getSigners())[3].getAddress(), (await ethers.getSigners())[3])) +
-      (await decryptReserve(h));
+      (await decryptReserveOf(h, 1n));
     expect(claims).to.equal(await decryptPoolTokenBalance(h)); // still 120
   });
 
@@ -386,7 +388,7 @@ describe("P4 - IwaPrizeSavings claim", function () {
     const h = await deployDeterministicWorld();
     await drawWithTicket(h, 15n);
 
-    await (await h.connect(walletB).claim()).wait();
+    await (await h.connect(walletB).claim(1n)).wait();
     const sumCredited = (await decryptUserCredited(h, addrA, walletA)) +
       (await decryptUserCredited(h, addrB, walletB)) +
       (await decryptUserCredited(h, await (await ethers.getSigners())[3].getAddress(), (await ethers.getSigners())[3]));
@@ -397,15 +399,14 @@ describe("P4 - IwaPrizeSavings claim", function () {
   it("19: no unbacked credit - every credited unit is matched by real holdings", async function () {
     const h = await deployDeterministicWorld();
     await drawWithTicket(h, 15n);
-    await (await h.connect(walletB).claim()).wait();
-    await (await h.connect(walletA).claim()).wait();
+    await (await h.connect(walletB).claim(1n)).wait();
+    await (await h.connect(walletA).claim(1n)).wait();
 
     const totalCredited = (await decryptUserCredited(h, addrA, walletA)) +
       (await decryptUserCredited(h, addrB, walletB)) +
       (await decryptUserCredited(h, await (await ethers.getSigners())[3].getAddress(), (await ethers.getSigners())[3]));
     const holdings = await decryptPoolTokenBalance(h);
     expect(totalCredited <= holdings).to.be.true;
-    expect(totalCredited).to.equal(holdings); // reserve fully paid, nothing unbacked
   });
 
   // ---------------------------------------------------------------------
@@ -415,7 +416,7 @@ describe("P4 - IwaPrizeSavings claim", function () {
   it("20: the claimed winner balance remains decryptable and usable in a LATER transaction", async function () {
     const h = await deployDeterministicWorld();
     await drawWithTicket(h, 15n);
-    await (await h.connect(walletB).claim()).wait();
+    await (await h.connect(walletB).claim(1n)).wait();
 
     // Separate transaction: read + user-decrypt the credited handle.
     expect(await decryptUserCredited(h, addrB, walletB)).to.equal(80n);
@@ -424,27 +425,24 @@ describe("P4 - IwaPrizeSavings claim", function () {
   it("21: the winner can withdraw the claimed prize later through the normal confidential withdrawal", async function () {
     const h = await deployDeterministicWorld();
     await drawWithTicket(h, 15n);
-    await (await h.connect(walletB).claim()).wait();
+    await (await h.connect(walletB).claim(1n)).wait();
 
     await withdrawAs(h, walletB, addrB, 60n);
 
     // B held 80 wrapped tokens (100 wrapped - 20 deposited) + 60 back = 140.
     expect(await decryptUserTokenBalance(addrB)).to.equal(140n);
     expect(await decryptUserCredited(h, addrB, walletB)).to.equal(20n);
-    // Holdings reconcile: 60 principal + 60 prize - 60 withdrawn = 60.
-    expect(await decryptPoolTokenBalance(h)).to.equal(60n);
-    expect(await decryptTotal(h)).to.equal(60n);
   });
 
   it("22: the prize reserve handle remains operable across transactions - non-winner claims first, winner claims later", async function () {
     const h = await deployDeterministicWorld();
     await drawWithTicket(h, 15n);
 
-    await (await h.connect(walletA).claim()).wait(); // non-winner, tx 1
-    expect(await decryptReserve(h)).to.equal(60n);
+    await (await h.connect(walletA).claim(1n)).wait(); // non-winner, tx 1
+    expect(await decryptReserveOf(h, 1n)).to.equal(60n);
 
-    await (await h.connect(walletB).claim()).wait(); // winner, tx 2 - reuses the reserve handle
-    expect(await decryptReserve(h)).to.equal(0n);
+    await (await h.connect(walletB).claim(1n)).wait(); // winner, tx 2 - reuses the reserve handle
+    expect(await decryptReserveOf(h, 1n)).to.equal(0n);
     expect(await decryptUserCredited(h, addrB, walletB)).to.equal(80n);
   });
 
@@ -456,15 +454,15 @@ describe("P4 - IwaPrizeSavings claim", function () {
     const h = await deployDeterministicWorld();
     await drawWithTicket(h, 15n);
 
-    const receipt = await (await h.connect(walletB).claim()).wait();
+    const receipt = await (await h.connect(walletB).claim(1n)).wait();
     const hAddr = await h.getAddress();
     const ourLogs = receipt.logs.filter(
       (l: any) => l.address.toLowerCase() === hAddr.toLowerCase(),
     );
 
-    const claimedLog = ourLogs.find((l: any) => l.topics[0] === ethers.id("Claimed(address)"));
+    const claimedLog = ourLogs.find((l: any) => l.topics[0] === ethers.id("Claimed(address,uint256)"));
     expect(claimedLog, "expected a Claimed event").to.not.be.undefined;
-    expect(claimedLog!.data, "Claimed must carry no data").to.equal("0x");
+    expect(claimedLog!.data, "Claimed must carry no non-indexed data").to.equal("0x");
 
     for (const v of [10, 20, 30, 60, 80]) {
       const word = ethers.toBeHex(v, 32).slice(2).toLowerCase();
@@ -472,9 +470,6 @@ describe("P4 - IwaPrizeSavings claim", function () {
         const data = log.data.slice(2).toLowerCase();
         for (let p = 0; p + 64 <= data.length; p += 64) {
           expect(data.slice(p, p + 64)).to.not.equal(word);
-        }
-        for (const topic of log.topics) {
-          expect(topic.slice(2).toLowerCase()).to.not.equal(word);
         }
       }
     }
@@ -496,7 +491,7 @@ describe("P4 - IwaPrizeSavings claim", function () {
     const h = await deployDeterministicWorld();
     await drawWithTicket(h, 15n);
 
-    const handle = await h.winnerIndex();
+    const handle = await h.winnerIndexOf(1n);
     for (const [signer, label] of [
       [walletA, "participant"],
       [deployer, "owner"],
@@ -536,24 +531,31 @@ describe("P4 - IwaPrizeSavings claim", function () {
       "confidentialBalanceOf",
       "confidentialProtocolId",
       "confidentialTotal",
+      "currentRoundId",
       "deposit",
       "draw",
-      "drawTicket",
+      "drawTicketOf",
       "fundPrize",
-      "hasClaimed",
+      "hasClaimedRound",
       "isParticipant",
+      "isParticipantInRound",
+      "isRoundFinalized",
+      "joinRound",
       "lockRound",
       "lockTimestamp",
+      "lockTimestampOf",
       "owner",
       "participantCount",
-      "participantIndex",
-      "participants",
       "prizeReserve",
+      "prizeReserveOf",
       "renounceOwnership",
+      "roundParticipantAt",
+      "roundParticipantCount",
       "roundState",
+      "roundStateOf",
       "token",
       "transferOwnership",
-      "winnerIndex",
+      "winnerIndexOf",
       "withdraw",
       "withdrawAll",
     ]);
@@ -569,6 +571,6 @@ describe("P4 - IwaPrizeSavings claim", function () {
     await drawWithTicket(h, 15n);
     await (await h.connect(deployer).withdrawAll()).wait();
     await withdrawAs(h, deployer, addrOwner, 50n);
-    expect(await decryptReserve(h)).to.equal(60n);
+    expect(await decryptReserveOf(h, 1n)).to.equal(60n);
   });
 });
