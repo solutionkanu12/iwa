@@ -570,6 +570,37 @@ UI components must not directly scatter Starknet SDK calls throughout the applic
 
 The frontend should remain usable if a different chain adapter is later introduced.
 
+## Iwa Account identity and session architecture
+
+Iwa Account is a chain-neutral application identity layer. It is not a wallet,
+an on-chain `memberRef`, a chain adapter, or authorization to move funds.
+
+```text
+Google / email
+    -> Supabase Auth PKCE
+    -> /auth/callback (scrub URL, exchange code once)
+    -> POST /api/auth/login (verified Supabase access token only)
+    -> Iwa users + auth_identities + hashed sessions
+    -> HttpOnly Iwa session cookie
+```
+
+The browser Supabase client disables token refresh and automatic URL session
+detection. Its approved storage exception uses `persistSession: true` only to
+let the PKCE verifier survive the redirect; a custom adapter accepts
+`*-code-verifier` keys and rejects every Supabase session/provider-token key.
+The Supabase session is not Iwa's durable session.
+
+The backend validates token signature, expiry, configured issuer, authenticated
+audience and supported identity claims before upserting `users` and
+`auth_identities`. It then creates an independent opaque Iwa session and stores
+only the token hash. `/api/auth/me`, rolling expiry, current-device logout and
+logout-all operate on that backend session.
+
+This layer may gate ordinary application routes. Wallet connection remains
+independent, and wallet signatures continue to authorize every financial or
+operator action. No account session can stand in for Starknet, Celo or EVM
+wallet authorization.
+
 ## Starknet frontend adapter
 
 Responsible for:

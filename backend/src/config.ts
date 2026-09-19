@@ -28,6 +28,14 @@ const schema = z.object({
    * write to Postgres cannot make themselves an operator.
    */
   ADMIN_ADDRESSES: z.string().default(""),
+  /**
+   * Supabase Auth. Optional: when unset, Iwa User login is closed rather than
+   * half-configured. The JWT secret verifies access tokens; the anon key is
+   * used only to ask Supabase to send an email OTP. Neither is a session.
+   */
+  SUPABASE_URL: z.union([z.string().url(), z.literal("")]).optional(),
+  SUPABASE_JWT_SECRET: z.string().default(""),
+  SUPABASE_ANON_KEY: z.string().default(""),
   /** Blocks the indexer loop when false, e.g. on a second replica. */
   INDEXER_ENABLED: z.enum(["true", "false"]).default("true"),
   INDEXER_INTERVAL_MS: z.coerce.number().int().min(5_000).default(30_000),
@@ -44,6 +52,9 @@ export type Config = {
   celoRpcUrl: string;
   corsOrigins: string[];
   adminAddresses: string[];
+  supabaseUrl: string;
+  supabaseJwtSecret: string;
+  supabaseAnonKey: string;
   indexerEnabled: boolean;
   indexerIntervalMs: number;
   indexerStartBlock: number;
@@ -91,6 +102,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     celoRpcUrl: v.CELO_RPC_URL,
     corsOrigins,
     adminAddresses,
+    supabaseUrl: v.SUPABASE_URL ?? "",
+    supabaseJwtSecret: v.SUPABASE_JWT_SECRET,
+    supabaseAnonKey: v.SUPABASE_ANON_KEY,
     indexerEnabled: v.INDEXER_ENABLED === "true",
     indexerIntervalMs: v.INDEXER_INTERVAL_MS,
     indexerStartBlock: v.INDEXER_START_BLOCK,

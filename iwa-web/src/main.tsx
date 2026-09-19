@@ -9,6 +9,10 @@ import { AcceptInviteView } from "./screens/AcceptInviteView.tsx";
 import { CeloAcceptBindingView } from "./screens/CeloAcceptBindingView.tsx";
 import { WalletProvider } from "./app/WalletProvider.tsx";
 import { SessionProvider } from "./app/SessionProvider.tsx";
+import { IwaAuthProvider, useIwaAuth } from "./app/IwaAuthProvider.tsx";
+import { AuthLoading, AuthScreen, AuthSuspended } from "./app/AuthScreen.tsx";
+import { AuthCallbackView } from "./screens/AuthCallbackView.tsx";
+import { requiresIwaSession } from "./app/iwaAuthGate.ts";
 import { useRoute } from "./lib/router.ts";
 
 // The single entry for the marketing landing page and the application alike,
@@ -29,6 +33,7 @@ const OPERATOR_CONSOLE_ENABLED =
 
 function AppRoot() {
   const { route, navigate } = useRoute();
+  const auth = useIwaAuth();
 
   if (route.name === "landing") {
     return <LandingPage onEnterCircle={() => navigate({ name: "home" })} />;
@@ -39,12 +44,30 @@ function AppRoot() {
   if (route.name === "celoBindInvite") {
     return <CeloAcceptBindingView token={route.token} />;
   }
+  if (route.name === "authCallback") {
+    return <AuthCallbackView navigate={navigate} />;
+  }
   if (route.name === "console") {
     // A disabled console is not a route: it falls through to the application
     // rather than rendering a shell around nothing.
     if (OPERATOR_CONSOLE_ENABLED) return <Strk20ConsoleView />;
     return <App route={{ name: "notFound", path: "/strk20" }} navigate={navigate} />;
   }
+
+  if (requiresIwaSession(route.name)) {
+    if (auth.phase === "loading") return <AuthLoading />;
+    if (auth.phase === "unauthenticated") {
+      return <AuthScreen onSignedIn={() => void auth.refresh()} />;
+    }
+    if (auth.phase === "suspended") {
+      return (
+        <AuthSuspended
+          message={auth.error ?? "This Iwa account is suspended. Your on-chain funds are untouched."}
+        />
+      );
+    }
+  }
+
   return <App route={route} navigate={navigate} />;
 }
 
@@ -55,7 +78,9 @@ createRoot(rootEl).render(
   <StrictMode>
     <WalletProvider>
       <SessionProvider>
-        <AppRoot />
+        <IwaAuthProvider>
+          <AppRoot />
+        </IwaAuthProvider>
       </SessionProvider>
     </WalletProvider>
   </StrictMode>,

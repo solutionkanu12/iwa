@@ -12,6 +12,7 @@ import { OnChainSignatureVerifier } from "./auth.js";
 import { OnChainCircleVerifier, RpcChainHealth } from "./chainVerify.js";
 import { RpcCeloOrganizerReader } from "./celoChainVerify.js";
 import { SN_MAIN } from "./validation.js";
+import { SupabaseEmailOtpSender, SupabaseJwtVerifier } from "./iwaAccount.js";
 
 const IWA_CIRCLE = "0x01f81497b09aa702a38715c0ec149d7672cd557c0caea480714d4802ff6f81be";
 
@@ -44,6 +45,15 @@ async function main(): Promise<void> {
     adminAddresses: config.adminAddresses,
     chainHealth: new RpcChainHealth(provider, IWA_CIRCLE),
     environment: config.nodeEnv,
+    identityVerifier:
+      config.supabaseJwtSecret.length > 0 && config.supabaseUrl.length > 0
+        ? new SupabaseJwtVerifier(config.supabaseJwtSecret, config.supabaseUrl)
+        : undefined,
+    emailOtpSender:
+      config.supabaseUrl.length > 0 && config.supabaseAnonKey.length > 0
+        ? new SupabaseEmailOtpSender(config.supabaseUrl, config.supabaseAnonKey)
+        : undefined,
+    supabaseUrl: config.supabaseUrl.length > 0 ? config.supabaseUrl : undefined,
   });
   const server = app.listen(config.port, () => {
     console.log(`iwa-backend listening on ${config.port} (${config.nodeEnv})`);

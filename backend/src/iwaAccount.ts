@@ -1,0 +1,345 @@
+// Iwa User accounts and durable browser sessions.
+//
+// Email and Google identify a person to Iwa. They are not a member_ref, not a
+// wallet, and not authorization to move money. A session minted here is an
+// application login: it may open Iwa, and it may never sign a contribution,
+// mint an admin overview, or stand in for a chain signature.
+//
+// The token is an opaque random string. Only its SHA-256 lives in storage.
+// The raw value travels in an HttpOnly cookie and is never returned in JSON.
+
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+
+export const IWA_SESSION_COOKIE = "iwa_session";
+export const IWA_CSRF_COOKIE = "iwa_csrf";
+export const IWA_CSRF_HEADER = "x-iwa-csrf";
+
+/** Thirty days. Each authenticated use renews this window. */
+export const IWA_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Several devices are normal. Unbounded is not. Oldest live session is dropped. */
+export const MAX_ACCOUNT_SESSIONS_PER_USER = 20;
+
+export type IwaUserStatus = "active" | "suspended";
+export type AuthProvider = "google" | "email";
+
+export interface IwaUser {
+  id: string;
+  email: string;
+  status: IwaUserStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AuthIdentity {
+  id: string;
+  userId: string;
+  provider: AuthProvider;
+  providerSubject: string;
+  verifiedEmail: string;
+  createdAt: string;
+}
+
+export interface AccountSessionRecord {
+  id: string;
+  userId: string;
+  tokenHash: string;
+  createdAt: number;
+  lastUsedAt: number;
+  expiresAt: number;
+  revokedAt: number | null;
+  userAgent: string | null;
+  deviceLabel: string | null;
+}
+
+export interface VerifiedIdentity {
+  provider: AuthProvider;
+  subject: string;
+  email: string;
+}
+
+export interface IdentityVerifier {
+  /** Returns a verified identity, or null when the credential is not acceptable. */
+  verify(accessToken: string): Promise<VerifiedIdentity | null>;
+}
+
+export interface EmailOtpSender {
+  send(email: string, redirectTo?: string): Promise<void>;
+}
+
+/** Trim + lowercase. The only email form Iwa stores or compares. */
+export function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export function isNormalizedEmail(email: string): boolean {
+  if (email !== normalizeEmail(email)) return false;
+  if (email.length < 3 || email.length > 254) return false;
+  return EMAIL.test(email);
+}
+
+export function hashSessionToken(token: string): string {
+  return createHash("sha256").update(token, "utf8").digest("hex");
+}
+
+export function newSessionToken(): string {
+  return randomBytes(32).toString("base64url");
+}
+
+export function newCsrfToken(): string {
+  return randomBytes(32).toString("base64url");
+}
+
+export function parseCookieHeader(header: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (typeof header !== "string" || header.length === 0) return out;
+  for (const part of header.split(";")) {
+    const idx = part.indexOf("=");
+    if (idx <= 0) continue;
+    const name = part.slice(0, idx).trim();
+    const value = part.slice(idx + 1).trim();
+    if (name.length === 0) continue;
+    try {
+      out[name] = decodeURIComponent(value);
+    } catch {
+      out[name] = value;
+    }
+  }
+  return out;
+}
+
+export function timingSafeEqualString(a: string, b: string): boolean {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  if (left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
+}
+
+/**
+ * Cookie attributes for the Iwa session.
+ *
+ * SameSite=Lax is the default (same-site localhost and a same-origin proxy).
+ * Cross-site SPAs (frontend host ≠ API host) cannot receive Lax cookies on
+ * fetch, so those responses use None — which browsers require to be Secure.
+ */
+export function sessionCookieAttributes(input: {
+  token: string;
+  maxAgeSeconds: number;
+  secure: boolean;
+  sameSite: "Lax" | "None";
+}): string {
+  const sameSite = input.sameSite;
+  const secure = sameSite === "None" ? true : input.secure;
+  const parts = [
+    `${IWA_SESSION_COOKIE}=${input.token}`,
+    "Path=/",
+    "HttpOnly",
+    `SameSite=${sameSite}`,
+    `Max-Age=${input.maxAgeSeconds}`,
+  ];
+  if (secure) parts.push("Secure");
+  return parts.join("; ");
+}
+
+export function csrfCookieAttributes(input: {
+  token: string;
+  maxAgeSeconds: number;
+  secure: boolean;
+  sameSite: "Lax" | "None";
+}): string {
+  const sameSite = input.sameSite;
+  const secure = sameSite === "None" ? true : input.secure;
+  const parts = [
+    `${IWA_CSRF_COOKIE}=${input.token}`,
+    "Path=/",
+    `SameSite=${sameSite}`,
+    `Max-Age=${input.maxAgeSeconds}`,
+  ];
+  if (secure) parts.push("Secure");
+  return parts.join("; ");
+}
+
+export function clearSessionCookieAttributes(secure: boolean, sameSite: "Lax" | "None"): string {
+  const parts = [
+    `${IWA_SESSION_COOKIE}=`,
+    "Path=/",
+    "HttpOnly",
+    `SameSite=${sameSite}`,
+    "Max-Age=0",
+  ];
+  if (secure || sameSite === "None") parts.push("Secure");
+  return parts.join("; ");
+}
+
+export function clearCsrfCookieAttributes(secure: boolean, sameSite: "Lax" | "None"): string {
+  const parts = [`${IWA_CSRF_COOKIE}=`, "Path=/", `SameSite=${sameSite}`, "Max-Age=0"];
+  if (secure || sameSite === "None") parts.push("Secure");
+  return parts.join("; ");
+}
+
+export function sameSiteFor(requestOrigin: string | undefined, requestHost: string): "Lax" | "None" {
+  if (typeof requestOrigin !== "string" || requestOrigin.length === 0) return "Lax";
+  try {
+    const originHost = new URL(requestOrigin).hostname;
+    if (originHost === requestHost) return "Lax";
+    if (originHost === "localhost" && requestHost === "localhost") return "Lax";
+    return "None";
+  } catch {
+    return "Lax";
+  }
+}
+
+/** Public user projection. Never includes session material. */
+export function publicUser(user: IwaUser): { id: string; email: string; status: IwaUserStatus } {
+  return { id: user.id, email: user.email, status: user.status };
+}
+
+function b64url(buf: Buffer): string {
+  return buf.toString("base64url");
+}
+
+function parseB64urlJson(part: string): unknown {
+  const padded = part.replace(/-/g, "+").replace(/_/g, "/");
+  const buf = Buffer.from(padded, "base64");
+  return JSON.parse(buf.toString("utf8"));
+}
+
+/** HS256 JWT, the default Supabase Auth signing method. */
+export function signHs256Jwt(payload: Record<string, unknown>, secret: string): string {
+  const header = b64url(Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })));
+  const body = b64url(Buffer.from(JSON.stringify(payload)));
+  const data = `${header}.${body}`;
+  const sig = createHmac("sha256", secret).update(data).digest();
+  return `${data}.${b64url(sig)}`;
+}
+
+export function verifyHs256Jwt(
+  token: string,
+  secret: string,
+  nowSeconds: number,
+): Record<string, unknown> | null {
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  const [headerB64, bodyB64, sigB64] = parts;
+  if (!headerB64 || !bodyB64 || !sigB64) return null;
+
+  let header: { alg?: unknown };
+  try {
+    header = parseB64urlJson(headerB64) as { alg?: unknown };
+  } catch {
+    return null;
+  }
+  if (header.alg !== "HS256") return null;
+
+  const data = `${headerB64}.${bodyB64}`;
+  const expected = createHmac("sha256", secret).update(data).digest();
+  let actual: Buffer;
+  try {
+    actual = Buffer.from(sigB64, "base64url");
+  } catch {
+    return null;
+  }
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null;
+
+  let payload: Record<string, unknown>;
+  try {
+    const parsed = parseB64urlJson(bodyB64);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    payload = parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+
+  const exp = payload.exp;
+  if (typeof exp !== "number" || !Number.isFinite(exp) || exp <= nowSeconds) return null;
+  return payload;
+}
+
+/**
+ * Reads a Supabase Auth access token into an Iwa identity.
+ *
+ * Fail closed: missing email, unverified email, wrong audience, or unknown
+ * provider are all refusals. The token is proof of identity, not a session.
+ */
+export function identityFromSupabasePayload(payload: Record<string, unknown>): VerifiedIdentity | null {
+  const emailRaw = payload.email;
+  if (typeof emailRaw !== "string") return null;
+  const email = normalizeEmail(emailRaw);
+  if (!isNormalizedEmail(email)) return null;
+
+  const confirmed =
+    payload.email_confirmed === true ||
+    typeof payload.email_confirmed_at === "string" ||
+    payload.role === "authenticated";
+  if (!confirmed) return null;
+
+  const sub = payload.sub;
+  if (typeof sub !== "string" || sub.length === 0 || sub.length > 128) return null;
+
+  const meta = payload.app_metadata;
+  const providerRaw =
+    meta !== null && typeof meta === "object" && !Array.isArray(meta)
+      ? (meta as { provider?: unknown }).provider
+      : undefined;
+  const provider =
+    providerRaw === "google" ? "google" : providerRaw === "email" ? "email" : null;
+  if (provider === null) return null;
+
+  return { provider, subject: sub, email };
+}
+
+export class SupabaseJwtVerifier implements IdentityVerifier {
+  private readonly issuer: string;
+
+  constructor(
+    private readonly secret: string,
+    supabaseUrl: string,
+    private readonly now: () => number = () => Date.now(),
+  ) {
+    this.issuer = `${supabaseUrl.replace(/\/+$/, "")}/auth/v1`;
+  }
+
+  async verify(accessToken: string): Promise<VerifiedIdentity | null> {
+    const payload = verifyHs256Jwt(accessToken, this.secret, Math.floor(this.now() / 1000));
+    if (payload === null) return null;
+    if (payload.aud !== "authenticated" || payload.iss !== this.issuer) return null;
+    return identityFromSupabasePayload(payload);
+  }
+}
+
+export function googleAuthorizeUrl(supabaseUrl: string, redirectTo: string): string {
+  const base = supabaseUrl.replace(/\/$/, "");
+  const url = new URL(`${base}/auth/v1/authorize`);
+  url.searchParams.set("provider", "google");
+  url.searchParams.set("redirect_to", redirectTo);
+  return url.toString();
+}
+
+export class SupabaseEmailOtpSender implements EmailOtpSender {
+  constructor(
+    private readonly supabaseUrl: string,
+    private readonly anonKey: string,
+  ) {}
+
+  async send(email: string, redirectTo?: string): Promise<void> {
+    const base = this.supabaseUrl.replace(/\/$/, "");
+    const res = await fetch(`${base}/auth/v1/otp`, {
+      method: "POST",
+      headers: {
+        apikey: this.anonKey,
+        authorization: `Bearer ${this.anonKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        email,
+        create_user: true,
+        ...(redirectTo !== undefined ? { options: { email_redirect_to: redirectTo } } : {}),
+      }),
+    });
+    if (!res.ok) {
+      throw new Error("otp_send_failed");
+    }
+  }
+}

@@ -55,6 +55,28 @@ import {
 import { CELO_AUTH_ACTIONS } from "./celoAuthBinding.js";
 import { RpcCeloOrganizerReader, type CeloOrganizerReader } from "./celoChainVerify.js";
 import { JsonRpcProvider } from "ethers";
+import {
+  IWA_CSRF_COOKIE,
+  IWA_CSRF_HEADER,
+  IWA_SESSION_COOKIE,
+  IWA_SESSION_TTL_MS,
+  clearCsrfCookieAttributes,
+  clearSessionCookieAttributes,
+  csrfCookieAttributes,
+  googleAuthorizeUrl,
+  hashSessionToken,
+  isNormalizedEmail,
+  newCsrfToken,
+  newSessionToken,
+  normalizeEmail,
+  parseCookieHeader,
+  publicUser,
+  sameSiteFor,
+  sessionCookieAttributes,
+  timingSafeEqualString,
+  type EmailOtpSender,
+  type IdentityVerifier,
+} from "./iwaAccount.js";
 
 /**
  * The headers an authenticated organizer request carries, in the order
@@ -83,7 +105,7 @@ export const AUTH_HEADERS = [
 export const SESSION_HEADER = "authorization";
 
 /** Request headers the API accepts cross-origin. Nothing beyond what it reads. */
-const ALLOWED_HEADERS = ["content-type", SESSION_HEADER, ...AUTH_HEADERS].join(",");
+const ALLOWED_HEADERS = ["content-type", SESSION_HEADER, IWA_CSRF_HEADER, ...AUTH_HEADERS].join(",");
 
 export interface AppOptions {
   store: Store;
@@ -112,6 +134,15 @@ export interface AppOptions {
   chainHealth?: ChainHealthReader;
   /** Reported to operators as the environment. Never a secret. */
   environment?: "development" | "test" | "production";
+  /**
+   * Verifies a Supabase Auth access token into an Iwa identity. Absent means
+   * Iwa User login is closed: the route fails rather than inventing a user.
+   */
+  identityVerifier?: IdentityVerifier;
+  /** Sends an email magic link / OTP. Absent means email login is closed. */
+  emailOtpSender?: EmailOtpSender;
+  /** Public Supabase Auth URL, used only to build the Google authorize redirect. */
+  supabaseUrl?: string;
   /** Mutations allowed per window, per client. */
   rateLimit?: { windowMs: number; max: number };
   /**
@@ -266,14 +297,18 @@ export function createApp(options: AppOptions): Express {
   const admins = new AdminAllowlist(options.adminAddresses ?? []);
   const chainHealth = options.chainHealth ?? NO_CHAIN_HEALTH;
   const environment = options.environment ?? "development";
+  const identityVerifier = options.identityVerifier;
+  const emailOtpSender = options.emailOtpSender;
+  const supabaseUrl = options.supabaseUrl;
+  const cookieSecure = environment === "production";
 
   const app = express();
   app.disable("x-powered-by");
   // Exactly the hops that are really there. Not `true`, which trusts the
   // entire forwarding chain including the part the client wrote.
   app.set("trust proxy", options.trustedProxies ?? 1);
-  // Exact-origin CORS. No wildcard, and no credentials: the API is
-  // origin-restricted but not cookie-authenticated.
+  // Exact-origin CORS. Credentials are required for the Iwa User cookie;
+  // the origin list is still closed and never a wildcard.
   app.use((req: Request, res: Response, next: NextFunction) => {
     const origin = req.headers.origin;
     if (typeof origin === "string" && corsOrigins.includes(origin)) {
@@ -281,6 +316,7 @@ export function createApp(options: AppOptions): Express {
       res.setHeader("Vary", "Origin");
       res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
       res.setHeader("Access-Control-Allow-Headers", ALLOWED_HEADERS);
+      res.setHeader("Access-Control-Allow-Credentials", "true");
     }
     if (req.method === "OPTIONS") {
       res.status(204).end();
@@ -504,6 +540,7 @@ export function createApp(options: AppOptions): Express {
       // out, a token minted by one process is unknown to the next and every
       // other private read would ask the person to sign in again.
       sessions: "in-process",
+      accountSessions: "durable",
       time: new Date(now()).toISOString(),
     });
   });
@@ -580,6 +617,250 @@ export function createApp(options: AppOptions): Express {
     const token = bearerToken(req);
     if (token !== null) sessions.revoke(token);
     res.status(204).end();
+  });
+
+  // --- Iwa User (Google / email) ---
+  //
+  // Cookie sessions for the application login. Isolated from the wallet
+  // read-session above: a cookie here cannot satisfy authenticate() or
+  // authenticateRead(), so it cannot reorder a draft or open /api/admin.
+
+  const originAllowed = (req: Request): boolean => {
+    const origin = req.headers.origin;
+    return typeof origin === "string" && corsOrigins.includes(origin);
+  };
+
+  const cookieSameSite = (req: Request) => sameSiteFor(req.headers.origin, req.hostname);
+
+  const setAuthCookies = (
+    req: Request,
+    res: Response,
+    sessionToken: string,
+    csrfToken: string,
+    maxAgeSeconds: number,
+  ) => {
+    const sameSite = cookieSameSite(req);
+    const secure = cookieSecure || sameSite === "None";
+    res.append(
+      "Set-Cookie",
+      sessionCookieAttributes({ token: sessionToken, maxAgeSeconds, secure, sameSite }),
+    );
+    res.append(
+      "Set-Cookie",
+      csrfCookieAttributes({ token: csrfToken, maxAgeSeconds, secure, sameSite }),
+    );
+  };
+
+  const clearAuthCookies = (req: Request, res: Response) => {
+    const sameSite = cookieSameSite(req);
+    const secure = cookieSecure || sameSite === "None";
+    res.append("Set-Cookie", clearSessionCookieAttributes(secure, sameSite));
+    res.append("Set-Cookie", clearCsrfCookieAttributes(secure, sameSite));
+  };
+
+  const requireOrigin = (req: Request, res: Response): boolean => {
+    if (originAllowed(req)) return true;
+    res.status(403).json({ error: "csrf_rejected", message: "That request could not be verified." });
+    return false;
+  };
+
+  const requireCsrf = (req: Request, res: Response): boolean => {
+    if (!requireOrigin(req, res)) return false;
+    const cookies = parseCookieHeader(req.headers.cookie);
+    const cookieToken = cookies[IWA_CSRF_COOKIE];
+    const headerToken = req.header(IWA_CSRF_HEADER);
+    if (
+      typeof cookieToken !== "string" ||
+      typeof headerToken !== "string" ||
+      !timingSafeEqualString(cookieToken, headerToken)
+    ) {
+      res.status(403).json({ error: "csrf_rejected", message: "That request could not be verified." });
+      return false;
+    }
+    return true;
+  };
+
+  const loadAccountSession = async (req: Request) => {
+    const cookies = parseCookieHeader(req.headers.cookie);
+    const token = cookies[IWA_SESSION_COOKIE];
+    if (typeof token !== "string" || token.length === 0) {
+      return { ok: false as const, reason: "missing" as const };
+    }
+    const record = await store.getAccountSessionByTokenHash(hashSessionToken(token));
+    if (record === null) return { ok: false as const, reason: "invalid" as const };
+    if (record.revokedAt !== null) return { ok: false as const, reason: "invalid" as const };
+    if (now() > record.expiresAt) return { ok: false as const, reason: "invalid" as const };
+    const user = await store.getIwaUser(record.userId);
+    if (user === null) return { ok: false as const, reason: "invalid" as const };
+    return { ok: true as const, token, record, user };
+  };
+
+  app.post("/api/auth/email", async (req, res, next) => {
+    if (!mutate(req, res)) return;
+    try {
+      if (!requireOrigin(req, res)) return;
+      if (emailOtpSender === undefined) {
+        return res.status(503).json({
+          error: "auth_unavailable",
+          message: "Email sign-in is not configured.",
+        });
+      }
+      const raw = (req.body as { email?: unknown })?.email;
+      if (typeof raw !== "string") {
+        return res.status(400).json({ error: "invalid_request", message: "Enter a valid email address." });
+      }
+      const email = normalizeEmail(raw);
+      if (!isNormalizedEmail(email)) {
+        return res.status(400).json({ error: "invalid_request", message: "Enter a valid email address." });
+      }
+      const origin = req.headers.origin as string;
+      const redirectTo = `${origin.replace(/\/$/, "")}/auth/callback`;
+      await emailOtpSender.send(email, redirectTo);
+      res.json({ sent: true });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  app.get("/api/auth/google", (req, res) => {
+    if (typeof supabaseUrl !== "string" || supabaseUrl.length === 0) {
+      return res.status(503).json({
+        error: "auth_unavailable",
+        message: "Google sign-in is not configured.",
+      });
+    }
+    const origin = req.headers.origin;
+    const allowedRedirect =
+      typeof origin === "string" && corsOrigins.includes(origin)
+        ? `${origin.replace(/\/$/, "")}/auth/callback`
+        : corsOrigins[0] !== undefined
+          ? `${corsOrigins[0].replace(/\/$/, "")}/auth/callback`
+          : null;
+    if (allowedRedirect === null) {
+      return res.status(503).json({
+        error: "auth_unavailable",
+        message: "Google sign-in is not configured.",
+      });
+    }
+    res.json({ url: googleAuthorizeUrl(supabaseUrl, allowedRedirect) });
+  });
+
+  app.post("/api/auth/login", async (req, res, next) => {
+    if (!mutate(req, res)) return;
+    try {
+      if (!requireOrigin(req, res)) return;
+      if (identityVerifier === undefined) {
+        return res.status(503).json({
+          error: "auth_unavailable",
+          message: "Iwa could not sign you in right now.",
+        });
+      }
+      const accessToken = (req.body as { accessToken?: unknown })?.accessToken;
+      if (typeof accessToken !== "string" || accessToken.length === 0) {
+        return res.status(401).json({
+          error: "invalid_credentials",
+          message: "That sign-in could not be verified. Please try again.",
+        });
+      }
+      const identity = await identityVerifier.verify(accessToken);
+      if (identity === null) {
+        return res.status(401).json({
+          error: "invalid_credentials",
+          message: "That sign-in could not be verified. Please try again.",
+        });
+      }
+
+      const user = await store.upsertUserFromIdentity(identity);
+      if (user.status === "suspended") {
+        return res.status(403).json({
+          error: "account_suspended",
+          message: "This Iwa account is suspended. Your on-chain funds are untouched.",
+        });
+      }
+
+      const existing = await loadAccountSession(req);
+      if (existing.ok) {
+        await store.revokeAccountSession(existing.record.id, now());
+      }
+
+      const sessionToken = newSessionToken();
+      const csrfToken = newCsrfToken();
+      const createdAt = now();
+      const expiresAt = createdAt + IWA_SESSION_TTL_MS;
+      const userAgent = req.header("user-agent") ?? null;
+      await store.createAccountSession(user.id, hashSessionToken(sessionToken), {
+        createdAt,
+        expiresAt,
+        userAgent: userAgent !== null && userAgent.length > 512 ? userAgent.slice(0, 512) : userAgent,
+        deviceLabel: null,
+      });
+      setAuthCookies(req, res, sessionToken, csrfToken, IWA_SESSION_TTL_MS / 1000);
+      res.json({
+        user: publicUser(user),
+        expiresAt: new Date(expiresAt).toISOString(),
+      });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  app.get("/api/auth/me", async (req, res, next) => {
+    try {
+      const loaded = await loadAccountSession(req);
+      if (!loaded.ok) {
+        return res.status(401).json({
+          error: "session_invalid",
+          message: "Please sign in to Iwa again.",
+        });
+      }
+      if (loaded.user.status === "suspended") {
+        return res.status(403).json({
+          error: "account_suspended",
+          message: "This Iwa account is suspended. Your on-chain funds are untouched.",
+        });
+      }
+      const expiresAt = now() + IWA_SESSION_TTL_MS;
+      await store.touchAccountSession(loaded.record.id, now(), expiresAt);
+      const cookies = parseCookieHeader(req.headers.cookie);
+      const csrf = cookies[IWA_CSRF_COOKIE] ?? newCsrfToken();
+      setAuthCookies(req, res, loaded.token, csrf, IWA_SESSION_TTL_MS / 1000);
+      res.json({
+        user: publicUser(loaded.user),
+        expiresAt: new Date(expiresAt).toISOString(),
+      });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  app.post("/api/auth/logout", async (req, res, next) => {
+    if (!mutate(req, res)) return;
+    try {
+      if (!requireCsrf(req, res)) return;
+      const loaded = await loadAccountSession(req);
+      if (loaded.ok) {
+        await store.revokeAccountSession(loaded.record.id, now());
+      }
+      clearAuthCookies(req, res);
+      res.status(204).end();
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  app.post("/api/auth/logout-all", async (req, res, next) => {
+    if (!mutate(req, res)) return;
+    try {
+      if (!requireCsrf(req, res)) return;
+      const loaded = await loadAccountSession(req);
+      if (loaded.ok) {
+        await store.revokeAllAccountSessions(loaded.user.id, now());
+      }
+      clearAuthCookies(req, res);
+      res.status(204).end();
+    } catch (e) {
+      next(e);
+    }
   });
 
   // --- drafts ---

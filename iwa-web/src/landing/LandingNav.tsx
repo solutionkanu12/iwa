@@ -44,7 +44,9 @@ export function LandingNav({
       <div className={styles.brand}>iwa</div>
 
       <div className={styles.right}>
-        <span className={styles.login}>Log in</span>
+        <button type="button" className={styles.login} onClick={onEnterCircle}>
+          Log in
+        </button>
         <a
           className={styles.cta}
           href="/app"

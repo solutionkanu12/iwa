@@ -48,6 +48,7 @@ export type Route =
    * checks an allowlist server side, so the path is not the protection.
    */
   | { name: "admin" }
+  | { name: "authCallback" }
   | { name: "notFound"; path: string };
 
 export interface Resolved {
@@ -132,6 +133,8 @@ export function hrefFor(route: Route): string {
       return "/strk20";
     case "admin":
       return "/admin";
+    case "authCallback":
+      return "/auth/callback";
     case "notFound":
       return route.path;
   }
@@ -157,6 +160,10 @@ export function resolve(pathname: string, search: string): Resolved {
 
   if (parts[0] === "admin") {
     return parts.length === 1 ? { route: { name: "admin" }, redirectTo: null } : notFound;
+  }
+
+  if (parts[0] === "auth" && parts[1] === "callback" && parts.length === 2) {
+    return { route: { name: "authCallback" }, redirectTo: null };
   }
 
   if (parts[0] === "strk20") {

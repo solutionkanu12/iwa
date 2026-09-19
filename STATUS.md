@@ -4,7 +4,44 @@ What works today, what does not, and where the line between them sits. Written
 against verified behaviour: contract reads, deployed code and passing tests, not
 intent.
 
-Last reviewed against the working tree during the reconnect work.
+Last reviewed against the working tree on 2026-09-19 during the Iwa Account
+auth/session pass.
+
+## Iwa Account auth and durable sessions (current uncommitted work)
+
+Implemented in the working tree and awaiting human approval before commit. It
+has not been deployed and the account migration has not been run in production.
+
+- Google and email sign-in now start in the browser through
+  `@supabase/supabase-js` PKCE. `/auth/callback` accepts `?code=...`, removes
+  callback query/fragment material before any network call, exchanges the code
+  once, and sends only the verified Supabase access token to
+  `POST /api/auth/login`.
+- React Strict Mode and completed-callback replay are deduplicated. Invalid,
+  expired, reused, missing-verifier and missing-code callbacks fail closed.
+  Query-string access tokens are rejected. A transitional implicit-flow
+  fallback reads `access_token` from the fragment only and scrubs it
+  immediately.
+- **Approved Supabase storage exception:** the SDK uses `persistSession: true`
+  only because its PKCE verifier must survive the redirect. The custom storage
+  adapter accepts only `*-code-verifier` keys and rejects Supabase session,
+  refresh-token and provider-token persistence. `autoRefreshToken` and
+  automatic URL session detection are disabled.
+- The backend verifies the Supabase HS256 signature, expiry, exact configured
+  issuer, `authenticated` audience, subject, verified email and supported
+  provider. The provider credential is discarded after login.
+- Iwa creates its own opaque, cookie-backed session. Only the SHA-256 token hash
+  is stored; the raw token is HttpOnly. Session restoration, rolling expiry,
+  current-device logout, logout-all and revoked/expired failure are implemented.
+- Iwa Account is application identity only. It is not a wallet, member
+  reference, transaction authorization or admin credential. Existing wallet
+  signatures remain mandatory for financial and operator actions.
+
+Latest verification: focused frontend auth 27/27; focused backend account/auth
+33/33; full frontend 836/836; full backend 324 passed and 16 skipped;
+frontend `tsc -b`, backend typecheck and the frontend production build all
+completed successfully. No contract test or deployment claim is implied by
+these account-layer runs.
 
 ## Zama Prize Savings bounty (active work)
 

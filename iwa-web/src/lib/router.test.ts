@@ -16,6 +16,10 @@ describe("resolve", () => {
     expect(routeOf("/app/")).toEqual({ name: "home" });
   });
 
+  it("reads the auth callback", () => {
+    expect(routeOf("/auth/callback")).toEqual({ name: "authCallback" });
+  });
+
   it("reads the public directory", () => {
     expect(routeOf("/app/explore")).toEqual({ name: "explore" });
   });

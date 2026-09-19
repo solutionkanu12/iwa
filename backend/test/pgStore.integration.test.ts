@@ -57,7 +57,8 @@ suite("PgStore against a real Postgres", () => {
     await pool.query(`
       DROP TABLE IF EXISTS circle_events, draft_slots, circle_drafts,
         indexed_circles, sync_cursor, schema_migrations,
-        account_bind_invites, account_bindings, celo_circle_organizers CASCADE
+        account_bind_invites, account_bindings, celo_circle_organizers,
+        sessions, auth_identities, users CASCADE
     `);
     const sql = readFileSync(resolve(HERE, "../migrations/001_init.sql"), "utf8");
     await pool.query(sql);
@@ -81,9 +82,14 @@ suite("PgStore against a real Postgres", () => {
       "utf8",
     );
     await pool.query(dropOrganizersSql);
+    const accountsSql = readFileSync(resolve(HERE, "../migrations/005_iwa_accounts.sql"), "utf8");
+    await pool.query(accountsSql);
     // Mirror production: RLS on, no policies. The backend connects as the
     // table owner and bypasses it; anon and authenticated get nothing.
     await pool.query(`
+      ALTER TABLE public.users                ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.auth_identities      ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE public.sessions             ENABLE ROW LEVEL SECURITY;
       ALTER TABLE public.circle_drafts        ENABLE ROW LEVEL SECURITY;
       ALTER TABLE public.draft_slots          ENABLE ROW LEVEL SECURITY;
       ALTER TABLE public.indexed_circles      ENABLE ROW LEVEL SECURITY;
@@ -127,12 +133,41 @@ suite("PgStore against a real Postgres", () => {
       "sync_cursor",
       "account_bind_invites",
       "account_bindings",
+      "users",
+      "auth_identities",
+      "sessions",
     ]) {
       expect(tables).toContain(t);
     }
     // Superseded by on-chain organizer verification (celoChainVerify.ts);
     // migration 004 drops it, and this proves that actually took effect.
     expect(tables).not.toContain("celo_circle_organizers");
+  });
+
+  it("creates an Iwa user from a verified identity and never stores a raw session token", async () => {
+    const user = await store.upsertUserFromIdentity({
+      provider: "google",
+      subject: "google-sub-ada",
+      email: "Ada@Example.com",
+    });
+    expect(user.email).toBe("ada@example.com");
+    const again = await store.upsertUserFromIdentity({
+      provider: "email",
+      subject: "email-sub-ada",
+      email: "ada@example.com",
+    });
+    expect(again.id).toBe(user.id);
+    const token = "raw-session-token-must-not-be-stored";
+    const { hashSessionToken } = await import("../src/iwaAccount.js");
+    const session = await store.createAccountSession(user.id, hashSessionToken(token), {
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 1000,
+      userAgent: null,
+      deviceLabel: null,
+    });
+    expect(session.tokenHash).not.toBe(token);
+    const listed = await store.listAccountSessions(user.id);
+    expect(JSON.stringify(listed)).not.toContain(token);
   });
 
   it("mints an account-bind invite and accepts it into a durable binding", async () => {

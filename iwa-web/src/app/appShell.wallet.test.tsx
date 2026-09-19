@@ -13,6 +13,17 @@ vi.mock("./WalletProvider", () => ({
   useWallet: () => mockWallet,
 }));
 
+vi.mock("./IwaAuthProvider", () => ({
+  useIwaAuth: () => ({
+    phase: "authenticated",
+    user: { id: "u1", email: "ada@example.com", status: "active" },
+    error: null,
+    refresh: async () => {},
+    logout: async () => {},
+    logoutAll: async () => {},
+  }),
+}));
+
 import { AppShell } from "./AppShell";
 import type { Route } from "../lib/router";
 import type { WalletState } from "./WalletProvider";

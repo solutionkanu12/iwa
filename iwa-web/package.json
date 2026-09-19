@@ -15,6 +15,7 @@
     "@starknet-io/get-starknet-discovery": "6.0.3",
     "@starknet-io/get-starknet-wallet-standard": "6.0.3",
     "@starknet-io/types-js": "0.10.3",
+    "@supabase/supabase-js": "2.116.0",
     "@zama-fhe/relayer-sdk": "0.4.1",
     "buffer": "^6.0.3",
     "circomlibjs": "^0.1.7",
