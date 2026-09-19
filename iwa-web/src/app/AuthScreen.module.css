@@ -1,0 +1,98 @@
+.page {
+  min-height: 100dvh;
+  background: var(--mist);
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem 1rem;
+}
+
+.card {
+  width: 100%;
+  max-width: 26rem;
+  padding: 1.75rem 1.5rem 1.6rem;
+}
+
+.mark {
+  display: flex;
+  margin-bottom: 0.85rem;
+}
+
+.eyebrow {
+  margin: 0 0 0.25rem;
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--mut);
+}
+
+.title {
+  margin: 0 0 0.45rem;
+  font-family: var(--font-display);
+  font-size: 1.55rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.lede,
+.loading {
+  margin: 0 0 1.25rem;
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  line-height: 1.5;
+  color: var(--mut);
+}
+
+.loading {
+  margin: 0;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.or {
+  text-align: center;
+  font-size: 12px;
+  color: var(--mut);
+}
+
+.label {
+  font-size: 0.85rem;
+  color: var(--mut);
+}
+
+.input {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--font-body);
+  font-size: 1rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--brd);
+  border-radius: var(--radius-control);
+  background: var(--cloud);
+  color: var(--ink);
+}
+
+.input:focus {
+  outline: 2px solid var(--iris);
+  outline-offset: 1px;
+}
+
+.error,
+.notice {
+  margin: 0 0 0.85rem;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.error {
+  color: var(--ink);
+}
+
+.notice {
+  color: var(--mint-dk);
+}

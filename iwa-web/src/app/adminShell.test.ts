@@ -52,6 +52,7 @@ const ALL_ROUTES: Route[] = [
   { name: "invite", token: "t" },
   { name: "console" },
   { name: "admin" },
+  { name: "authCallback" },
   { name: "notFound", path: "/nope" },
 ];
 

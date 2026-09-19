@@ -13,6 +13,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import styles from "./AppShell.module.css";
 import { useWallet } from "./WalletProvider";
+import { useIwaAuth } from "./IwaAuthProvider";
 import { WalletChooser } from "./WalletChooser";
 import { AppWalletControl } from "./AppWalletControl";
 import { hrefFor, type Route } from "../lib/router";
@@ -50,6 +51,7 @@ export interface AppShellProps {
 
 export function AppShell({ route, navigate, children }: AppShellProps) {
   const wallet = useWallet();
+  const iwaAuth = useIwaAuth();
   // The phone's account menu. Closed by default, and closed again by anything
   // that happens outside it.
   const [accountOpen, setAccountOpen] = useState(false);
@@ -169,7 +171,21 @@ export function AppShell({ route, navigate, children }: AppShellProps) {
           </nav>
 
           <div className={styles.spacer} />
-          <div className={styles.account}>{accountSection}</div>
+          <div className={styles.account}>
+            {accountSection}
+            <div className={styles.sessionActions}>
+              <button type="button" className={styles.sessionLink} onClick={() => void iwaAuth.logout()}>
+                Log out
+              </button>
+              <button
+                type="button"
+                className={styles.sessionLink}
+                onClick={() => void iwaAuth.logoutAll()}
+              >
+                Log out all devices
+              </button>
+            </div>
+          </div>
         </div>
       </aside>
 
@@ -228,6 +244,28 @@ export function AppShell({ route, navigate, children }: AppShellProps) {
                       </a>
                     ))}
                     <div className={styles.mobileControl}>{accountSection}</div>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className={styles.dropdownItem}
+                      onClick={() => {
+                        setAccountOpen(false);
+                        void iwaAuth.logout();
+                      }}
+                    >
+                      Log out
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className={styles.dropdownItem}
+                      onClick={() => {
+                        setAccountOpen(false);
+                        void iwaAuth.logoutAll();
+                      }}
+                    >
+                      Log out all devices
+                    </button>
                   </div>
                 ) : null}
               </div>

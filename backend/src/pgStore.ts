@@ -4,9 +4,18 @@
 // multi-row invariants (accepting a slot, reordering an order) run inside
 // transactions so two concurrent clients cannot both take the same place.
 
+import { randomUUID } from "node:crypto";
 import { Pool, type PoolClient } from "pg";
 
 import type { CoordinationCounts } from "./admin.js";
+import {
+  MAX_ACCOUNT_SESSIONS_PER_USER,
+  normalizeEmail,
+  type AccountSessionRecord,
+  type IwaUser,
+  type IwaUserStatus,
+  type VerifiedIdentity,
+} from "./iwaAccount.js";
 import {
   associationFor,
   deriveStatus,
@@ -516,4 +525,277 @@ export class PgStore implements Store {
       return false;
     }
   }
+
+  async upsertUserFromIdentity(identity: VerifiedIdentity): Promise<IwaUser> {
+    const email = normalizeEmail(identity.email);
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const existing = await client.query<{
+        user_id: string;
+        id: string;
+        email: string;
+        status: IwaUserStatus;
+        created_at: Date;
+        updated_at: Date;
+      }>(
+        `SELECT u.id AS user_id, u.id, u.email, u.status, u.created_at, u.updated_at
+           FROM auth_identities i
+           JOIN users u ON u.id = i.user_id
+          WHERE i.provider = $1 AND i.provider_subject = $2
+          FOR UPDATE`,
+        [identity.provider, identity.subject],
+      );
+      if ((existing.rowCount ?? 0) > 0) {
+        const row = existing.rows[0];
+        if (row.email !== email) {
+          await client.query(
+            `UPDATE users SET email = $1, updated_at = now() WHERE id = $2`,
+            [email, row.id],
+          );
+          row.email = email;
+          row.updated_at = new Date();
+        }
+        await client.query(
+          `UPDATE auth_identities SET verified_email = $1 WHERE provider = $2 AND provider_subject = $3`,
+          [email, identity.provider, identity.subject],
+        );
+        await client.query("COMMIT");
+        return toIwaUser(row);
+      }
+
+      const byEmail = await client.query<{
+        id: string;
+        email: string;
+        status: IwaUserStatus;
+        created_at: Date;
+        updated_at: Date;
+      }>(`SELECT id, email, status, created_at, updated_at FROM users WHERE email = $1 FOR UPDATE`, [
+        email,
+      ]);
+
+      let userId: string;
+      let userRow: {
+        id: string;
+        email: string;
+        status: IwaUserStatus;
+        created_at: Date;
+        updated_at: Date;
+      };
+      if ((byEmail.rowCount ?? 0) > 0) {
+        userRow = byEmail.rows[0];
+        userId = userRow.id;
+        await client.query(`UPDATE users SET updated_at = now() WHERE id = $1`, [userId]);
+      } else {
+        userId = randomUUID();
+        const inserted = await client.query<{
+          id: string;
+          email: string;
+          status: IwaUserStatus;
+          created_at: Date;
+          updated_at: Date;
+        }>(
+          `INSERT INTO users (id, email, status) VALUES ($1, $2, 'active')
+           RETURNING id, email, status, created_at, updated_at`,
+          [userId, email],
+        );
+        userRow = inserted.rows[0];
+      }
+
+      await client.query(
+        `INSERT INTO auth_identities (id, user_id, provider, provider_subject, verified_email)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [randomUUID(), userId, identity.provider, identity.subject, email],
+      );
+      await client.query("COMMIT");
+      return toIwaUser(userRow);
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  async getIwaUser(id: string): Promise<IwaUser | null> {
+    const r = await this.pool.query<{
+      id: string;
+      email: string;
+      status: IwaUserStatus;
+      created_at: Date;
+      updated_at: Date;
+    }>(`SELECT id, email, status, created_at, updated_at FROM users WHERE id = $1`, [id]);
+    if (r.rowCount === 0) return null;
+    return toIwaUser(r.rows[0]);
+  }
+
+  async setIwaUserStatus(id: string, status: IwaUserStatus): Promise<IwaUser | null> {
+    const r = await this.pool.query<{
+      id: string;
+      email: string;
+      status: IwaUserStatus;
+      created_at: Date;
+      updated_at: Date;
+    }>(
+      `UPDATE users SET status = $2, updated_at = now() WHERE id = $1
+       RETURNING id, email, status, created_at, updated_at`,
+      [id, status],
+    );
+    if (r.rowCount === 0) return null;
+    return toIwaUser(r.rows[0]);
+  }
+
+  async createAccountSession(
+    userId: string,
+    tokenHash: string,
+    meta: { createdAt: number; expiresAt: number; userAgent: string | null; deviceLabel: string | null },
+  ): Promise<AccountSessionRecord> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const live = await client.query<{ id: string; created_at: Date }>(
+        `SELECT id, created_at FROM sessions
+          WHERE user_id = $1 AND revoked_at IS NULL
+          ORDER BY created_at ASC
+          FOR UPDATE`,
+        [userId],
+      );
+      const excess = live.rows.length - (MAX_ACCOUNT_SESSIONS_PER_USER - 1);
+      for (let i = 0; i < excess; i += 1) {
+        const oldest = live.rows[i];
+        if (oldest !== undefined) {
+          await client.query(`UPDATE sessions SET revoked_at = $2 WHERE id = $1 AND revoked_at IS NULL`, [
+            oldest.id,
+            new Date(meta.createdAt),
+          ]);
+        }
+      }
+      const id = randomUUID();
+      await client.query(
+        `INSERT INTO sessions
+           (id, user_id, token_hash, created_at, last_used_at, expires_at, user_agent, device_label)
+         VALUES ($1,$2,$3,$4,$4,$5,$6,$7)`,
+        [
+          id,
+          userId,
+          tokenHash,
+          new Date(meta.createdAt),
+          new Date(meta.expiresAt),
+          meta.userAgent,
+          meta.deviceLabel,
+        ],
+      );
+      await client.query("COMMIT");
+      return {
+        id,
+        userId,
+        tokenHash,
+        createdAt: meta.createdAt,
+        lastUsedAt: meta.createdAt,
+        expiresAt: meta.expiresAt,
+        revokedAt: null,
+        userAgent: meta.userAgent,
+        deviceLabel: meta.deviceLabel,
+      };
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  async getAccountSessionByTokenHash(tokenHash: string): Promise<AccountSessionRecord | null> {
+    const r = await this.pool.query<{
+      id: string;
+      user_id: string;
+      token_hash: string;
+      created_at: Date;
+      last_used_at: Date;
+      expires_at: Date;
+      revoked_at: Date | null;
+      user_agent: string | null;
+      device_label: string | null;
+    }>(`SELECT * FROM sessions WHERE token_hash = $1`, [tokenHash]);
+    if (r.rowCount === 0) return null;
+    return toAccountSession(r.rows[0]);
+  }
+
+  async touchAccountSession(id: string, lastUsedAt: number, expiresAt: number): Promise<void> {
+    await this.pool.query(`UPDATE sessions SET last_used_at = $2, expires_at = $3 WHERE id = $1`, [
+      id,
+      new Date(lastUsedAt),
+      new Date(expiresAt),
+    ]);
+  }
+
+  async revokeAccountSession(id: string, revokedAt: number): Promise<void> {
+    await this.pool.query(
+      `UPDATE sessions SET revoked_at = $2 WHERE id = $1 AND revoked_at IS NULL`,
+      [id, new Date(revokedAt)],
+    );
+  }
+
+  async revokeAllAccountSessions(userId: string, revokedAt: number): Promise<number> {
+    const r = await this.pool.query(
+      `UPDATE sessions SET revoked_at = $2 WHERE user_id = $1 AND revoked_at IS NULL`,
+      [userId, new Date(revokedAt)],
+    );
+    return r.rowCount ?? 0;
+  }
+
+  async listAccountSessions(userId: string): Promise<AccountSessionRecord[]> {
+    const r = await this.pool.query<{
+      id: string;
+      user_id: string;
+      token_hash: string;
+      created_at: Date;
+      last_used_at: Date;
+      expires_at: Date;
+      revoked_at: Date | null;
+      user_agent: string | null;
+      device_label: string | null;
+    }>(`SELECT * FROM sessions WHERE user_id = $1 ORDER BY created_at ASC`, [userId]);
+    return r.rows.map(toAccountSession);
+  }
+}
+
+function toIwaUser(row: {
+  id: string;
+  email: string;
+  status: IwaUserStatus;
+  created_at: Date;
+  updated_at: Date;
+}): IwaUser {
+  return {
+    id: row.id,
+    email: row.email,
+    status: row.status,
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
+  };
+}
+
+function toAccountSession(row: {
+  id: string;
+  user_id: string;
+  token_hash: string;
+  created_at: Date;
+  last_used_at: Date;
+  expires_at: Date;
+  revoked_at: Date | null;
+  user_agent: string | null;
+  device_label: string | null;
+}): AccountSessionRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    tokenHash: row.token_hash,
+    createdAt: row.created_at.getTime(),
+    lastUsedAt: row.last_used_at.getTime(),
+    expiresAt: row.expires_at.getTime(),
+    revokedAt: row.revoked_at ? row.revoked_at.getTime() : null,
+    userAgent: row.user_agent,
+    deviceLabel: row.device_label,
+  };
 }

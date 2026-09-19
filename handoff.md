@@ -3,7 +3,36 @@
 Live state for the next agent session. Details in `STATUS.md`; decisions in
 `decision.md`; findings in `SECURITY.md`.
 
-## Current state (multichain wallet UX pass)
+## Current state (Iwa Account auth/session pass)
+
+- Iwa Account is implemented in the working tree with Google/email Supabase
+  PKCE initiation, a guarded `/auth/callback`, and durable backend-owned browser
+  sessions.
+- The callback scrubs code/token material before network work, exchanges each
+  code once, deduplicates React Strict Mode and replay, rejects query-string
+  access tokens, and keeps only a transitional hash-token fallback.
+- Approved security exception: Supabase `persistSession: true` is used only
+  with a custom store that accepts `*-code-verifier` keys. Supabase session,
+  refresh-token and provider-token writes are rejected; automatic refresh and
+  URL session detection are disabled.
+- Backend Supabase tokens must pass signature, expiry, exact issuer, audience,
+  provider, subject and verified-email checks. Successful login creates an
+  opaque Iwa session whose raw token exists only in an HttpOnly cookie and whose
+  SHA-256 hash is stored.
+- Iwa Account does not authorize wallet transactions or admin access. Wallet
+  connection, chain adapters and contract authorization are unchanged.
+- Latest verification: frontend auth 27/27, backend account/auth 33/33, full
+  frontend 836/836, full backend 324 passed / 16 skipped, both typechecks and
+  frontend production build clean.
+- Nothing committed, pushed, deployed or migrated in production. No contract,
+  deployment-address or unresolved PRD-rename file was touched by this pass.
+
+## Next step
+
+Human review of the final Iwa Account diff and proposed commit set. Do not
+commit, push, deploy or run the production migration until explicitly approved.
+
+## Previous verified track (multichain wallet UX)
 
 - **One Iwa wallet manager, two independent slots** (`lib/evmWallet.ts` +
   `app/WalletProvider.tsx`): Starknet for circles/standing, EVM for Prize
@@ -25,13 +54,9 @@ Live state for the next agent session. Details in `STATUS.md`; decisions in
   chooser, dual-wallet AppShell control, Starknet-only gate, wrong-network
   Sepolia prompt, and EVM-only loaded action layout with no content clipping or
   horizontal overflow. Narrow Prize input/action rows wrap.
-- Nothing committed, pushed, or deployed; no contracts or backend touched.
-
-## Next step
-
-Human review of the multichain wallet UX pass (STOP FOR REVIEW): review the
-diff, then commit. Context docs updated (`decision.md`, `STATUS.md`,
-`SECURITY.md`, this file).
+- At that checkpoint, nothing had been committed, pushed or deployed and no
+  contracts or backend code had been touched. The current Iwa Account pass adds
+  backend/auth work described above; this paragraph is historical context.
 
 ## Zama Prize Savings bounty (previous track, still live)
 

@@ -188,6 +188,7 @@ describe("the routes are untouched", () => {
       "/strk20",
       "/start",
       "/invite/(.*)",
+      "/auth/callback",
     ]);
     for (const rewrite of config.rewrites) {
       expect(rewrite.destination).toBe("/index.html");

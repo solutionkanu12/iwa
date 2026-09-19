@@ -10,6 +10,16 @@
 import { randomUUID, randomBytes } from "node:crypto";
 
 import type { CoordinationCounts } from "./admin.js";
+import {
+  MAX_ACCOUNT_SESSIONS_PER_USER,
+  normalizeEmail,
+  type AccountSessionRecord,
+  type AuthIdentity,
+  type AuthProvider,
+  type IwaUser,
+  type IwaUserStatus,
+  type VerifiedIdentity,
+} from "./iwaAccount.js";
 
 export type DraftStatus = "draft" | "ready" | "created" | "abandoned";
 
@@ -154,6 +164,29 @@ export interface Store {
   coordinationCounts(chainId: string): Promise<CoordinationCounts>;
 
   healthy(): Promise<boolean>;
+
+  // --- Iwa User accounts (application login, not chain identity) ---
+
+  /**
+   * Finds or creates the Iwa user for this verified identity.
+   *
+   * Same (provider, subject) always returns the same user. A new provider
+   * with a verified email that already belongs to a user is linked to that
+   * user rather than creating a second one.
+   */
+  upsertUserFromIdentity(identity: VerifiedIdentity): Promise<IwaUser>;
+  getIwaUser(id: string): Promise<IwaUser | null>;
+  setIwaUserStatus(id: string, status: IwaUserStatus): Promise<IwaUser | null>;
+  createAccountSession(
+    userId: string,
+    tokenHash: string,
+    meta: { createdAt: number; expiresAt: number; userAgent: string | null; deviceLabel: string | null },
+  ): Promise<AccountSessionRecord>;
+  getAccountSessionByTokenHash(tokenHash: string): Promise<AccountSessionRecord | null>;
+  touchAccountSession(id: string, lastUsedAt: number, expiresAt: number): Promise<void>;
+  revokeAccountSession(id: string, revokedAt: number): Promise<void>;
+  revokeAllAccountSessions(userId: string, revokedAt: number): Promise<number>;
+  listAccountSessions(userId: string): Promise<AccountSessionRecord[]>;
 }
 
 /** URL-safe, unguessable coordination token. Not a credential. */
@@ -207,6 +240,10 @@ export class MemoryStore implements Store {
   private circles = new Map<string, IndexedCircle>();
   private events: CircleEvent[] = [];
   private cursors = new Map<string, { chainId: string; block: number }>();
+  private users = new Map<string, IwaUser>();
+  private identities = new Map<string, AuthIdentity>();
+  private emailToUser = new Map<string, string>();
+  private accountSessions = new Map<string, AccountSessionRecord>();
 
   async createDraft(input: CreateDraftInput): Promise<CircleDraft> {
     const draft: CircleDraft = {
@@ -389,5 +426,141 @@ export class MemoryStore implements Store {
 
   async healthy(): Promise<boolean> {
     return true;
+  }
+
+  private static identityKey(provider: AuthProvider, subject: string): string {
+    return `${provider}:${subject}`;
+  }
+
+  async upsertUserFromIdentity(identity: VerifiedIdentity): Promise<IwaUser> {
+    const email = normalizeEmail(identity.email);
+    const key = MemoryStore.identityKey(identity.provider, identity.subject);
+    const existingIdentity = this.identities.get(key);
+    const now = new Date().toISOString();
+
+    if (existingIdentity !== undefined) {
+      const user = this.users.get(existingIdentity.userId);
+      if (user === undefined) throw new Error("identity points at a missing user");
+      if (user.email !== email) {
+        this.emailToUser.delete(user.email);
+        user.email = email;
+        user.updatedAt = now;
+        this.emailToUser.set(email, user.id);
+      }
+      existingIdentity.verifiedEmail = email;
+      return structuredClone(user);
+    }
+
+    const byEmail = this.emailToUser.get(email);
+    let user: IwaUser;
+    if (byEmail !== undefined) {
+      const found = this.users.get(byEmail);
+      if (found === undefined) throw new Error("email index points at a missing user");
+      user = found;
+      user.updatedAt = now;
+    } else {
+      user = {
+        id: randomUUID(),
+        email,
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+      };
+      this.users.set(user.id, user);
+      this.emailToUser.set(email, user.id);
+    }
+
+    this.identities.set(key, {
+      id: randomUUID(),
+      userId: user.id,
+      provider: identity.provider,
+      providerSubject: identity.subject,
+      verifiedEmail: email,
+      createdAt: now,
+    });
+    return structuredClone(user);
+  }
+
+  async getIwaUser(id: string): Promise<IwaUser | null> {
+    const user = this.users.get(id);
+    return user ? structuredClone(user) : null;
+  }
+
+  async setIwaUserStatus(id: string, status: IwaUserStatus): Promise<IwaUser | null> {
+    const user = this.users.get(id);
+    if (user === undefined) return null;
+    user.status = status;
+    user.updatedAt = new Date().toISOString();
+    return structuredClone(user);
+  }
+
+  async createAccountSession(
+    userId: string,
+    tokenHash: string,
+    meta: { createdAt: number; expiresAt: number; userAgent: string | null; deviceLabel: string | null },
+  ): Promise<AccountSessionRecord> {
+    const live = [...this.accountSessions.values()]
+      .filter((s) => s.userId === userId && s.revokedAt === null)
+      .sort((a, b) => a.createdAt - b.createdAt);
+    const excess = live.length - (MAX_ACCOUNT_SESSIONS_PER_USER - 1);
+    for (let i = 0; i < excess; i += 1) {
+      const oldest = live[i];
+      if (oldest !== undefined) oldest.revokedAt = meta.createdAt;
+    }
+
+    const record: AccountSessionRecord = {
+      id: randomUUID(),
+      userId,
+      tokenHash,
+      createdAt: meta.createdAt,
+      lastUsedAt: meta.createdAt,
+      expiresAt: meta.expiresAt,
+      revokedAt: null,
+      userAgent: meta.userAgent,
+      deviceLabel: meta.deviceLabel,
+    };
+    this.accountSessions.set(tokenHash, record);
+    return structuredClone(record);
+  }
+
+  async getAccountSessionByTokenHash(tokenHash: string): Promise<AccountSessionRecord | null> {
+    const record = this.accountSessions.get(tokenHash);
+    return record ? structuredClone(record) : null;
+  }
+
+  async touchAccountSession(id: string, lastUsedAt: number, expiresAt: number): Promise<void> {
+    for (const record of this.accountSessions.values()) {
+      if (record.id === id) {
+        record.lastUsedAt = lastUsedAt;
+        record.expiresAt = expiresAt;
+        return;
+      }
+    }
+  }
+
+  async revokeAccountSession(id: string, revokedAt: number): Promise<void> {
+    for (const record of this.accountSessions.values()) {
+      if (record.id === id && record.revokedAt === null) {
+        record.revokedAt = revokedAt;
+        return;
+      }
+    }
+  }
+
+  async revokeAllAccountSessions(userId: string, revokedAt: number): Promise<number> {
+    let count = 0;
+    for (const record of this.accountSessions.values()) {
+      if (record.userId === userId && record.revokedAt === null) {
+        record.revokedAt = revokedAt;
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  async listAccountSessions(userId: string): Promise<AccountSessionRecord[]> {
+    return [...this.accountSessions.values()]
+      .filter((s) => s.userId === userId)
+      .map((s) => structuredClone(s));
   }
 }

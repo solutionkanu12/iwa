@@ -16,6 +16,50 @@ No component should be described as secure merely because:
 
 Security claims must map to concrete properties that were reviewed or tested.
 
+## Iwa Account authentication and session boundary (2026-09-19)
+
+Iwa Account identifies a person to the application through Google or email. It
+is deliberately separate from wallets, on-chain membership and operator
+authority.
+
+- The browser starts Supabase Auth with PKCE. The callback copies the one-time
+  code into memory and replaces the URL with `/auth/callback` before exchanging
+  it or calling the Iwa backend. Query-string access tokens are never accepted.
+  The transitional compatibility fallback reads a Supabase access token from
+  the fragment only and applies the same immediate cleanup and backend
+  verification.
+- React Strict Mode invocations share one in-flight exchange. A completed code
+  is not exchanged or used to create a second Iwa session in the same runtime;
+  a reload that retries a consumed code fails at Supabase.
+- **Approved reviewed storage exception:** Supabase PKCE requires the verifier
+  to survive the redirect, so the client uses `persistSession: true` with a
+  custom adapter that accepts only keys ending in `-code-verifier`. Reads,
+  writes and removals for every other key are refused. Supabase access,
+  refresh, provider and provider-refresh tokens therefore cannot be persisted
+  through this adapter. `autoRefreshToken` and `detectSessionInUrl` are false.
+- The frontend exposes only `session.access_token` to the Iwa login call. It
+  does not return or persist the Supabase refresh token or provider tokens.
+- The backend accepts an access token only after its HS256 signature and expiry
+  validate and its issuer exactly matches the configured Supabase project's
+  `/auth/v1` issuer with audience `authenticated`. It then requires a subject,
+  normalized verified email and `google` or `email` provider from
+  `app_metadata`; user-editable metadata is not an authorization source.
+- A successful exchange creates a separate Iwa session. The browser receives a
+  random opaque token in an HttpOnly cookie; storage receives only its SHA-256
+  hash. Mutations require the matching CSRF cookie/header, sessions expire on a
+  rolling 30-day window, the oldest live session is capped out above 20 per
+  user, and current-device or all-device revocation is supported.
+- An Iwa session may open the application and read its account state. It cannot
+  sign a contribution, authorize a payout, create a wallet-authenticated draft,
+  read the operator dashboard or replace any chain signature.
+
+Residual limits: the backend verifier currently supports the configured legacy
+HS256 Supabase secret, not asymmetric/JWKS signing; that migration would fail
+closed until implemented. The hash-token fallback should be removed after old
+implicit callbacks and the unused legacy initiation routes are retired. Live
+provider E2E still requires deployment configuration, and Iwa has not had an
+external security audit.
+
 ## Wallet manager model (2026-09-05)
 
 The Iwa wallet manager owns two independent connection slots — Starknet (for
