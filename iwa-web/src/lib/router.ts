@@ -49,6 +49,8 @@ export type Route =
    */
   | { name: "admin" }
   | { name: "authCallback" }
+  | { name: "authConfirm" }
+  | { name: "onboarding" }
   | { name: "notFound"; path: string };
 
 export interface Resolved {
@@ -135,6 +137,10 @@ export function hrefFor(route: Route): string {
       return "/admin";
     case "authCallback":
       return "/auth/callback";
+    case "authConfirm":
+      return "/auth/confirm";
+    case "onboarding":
+      return "/app/onboarding";
     case "notFound":
       return route.path;
   }
@@ -158,12 +164,20 @@ export function resolve(pathname: string, search: string): Resolved {
     return { route: { name: "create" }, redirectTo: "/app/create" };
   }
 
+  if (parts.length === 1 && parts[0] === "onboarding") {
+    return { route: { name: "onboarding" }, redirectTo: "/app/onboarding" };
+  }
+
   if (parts[0] === "admin") {
     return parts.length === 1 ? { route: { name: "admin" }, redirectTo: null } : notFound;
   }
 
   if (parts[0] === "auth" && parts[1] === "callback" && parts.length === 2) {
     return { route: { name: "authCallback" }, redirectTo: null };
+  }
+
+  if (parts[0] === "auth" && parts[1] === "confirm" && parts.length === 2) {
+    return { route: { name: "authConfirm" }, redirectTo: null };
   }
 
   if (parts[0] === "strk20") {
@@ -214,6 +228,7 @@ export function resolve(pathname: string, search: string): Resolved {
     if (parts[1] === "standing") return { route: { name: "standing" }, redirectTo: null };
     if (parts[1] === "create") return { route: { name: "create" }, redirectTo: null };
     if (parts[1] === "prize-savings") return { route: { name: "prizeSavings" }, redirectTo: null };
+    if (parts[1] === "onboarding") return { route: { name: "onboarding" }, redirectTo: null };
     return notFound;
   }
 
@@ -246,6 +261,7 @@ export function isAppRoute(route: Route): boolean {
     route.name === "prizeSavings" ||
     route.name === "celoCircle" ||
     route.name === "admin" ||
+    route.name === "onboarding" ||
     route.name === "notFound"
   );
 }

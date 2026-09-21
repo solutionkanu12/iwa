@@ -27,6 +27,15 @@ interface IwaSupabaseClient {
       data: { session: { access_token?: string } | null };
       error: AuthErrorLike | null;
     }>;
+    verifyOtp(options: {
+      token_hash?: string;
+      token?: string;
+      type: string;
+      email?: string;
+    }): Promise<{
+      data: { session: { access_token?: string } | null };
+      error: AuthErrorLike | null;
+    }>;
   };
 }
 
@@ -85,6 +94,21 @@ export function createIwaSupabaseAuth(createAuthClient: () => IwaSupabaseClient)
         flowId === undefined ? undefined : { flowId },
       );
       if (error !== null) throw authFailure(error, "The authorization code could not be exchanged.");
+      const accessToken = data.session?.access_token;
+      if (accessToken === undefined || accessToken.length === 0) {
+        throw new Error("Supabase did not return a verified access token.");
+      }
+      return accessToken;
+    },
+
+    async verifyOtp(params: {
+      token_hash?: string;
+      token?: string;
+      type: string;
+      email?: string;
+    }): Promise<string> {
+      const { data, error } = await createAuthClient().auth.verifyOtp(params as never);
+      if (error !== null) throw authFailure(error, "That confirmation link is invalid, expired, or has already been used.");
       const accessToken = data.session?.access_token;
       if (accessToken === undefined || accessToken.length === 0) {
         throw new Error("Supabase did not return a verified access token.");

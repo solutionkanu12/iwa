@@ -3,7 +3,12 @@ import { describe, expect, it, vi } from "vitest";
 import * as accountModule from "./iwaAccount";
 
 interface SessionView {
-  user: { id: string; email: string; status: "active" };
+  user: {
+    id: string;
+    email: string;
+    status: "active";
+    onboardingStatus?: "new" | "incomplete" | "completed";
+  };
   expiresAt: string;
 }
 
@@ -26,6 +31,7 @@ const session: SessionView = {
     id: "11111111-1111-4111-8111-111111111111",
     email: "ada@example.com",
     status: "active",
+    onboardingStatus: "new",
   },
   expiresAt: "2026-10-19T00:00:00.000Z",
 };
