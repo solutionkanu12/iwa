@@ -4,7 +4,8 @@
 // draft mutation, an admin read, or anything that moves money. Those stay on
 // wallet signatures, exactly as they were.
 
-import { describe, expect, it, beforeEach } from "vitest";
+import { generateKeyPairSync, sign as signBytes, type KeyObject } from "node:crypto";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
 import { readFileSync } from "node:fs";
@@ -120,6 +121,10 @@ beforeEach(() => {
   app = build();
 });
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 function cookieList(res: { headers: Record<string, unknown> }): string[] {
   const raw = res.headers["set-cookie"];
   if (raw === undefined) return [];
@@ -162,6 +167,33 @@ function csrfFrom(res: { headers: Record<string, unknown> }): { cookie: string; 
   return { cookie, token };
 }
 
+function signEs256Jwt(
+  payload: Record<string, unknown>,
+  privateKey: KeyObject,
+  kid: string,
+): string {
+  const header = Buffer.from(JSON.stringify({ alg: "ES256", typ: "JWT", kid })).toString(
+    "base64url",
+  );
+  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const data = `${header}.${body}`;
+  const signature = signBytes("sha256", Buffer.from(data), {
+    key: privateKey,
+    dsaEncoding: "ieee-p1363",
+  });
+  return `${data}.${signature.toString("base64url")}`;
+}
+
+function jwksResponse(publicKey: KeyObject, kid: string): Response {
+  const jwk = publicKey.export({ format: "jwk" });
+  return new Response(
+    JSON.stringify({
+      keys: [{ ...jwk, alg: "ES256", kid, key_ops: ["verify"], use: "sig" }],
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+}
+
 // ---------------------------------------------------------------- identity helpers
 
 describe("email normalization", () => {
@@ -180,6 +212,95 @@ describe("Supabase JWT identity", () => {
   const secret = "test-supabase-jwt-secret";
   const supabaseUrl = "https://project-ref.supabase.co";
   const issuer = `${supabaseUrl}/auth/v1`;
+  const kid = "iwa-test-es256-key";
+  const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+
+  function validClaims(): Record<string, unknown> {
+    return {
+      sub: "google-sub-1",
+      email: "ada@example.com",
+      role: "authenticated",
+      aud: "authenticated",
+      iss: issuer,
+      exp: Math.floor(clock / 1000) + 60,
+      app_metadata: { provider: "google" },
+    };
+  }
+
+  it("verifies an ES256 Supabase access token against the project JWKS endpoint", async () => {
+    const fetchJwks = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(jwksResponse(publicKey, kid));
+    const verifier = new SupabaseJwtVerifier(supabaseUrl, "", () => clock);
+
+    await expect(verifier.verify(signEs256Jwt(validClaims(), privateKey, kid))).resolves.toEqual({
+      provider: "google",
+      subject: "google-sub-1",
+      email: "ada@example.com",
+    });
+    expect(fetchJwks).toHaveBeenCalledTimes(1);
+    expect(String(fetchJwks.mock.calls[0]?.[0])).toBe(`${issuer}/.well-known/jwks.json`);
+  });
+
+  it("rejects an ES256 token when its kid is not present in the project JWKS", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jwksResponse(publicKey, kid));
+    const verifier = new SupabaseJwtVerifier(supabaseUrl, "", () => clock);
+
+    await expect(
+      verifier.verify(signEs256Jwt(validClaims(), privateKey, "unknown-key")),
+    ).resolves.toBeNull();
+  });
+
+  it("rejects an ES256 token whose signature does not match the selected key", async () => {
+    const attacker = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jwksResponse(publicKey, kid));
+    const verifier = new SupabaseJwtVerifier(supabaseUrl, "", () => clock);
+
+    await expect(
+      verifier.verify(signEs256Jwt(validClaims(), attacker.privateKey, kid)),
+    ).resolves.toBeNull();
+  });
+
+  it("fails closed when the Supabase JWKS endpoint is unavailable", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("unavailable", { status: 503 }));
+    const verifier = new SupabaseJwtVerifier(supabaseUrl, "", () => clock);
+
+    await expect(
+      verifier.verify(signEs256Jwt(validClaims(), privateKey, kid)),
+    ).resolves.toBeNull();
+  });
+
+  it("applies existing identity and trust rules to ES256 tokens", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jwksResponse(publicKey, kid));
+    const verifier = new SupabaseJwtVerifier(supabaseUrl, "", () => clock);
+    const invalidClaims = [
+      { ...validClaims(), iss: "https://evil.example/auth/v1" },
+      { ...validClaims(), aud: "service_role" },
+      { ...validClaims(), exp: Math.floor(clock / 1000) - 1 },
+      { ...validClaims(), app_metadata: { provider: "github" } },
+      { ...validClaims(), sub: "" },
+      { ...validClaims(), email: "not-an-email" },
+    ];
+
+    for (const claims of invalidClaims) {
+      await expect(verifier.verify(signEs256Jwt(claims, privateKey, kid))).resolves.toBeNull();
+    }
+  });
+
+  it("accepts HS256 only when an explicit legacy secret is configured", async () => {
+    const token = signHs256Jwt(validClaims(), secret);
+
+    await expect(
+      new SupabaseJwtVerifier(supabaseUrl, secret, () => clock).verify(token),
+    ).resolves.toEqual({
+      provider: "google",
+      subject: "google-sub-1",
+      email: "ada@example.com",
+    });
+    await expect(
+      new SupabaseJwtVerifier(supabaseUrl, "", () => clock).verify(token),
+    ).resolves.toBeNull();
+  });
 
   it("accepts a verified Google token and refuses an expired one", () => {
     const now = Math.floor(clock / 1000);
@@ -230,7 +351,7 @@ describe("Supabase JWT identity", () => {
 
   it("accepts only the configured Supabase issuer and authenticated audience", async () => {
     const now = Math.floor(clock / 1000);
-    const verifier = new SupabaseJwtVerifier(secret, supabaseUrl, () => clock);
+    const verifier = new SupabaseJwtVerifier(supabaseUrl, secret, () => clock);
     const claims = {
       sub: "google-sub-1",
       email: "ada@example.com",
@@ -258,10 +379,11 @@ describe("Supabase JWT identity", () => {
     await expect(verifier.verify(signHs256Jwt(missingTrustClaims, secret))).resolves.toBeNull();
   });
 
-  it("creates the backend session from a correctly scoped Supabase token", async () => {
-    const verifier = new SupabaseJwtVerifier(secret, supabaseUrl, () => clock);
+  it("creates the backend session from a correctly scoped ES256 Supabase token", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jwksResponse(publicKey, kid));
+    const verifier = new SupabaseJwtVerifier(supabaseUrl, "", () => clock);
     app = build({ identityVerifier: verifier });
-    const token = signHs256Jwt(
+    const token = signEs256Jwt(
       {
         sub: "google-sub-session",
         email: "session@example.com",
@@ -271,7 +393,8 @@ describe("Supabase JWT identity", () => {
         exp: Math.floor(clock / 1000) + 60,
         app_metadata: { provider: "google" },
       },
-      secret,
+      privateKey,
+      kid,
     );
 
     const res = await login(token).expect(200);
@@ -310,10 +433,11 @@ describe("session cookie attributes", () => {
 // ---------------------------------------------------------------- new user
 
 describe("new user", () => {
-  it("creates an Iwa user from Google auth", async () => {
+  it("creates an Iwa user from Google auth with new onboarding status", async () => {
     const res = await login("google-alice").expect(200);
     expect(res.body.user.email).toBe("alice@example.com");
     expect(res.body.user.status).toBe("active");
+    expect(res.body.user.onboardingStatus).toBe("new");
     expect(typeof res.body.user.id).toBe("string");
     expect(res.body.user.id.length).toBeGreaterThan(8);
     expect(res.body.token).toBeUndefined();
@@ -324,16 +448,32 @@ describe("new user", () => {
     expect(cookieNamed(res, IWA_SESSION_COOKIE)).toContain("Secure");
   });
 
-  it("creates an Iwa user from email auth", async () => {
+  it("creates an Iwa user from email auth with new onboarding status", async () => {
     const res = await login("email-bob").expect(200);
     expect(res.body.user.email).toBe("bob@example.com");
     expect(res.body.user.status).toBe("active");
+    expect(res.body.user.onboardingStatus).toBe("new");
   });
 
-  it("maps a duplicate Google identity to the same user", async () => {
+  it("maps a duplicate Google identity to the same user and preserves onboarding status", async () => {
     const first = await login("google-alice").expect(200);
+    await store.setIwaUserOnboardingStatus(first.body.user.id, "incomplete");
     const second = await login("google-alice-again").expect(200);
     expect(second.body.user.id).toBe(first.body.user.id);
+    expect(second.body.user.onboardingStatus).toBe("incomplete");
+  });
+
+  it("distinguishes fully-onboarded user from incomplete or new user", async () => {
+    const res = await login("google-carol").expect(200);
+    expect(res.body.user.onboardingStatus).toBe("new");
+
+    await store.setIwaUserOnboardingStatus(res.body.user.id, "incomplete");
+    const incompleteRes = await login("google-carol").expect(200);
+    expect(incompleteRes.body.user.onboardingStatus).toBe("incomplete");
+
+    await store.setIwaUserOnboardingStatus(res.body.user.id, "completed");
+    const completedRes = await login("google-carol").expect(200);
+    expect(completedRes.body.user.onboardingStatus).toBe("completed");
   });
 
   it("links a verified email identity to the existing user with the same normalized email", async () => {

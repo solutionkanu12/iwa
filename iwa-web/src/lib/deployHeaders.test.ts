@@ -99,14 +99,16 @@ describe("framing", () => {
 
 describe("where the app may talk", () => {
   // Exactly what the app uses: itself, the Starknet RPC it is configured with,
-  // and the coordination service. Wallet extensions run outside the page and
-  // are unaffected by this, and wallet discovery makes no network call at all.
+  // the coordination service, and the Supabase Auth project origin. Wallet
+  // extensions run outside the page and are unaffected by this, and wallet
+  // discovery makes no network call at all.
   it("allows only the origins the app actually calls", () => {
     expect(directive("connect-src").sort()).toEqual(
       [
         "'self'",
         "https://api.cartridge.gg",
         "https://iwa-production-2900.up.railway.app",
+        "https://imgxspwkflnbqrumjbnn.supabase.co",
       ].sort(),
     );
   });
@@ -189,6 +191,7 @@ describe("the routes are untouched", () => {
       "/start",
       "/invite/(.*)",
       "/auth/callback",
+      "/auth/confirm",
     ]);
     for (const rewrite of config.rewrites) {
       expect(rewrite.destination).toBe("/index.html");

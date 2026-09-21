@@ -11,6 +11,7 @@ import { SessionProvider } from "./app/SessionProvider.tsx";
 import { IwaAuthProvider, useIwaAuth } from "./app/IwaAuthProvider.tsx";
 import { AuthLoading, AuthScreen, AuthSuspended } from "./app/AuthScreen.tsx";
 import { AuthCallbackView } from "./screens/AuthCallbackView.tsx";
+import { AuthConfirmView } from "./screens/AuthConfirmView.tsx";
 import { requiresIwaSession } from "./app/iwaAuthGate.ts";
 import { useRoute } from "./lib/router.ts";
 
@@ -42,6 +43,9 @@ function AppRoot() {
   }
   if (route.name === "authCallback") {
     return <AuthCallbackView navigate={navigate} />;
+  }
+  if (route.name === "authConfirm") {
+    return <AuthConfirmView navigate={navigate} />;
   }
   if (route.name === "console") {
     // A disabled console is not a route: it falls through to the application

@@ -5,11 +5,13 @@
 // connection. Wallets stay on the screens that need them.
 
 export type IwaUserStatus = "active" | "suspended";
+export type OnboardingStatus = "new" | "incomplete" | "completed";
 
 export interface IwaUser {
   id: string;
   email: string;
   status: IwaUserStatus;
+  onboardingStatus?: OnboardingStatus;
 }
 
 export type AuthPhase = "loading" | "unauthenticated" | "authenticated" | "suspended";
@@ -32,13 +34,14 @@ export function authPhase(snapshot: AuthSnapshot): AuthPhase {
   return "authenticated";
 }
 
-/** Marketing, invites and the OAuth callback stay reachable without a session. */
+/** Marketing, invites and the OAuth/email callbacks stay reachable without a session. */
 export function requiresIwaSession(routeName: string): boolean {
   return (
     routeName !== "landing" &&
     routeName !== "invite" &&
     routeName !== "celoBindInvite" &&
     routeName !== "authCallback" &&
+    routeName !== "authConfirm" &&
     routeName !== "console"
   );
 }

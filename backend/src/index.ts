@@ -40,8 +40,8 @@ async function main(): Promise<void> {
     chainHealth: new RpcChainHealth(provider, IWA_CIRCLE),
     environment: config.nodeEnv,
     identityVerifier:
-      config.supabaseJwtSecret.length > 0 && config.supabaseUrl.length > 0
-        ? new SupabaseJwtVerifier(config.supabaseJwtSecret, config.supabaseUrl)
+      config.supabaseUrl.length > 0
+        ? new SupabaseJwtVerifier(config.supabaseUrl, config.supabaseJwtSecret)
         : undefined,
     emailOtpSender:
       config.supabaseUrl.length > 0 && config.supabaseAnonKey.length > 0

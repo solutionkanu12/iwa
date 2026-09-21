@@ -14,6 +14,7 @@ import { StandingView } from "./screens/StandingView.tsx";
 import { OrganizerCircleView } from "./screens/OrganizerCircleView.tsx";
 import { PrizeSavingsView } from "./screens/PrizeSavingsView.tsx";
 import { AdminView } from "./screens/AdminView.tsx";
+import { OnboardingPlaceholderView } from "./screens/OnboardingPlaceholderView.tsx";
 import { shellFor } from "./app/navigation.ts";
 import type { Route } from "./lib/router.ts";
 
@@ -53,6 +54,9 @@ export function App({ route, navigate }: AppProps) {
       break;
     case "admin":
       screen = <AdminView navigate={navigate} />;
+      break;
+    case "onboarding":
+      screen = <OnboardingPlaceholderView navigate={navigate} />;
       break;
     default:
       screen = <NotFoundView navigate={navigate} />;

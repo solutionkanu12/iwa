@@ -2,12 +2,12 @@ import { useEffect, useState } from "react";
 
 import { AuthLoading } from "../app/AuthScreen";
 import { useIwaAuth } from "../app/IwaAuthProvider";
-import { iwaAuthCallback, IwaAccountError } from "../lib/iwaAccount";
+import { iwaAuthConfirm, IwaAccountError } from "../lib/iwaAccount";
 import type { Route } from "../lib/router";
 import styles from "../app/AuthScreen.module.css";
 import { Island } from "../components/Island";
 
-export function AuthCallbackView({ navigate }: { navigate: (to: string | Route) => void }) {
+export function AuthConfirmView({ navigate }: { navigate: (to: string | Route) => void }) {
   const auth = useIwaAuth();
   const [error, setError] = useState<string | null>(null);
 
@@ -15,7 +15,7 @@ export function AuthCallbackView({ navigate }: { navigate: (to: string | Route) 
     let cancelled = false;
     void (async () => {
       try {
-        const session = await iwaAuthCallback.complete({
+        const session = await iwaAuthConfirm.complete({
           hash: window.location.hash,
           search: window.location.search,
         });
@@ -28,7 +28,7 @@ export function AuthCallbackView({ navigate }: { navigate: (to: string | Route) 
         }
       } catch (e) {
         if (cancelled) return;
-        setError(e instanceof IwaAccountError ? e.message : "That sign-in could not be completed.");
+        setError(e instanceof IwaAccountError ? e.message : "That confirmation link could not be verified.");
       }
     })();
     return () => {
@@ -40,7 +40,7 @@ export function AuthCallbackView({ navigate }: { navigate: (to: string | Route) 
     return (
       <div className={styles.page}>
         <Island className={styles.card}>
-          <h1 className={styles.title}>Could not finish signing in</h1>
+          <h1 className={styles.title}>Could not confirm sign-in</h1>
           <p className={styles.lede}>{error}</p>
         </Island>
       </div>

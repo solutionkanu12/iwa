@@ -9,6 +9,7 @@
 // The raw value travels in an HttpOnly cookie and is never returned in JSON.
 
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createRemoteJWKSet, decodeProtectedHeader, jwtVerify } from "jose";
 
 export const IWA_SESSION_COOKIE = "iwa_session";
 export const IWA_CSRF_COOKIE = "iwa_csrf";
@@ -21,12 +22,14 @@ export const IWA_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 export const MAX_ACCOUNT_SESSIONS_PER_USER = 20;
 
 export type IwaUserStatus = "active" | "suspended";
+export type OnboardingStatus = "new" | "incomplete" | "completed";
 export type AuthProvider = "google" | "email";
 
 export interface IwaUser {
   id: string;
   email: string;
   status: IwaUserStatus;
+  onboardingStatus: OnboardingStatus;
   createdAt: string;
   updatedAt: string;
 }
@@ -192,8 +195,18 @@ export function sameSiteFor(requestOrigin: string | undefined, requestHost: stri
 }
 
 /** Public user projection. Never includes session material. */
-export function publicUser(user: IwaUser): { id: string; email: string; status: IwaUserStatus } {
-  return { id: user.id, email: user.email, status: user.status };
+export function publicUser(user: IwaUser): {
+  id: string;
+  email: string;
+  status: IwaUserStatus;
+  onboardingStatus: OnboardingStatus;
+} {
+  return {
+    id: user.id,
+    email: user.email,
+    status: user.status,
+    onboardingStatus: user.onboardingStatus,
+  };
 }
 
 function b64url(buf: Buffer): string {
@@ -206,7 +219,7 @@ function parseB64urlJson(part: string): unknown {
   return JSON.parse(buf.toString("utf8"));
 }
 
-/** HS256 JWT, the default Supabase Auth signing method. */
+/** Legacy HS256 helper retained for bounded compatibility tests and old tokens. */
 export function signHs256Jwt(payload: Record<string, unknown>, secret: string): string {
   const header = b64url(Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })));
   const body = b64url(Buffer.from(JSON.stringify(payload)));
@@ -292,20 +305,61 @@ export function identityFromSupabasePayload(payload: Record<string, unknown>): V
 
 export class SupabaseJwtVerifier implements IdentityVerifier {
   private readonly issuer: string;
+  private readonly jwks: ReturnType<typeof createRemoteJWKSet>;
 
   constructor(
-    private readonly secret: string,
     supabaseUrl: string,
+    private readonly legacyHs256Secret = "",
     private readonly now: () => number = () => Date.now(),
   ) {
     this.issuer = `${supabaseUrl.replace(/\/+$/, "")}/auth/v1`;
+    this.jwks = createRemoteJWKSet(new URL(`${this.issuer}/.well-known/jwks.json`));
   }
 
   async verify(accessToken: string): Promise<VerifiedIdentity | null> {
-    const payload = verifyHs256Jwt(accessToken, this.secret, Math.floor(this.now() / 1000));
-    if (payload === null) return null;
-    if (payload.aud !== "authenticated" || payload.iss !== this.issuer) return null;
-    return identityFromSupabasePayload(payload);
+    try {
+      const header = decodeProtectedHeader(accessToken);
+      const currentDate = new Date(this.now());
+      let payload: Record<string, unknown>;
+
+      if (header.alg === "ES256") {
+        const verified = await jwtVerify(accessToken, this.jwks, {
+          algorithms: ["ES256"],
+          audience: "authenticated",
+          issuer: this.issuer,
+          currentDate,
+        });
+        payload = verified.payload as Record<string, unknown>;
+      } else if (header.alg === "HS256" && this.legacyHs256Secret.length > 0) {
+        const verified = await jwtVerify(
+          accessToken,
+          new TextEncoder().encode(this.legacyHs256Secret),
+          {
+            algorithms: ["HS256"],
+            audience: "authenticated",
+            issuer: this.issuer,
+            currentDate,
+          },
+        );
+        payload = verified.payload as Record<string, unknown>;
+      } else {
+        return null;
+      }
+
+      const nowSeconds = Math.floor(this.now() / 1000);
+      if (
+        payload.aud !== "authenticated" ||
+        payload.iss !== this.issuer ||
+        typeof payload.exp !== "number" ||
+        !Number.isFinite(payload.exp) ||
+        payload.exp <= nowSeconds
+      ) {
+        return null;
+      }
+      return identityFromSupabasePayload(payload);
+    } catch {
+      return null;
+    }
   }
 }
 

@@ -187,6 +187,124 @@ export function createAuthCallbackCoordinator(
   };
 }
 
+export interface AuthConfirmDependencies {
+  verifyOtp(params: { token_hash?: string; token?: string; type: string; email?: string }): Promise<string>;
+  exchangeCode?(code: string, flowId?: string): Promise<string>;
+  login(accessToken: string): Promise<SessionView>;
+  replaceUrl(path: string): void;
+}
+
+export interface AuthConfirmCoordinator {
+  complete(location: AuthCallbackLocation): Promise<SessionView>;
+}
+
+export function createAuthConfirmCoordinator(
+  dependencies: AuthConfirmDependencies,
+): AuthConfirmCoordinator {
+  let pending: { key: string; result: Promise<SessionView> } | null = null;
+  const invalidLinkMessage =
+    "That sign-in link is invalid, expired, or has already been used. Please request a new sign-in link.";
+
+  return {
+    complete(location) {
+      const query = new URLSearchParams(
+        location.search.startsWith("?") ? location.search.slice(1) : location.search,
+      );
+      const fragment = new URLSearchParams(
+        location.hash.startsWith("#") ? location.hash.slice(1) : location.hash,
+      );
+
+      const tokenHash = query.get("token_hash") ?? fragment.get("token_hash");
+      const token = query.get("token") ?? fragment.get("token");
+      const type = query.get("type") ?? fragment.get("type") ?? "email";
+      const code = query.get("code");
+      const flowId = query.get("sb_flow_id");
+      const legacyAccessToken = fragment.get("access_token");
+
+      const dedupeKey = tokenHash
+        ? `hash:${tokenHash}:${type}`
+        : token
+          ? `token:${token}:${type}`
+          : code
+            ? `code:${code}:${flowId ?? ""}`
+            : legacyAccessToken
+              ? `access:${legacyAccessToken}`
+              : "";
+
+      if (pending !== null) {
+        // Strict Mode may call again after the first call scrubbed the URL.
+        if (dedupeKey === "" || pending.key === dedupeKey) return pending.result;
+        dependencies.replaceUrl("/auth/confirm");
+        return Promise.reject(
+          new IwaAccountError(409, "confirmation_in_progress", "Another sign-in confirmation is in progress."),
+        );
+      }
+
+      dependencies.replaceUrl("/auth/confirm");
+
+      const result = (async () => {
+        let accessToken: string;
+        if (tokenHash !== null && tokenHash.length > 0) {
+          try {
+            accessToken = await dependencies.verifyOtp({ token_hash: tokenHash, type });
+          } catch {
+            throw new IwaAccountError(
+              401,
+              "invalid_callback",
+              invalidLinkMessage,
+            );
+          }
+        } else if (token !== null && token.length > 0) {
+          try {
+            accessToken = await dependencies.verifyOtp({
+              token,
+              type,
+              email: query.get("email") ?? undefined,
+            });
+          } catch {
+            throw new IwaAccountError(
+              401,
+              "invalid_callback",
+              invalidLinkMessage,
+            );
+          }
+        } else if (code !== null && code.length > 0 && dependencies.exchangeCode !== undefined) {
+          try {
+            accessToken = await dependencies.exchangeCode(code, flowId ?? undefined);
+          } catch {
+            throw new IwaAccountError(
+              401,
+              "invalid_callback",
+              invalidLinkMessage,
+            );
+          }
+        } else if (legacyAccessToken !== null && legacyAccessToken.length > 0) {
+          accessToken = legacyAccessToken;
+        } else {
+          throw new IwaAccountError(
+            400,
+            "missing_callback",
+            "That sign-in link is missing its confirmation. Please try again from Iwa.",
+          );
+        }
+
+        return dependencies.login(accessToken);
+      })();
+
+      pending = { key: dedupeKey, result };
+      void result.then(
+        () => {
+          if (pending?.result === result) pending = null;
+        },
+        () => {
+          if (pending?.result === result) pending = null;
+        },
+      );
+      return result;
+    },
+  };
+}
+
 export const iwaAccount = {
   async me(): Promise<SessionView> {
     return call("/api/auth/me");
@@ -194,7 +312,7 @@ export const iwaAccount = {
 
   async requestEmail(email: string): Promise<void> {
     try {
-      await iwaSupabaseAuth.requestEmail(email, authCallbackUrl());
+      await iwaSupabaseAuth.requestEmail(email, authConfirmUrl());
     } catch (error) {
       throw new IwaAccountError(
         0,
@@ -237,7 +355,19 @@ function authCallbackUrl(): string {
   return new URL("/auth/callback", window.location.origin).toString();
 }
 
+function authConfirmUrl(): string {
+  if (typeof window === "undefined") throw new Error("Iwa account sign-in requires a browser.");
+  return new URL("/auth/confirm", window.location.origin).toString();
+}
+
 export const iwaAuthCallback = createAuthCallbackCoordinator({
+  exchangeCode: (code, flowId) => iwaSupabaseAuth.exchangeCode(code, flowId),
+  login: (accessToken) => iwaAccount.login(accessToken),
+  replaceUrl: (path) => window.history.replaceState(null, "", path),
+});
+
+export const iwaAuthConfirm = createAuthConfirmCoordinator({
+  verifyOtp: (params) => iwaSupabaseAuth.verifyOtp(params),
   exchangeCode: (code, flowId) => iwaSupabaseAuth.exchangeCode(code, flowId),
   login: (accessToken) => iwaAccount.login(accessToken),
   replaceUrl: (path) => window.history.replaceState(null, "", path),
