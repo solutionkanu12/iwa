@@ -88,6 +88,26 @@ export interface SessionView {
   expiresAt: string;
 }
 
+/**
+ * A login response only proves that the backend accepted the provider token.
+ * Navigation into Iwa additionally requires the new HttpOnly session cookie to
+ * round-trip through /api/auth/me for that same user.
+ */
+export function requireRecoveredIwaSession(created: SessionView, recovered: SessionView | null): SessionView {
+  if (
+    recovered === null ||
+    recovered.user.id !== created.user.id ||
+    recovered.user.status !== "active"
+  ) {
+    throw new IwaAccountError(
+      401,
+      "session_recovery_failed",
+      "Iwa could not restore the secure session. Please sign in again.",
+    );
+  }
+  return recovered;
+}
+
 export interface AuthCallbackLocation {
   hash: string;
   search: string;

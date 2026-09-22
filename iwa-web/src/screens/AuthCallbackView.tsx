@@ -2,7 +2,12 @@ import { useEffect, useState } from "react";
 
 import { AuthLoading } from "../app/AuthScreen";
 import { useIwaAuth } from "../app/IwaAuthProvider";
-import { captureAuthRedirectLocation, iwaAuthCallback, IwaAccountError } from "../lib/iwaAccount";
+import {
+  captureAuthRedirectLocation,
+  iwaAuthCallback,
+  IwaAccountError,
+  requireRecoveredIwaSession,
+} from "../lib/iwaAccount";
 import type { Route } from "../lib/router";
 import styles from "../app/AuthScreen.module.css";
 import { Island } from "../components/Island";
@@ -17,9 +22,10 @@ export function AuthCallbackView({ navigate }: { navigate: (to: string | Route) 
     let cancelled = false;
     void (async () => {
       try {
-        const session = await iwaAuthCallback.complete(redirectLocation);
+        const created = await iwaAuthCallback.complete(redirectLocation);
         if (cancelled) return;
-        await auth.refresh();
+        const session = requireRecoveredIwaSession(created, await auth.refresh());
+        if (cancelled) return;
         if (session.user.onboardingStatus === "completed") {
           navigate({ name: "home" });
         } else {

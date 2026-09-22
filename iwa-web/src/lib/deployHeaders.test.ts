@@ -107,7 +107,7 @@ describe("where the app may talk", () => {
       [
         "'self'",
         "https://api.cartridge.gg",
-        "https://iwa-production-2900.up.railway.app",
+        "https://api.useiwa.xyz",
         "https://imgxspwkflnbqrumjbnn.supabase.co",
       ].sort(),
     );

@@ -8,14 +8,14 @@ import {
   type ReactNode,
 } from "react";
 
-import { iwaAccount, IwaAccountError } from "../lib/iwaAccount";
+import { iwaAccount, IwaAccountError, type SessionView } from "../lib/iwaAccount";
 import { authPhase, type AuthPhase, type IwaUser } from "./iwaAuthGate";
 
 export interface IwaAuthState {
   phase: AuthPhase;
   user: IwaUser | null;
   error: string | null;
-  refresh: () => Promise<void>;
+  refresh: () => Promise<SessionView | null>;
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
 }
@@ -32,6 +32,7 @@ export function IwaAuthProvider({ children }: { children: ReactNode }) {
       const session = await iwaAccount.me();
       setUser(session.user);
       setError(session.user.status === "suspended" ? "This Iwa account is suspended. Your on-chain funds are untouched." : null);
+      return session;
     } catch (e) {
       setUser(null);
       if (e instanceof IwaAccountError && e.code === "account_suspended") {
@@ -39,6 +40,7 @@ export function IwaAuthProvider({ children }: { children: ReactNode }) {
       } else {
         setError(null);
       }
+      return null;
     } finally {
       setLoading(false);
     }
