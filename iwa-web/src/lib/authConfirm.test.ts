@@ -17,6 +17,7 @@ interface ConfirmCoordinator {
 }
 
 interface ConfirmApi {
+  captureAuthRedirectLocation(location: { hash: string; search: string }): { hash: string; search: string };
   createAuthConfirmCoordinator(deps: {
     verifyOtp(params: { token_hash?: string; token?: string; type: string; email?: string }): Promise<string>;
     exchangeCode?(code: string, flowId?: string): Promise<string>;
@@ -74,6 +75,18 @@ function setup(targetSession = newSession) {
 }
 
 describe("Iwa Account email auth confirm (cross-device)", () => {
+  it("captures a real confirm URL before it is scrubbed", async () => {
+    const original = new URL("https://useiwa.xyz/auth/confirm?token_hash=test-hash&type=email");
+    const captured = confirmApi.captureAuthRedirectLocation(original);
+
+    original.search = "";
+
+    const { coordinator, verifyOtp } = setup();
+    await expect(coordinator.complete(captured)).resolves.toEqual(newSession);
+    expect(original.href).toBe("https://useiwa.xyz/auth/confirm");
+    expect(verifyOtp).toHaveBeenCalledWith({ token_hash: "test-hash", type: "email" });
+  });
+
   it("successfully verifies a token_hash on first use without a local PKCE verifier", async () => {
     const { coordinator, verifyOtp, login, order } = setup();
 

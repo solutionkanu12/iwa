@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import { AuthLoading } from "../app/AuthScreen";
 import { useIwaAuth } from "../app/IwaAuthProvider";
-import { iwaAuthConfirm, IwaAccountError } from "../lib/iwaAccount";
+import { captureAuthRedirectLocation, iwaAuthConfirm, IwaAccountError } from "../lib/iwaAccount";
 import type { Route } from "../lib/router";
 import styles from "../app/AuthScreen.module.css";
 import { Island } from "../components/Island";
@@ -10,15 +10,15 @@ import { Island } from "../components/Island";
 export function AuthConfirmView({ navigate }: { navigate: (to: string | Route) => void }) {
   const auth = useIwaAuth();
   const [error, setError] = useState<string | null>(null);
+  // Capture before passive effects run: the coordinator will immediately scrub
+  // the visible URL, so it must never depend on a later window.location read.
+  const [redirectLocation] = useState(() => captureAuthRedirectLocation(window.location));
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const session = await iwaAuthConfirm.complete({
-          hash: window.location.hash,
-          search: window.location.search,
-        });
+        const session = await iwaAuthConfirm.complete(redirectLocation);
         if (cancelled) return;
         await auth.refresh();
         if (session.user.onboardingStatus === "completed") {
@@ -34,7 +34,7 @@ export function AuthConfirmView({ navigate }: { navigate: (to: string | Route) =
     return () => {
       cancelled = true;
     };
-  }, [auth.refresh, navigate]);
+  }, [auth.refresh, navigate, redirectLocation]);
 
   if (error !== null) {
     return (

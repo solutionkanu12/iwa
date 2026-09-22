@@ -17,6 +17,7 @@ interface CallbackCoordinator {
 }
 
 interface CallbackApi {
+  captureAuthRedirectLocation(location: { hash: string; search: string }): { hash: string; search: string };
   createAuthCallbackCoordinator(deps: {
     exchangeCode(code: string, flowId?: string): Promise<string>;
     login(accessToken: string): Promise<SessionView>;
@@ -58,6 +59,18 @@ function setup() {
 }
 
 describe("Iwa Account auth callback", () => {
+  it("captures a real PKCE callback URL before it is scrubbed", async () => {
+    const original = new URL("https://useiwa.xyz/auth/callback?code=test-code&sb_flow_id=test-flow");
+    const captured = callbackApi.captureAuthRedirectLocation(original);
+
+    original.search = "";
+
+    const { coordinator, exchangeCode } = setup();
+    await expect(coordinator.complete(captured)).resolves.toEqual(session);
+    expect(original.href).toBe("https://useiwa.xyz/auth/callback");
+    expect(exchangeCode).toHaveBeenCalledWith("test-code", "test-flow");
+  });
+
   it("exchanges a PKCE code and sends only the verified access token to Iwa login", async () => {
     const { coordinator, exchangeCode, login, order } = setup();
 

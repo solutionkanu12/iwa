@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import { AuthLoading } from "../app/AuthScreen";
 import { useIwaAuth } from "../app/IwaAuthProvider";
-import { iwaAuthCallback, IwaAccountError } from "../lib/iwaAccount";
+import { captureAuthRedirectLocation, iwaAuthCallback, IwaAccountError } from "../lib/iwaAccount";
 import type { Route } from "../lib/router";
 import styles from "../app/AuthScreen.module.css";
 import { Island } from "../components/Island";
@@ -10,15 +10,14 @@ import { Island } from "../components/Island";
 export function AuthCallbackView({ navigate }: { navigate: (to: string | Route) => void }) {
   const auth = useIwaAuth();
   const [error, setError] = useState<string | null>(null);
+  // Keep the original PKCE redirect values before any effect clears the URL.
+  const [redirectLocation] = useState(() => captureAuthRedirectLocation(window.location));
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const session = await iwaAuthCallback.complete({
-          hash: window.location.hash,
-          search: window.location.search,
-        });
+        const session = await iwaAuthCallback.complete(redirectLocation);
         if (cancelled) return;
         await auth.refresh();
         if (session.user.onboardingStatus === "completed") {
@@ -34,7 +33,7 @@ export function AuthCallbackView({ navigate }: { navigate: (to: string | Route) 
     return () => {
       cancelled = true;
     };
-  }, [auth.refresh, navigate]);
+  }, [auth.refresh, navigate, redirectLocation]);
 
   if (error !== null) {
     return (

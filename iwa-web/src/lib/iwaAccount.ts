@@ -93,6 +93,17 @@ export interface AuthCallbackLocation {
   search: string;
 }
 
+/**
+ * Copies redirect credentials while they are still present in the browser URL.
+ *
+ * Views call this during render, before any effect can replace the history
+ * entry. Coordinators then scrub the address bar and operate only on this
+ * independent snapshot.
+ */
+export function captureAuthRedirectLocation(location: AuthCallbackLocation): AuthCallbackLocation {
+  return { hash: location.hash, search: location.search };
+}
+
 export interface AuthCallbackDependencies {
   exchangeCode(code: string, flowId?: string): Promise<string>;
   login(accessToken: string): Promise<SessionView>;
