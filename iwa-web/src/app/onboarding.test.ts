@@ -7,8 +7,9 @@ describe("onboarding route guard", () => {
     expect(onboardingRedirect("home", "new")).toBe("onboarding");
   });
 
-  it("keeps an incomplete user at the persisted profile step after a refresh", () => {
-    expect(onboardingStepFor("incomplete")).toBe("profile");
+  it("restores an incomplete user to the server-persisted stage after a refresh", () => {
+    expect(onboardingStepFor("incomplete", "profile")).toBe("profile");
+    expect(onboardingStepFor("incomplete", "passwordPin")).toBe("passwordPin");
     expect(onboardingRedirect("explore", "incomplete")).toBe("onboarding");
   });
 
@@ -18,6 +19,7 @@ describe("onboarding route guard", () => {
   });
 
   it("does not force a completed user back into onboarding", () => {
+    expect(onboardingStepFor("completed", "finish")).toBe("finish");
     expect(onboardingRedirect("home", "completed")).toBeNull();
     expect(onboardingRedirect("onboarding", "completed")).toBe("home");
   });

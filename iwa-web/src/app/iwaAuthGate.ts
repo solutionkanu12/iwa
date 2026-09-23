@@ -6,12 +6,14 @@
 
 export type IwaUserStatus = "active" | "suspended";
 export type OnboardingStatus = "new" | "incomplete" | "completed";
+export type OnboardingStep = "profile" | "passwordPin" | "walletProvisioning" | "recovery" | "finish";
 
 export interface IwaUser {
   id: string;
   email: string;
   status: IwaUserStatus;
   onboardingStatus?: OnboardingStatus;
+  onboardingStep?: OnboardingStep;
 }
 
 export type AuthPhase = "loading" | "unauthenticated" | "authenticated" | "suspended";

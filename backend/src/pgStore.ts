@@ -14,6 +14,7 @@ import {
   type AccountSessionRecord,
   type IwaUser,
   type IwaUserStatus,
+  type OnboardingStep,
   type OnboardingStatus,
   type VerifiedIdentity,
 } from "./iwaAccount.js";
@@ -538,10 +539,11 @@ export class PgStore implements Store {
         email: string;
         status: IwaUserStatus;
         onboarding_status: OnboardingStatus;
+        onboarding_step: OnboardingStep;
         created_at: Date;
         updated_at: Date;
       }>(
-        `SELECT u.id AS user_id, u.id, u.email, u.status, u.onboarding_status, u.created_at, u.updated_at
+        `SELECT u.id AS user_id, u.id, u.email, u.status, u.onboarding_status, u.onboarding_step, u.created_at, u.updated_at
            FROM auth_identities i
            JOIN users u ON u.id = i.user_id
           WHERE i.provider = $1 AND i.provider_subject = $2
@@ -571,9 +573,10 @@ export class PgStore implements Store {
         email: string;
         status: IwaUserStatus;
         onboarding_status: OnboardingStatus;
+        onboarding_step: OnboardingStep;
         created_at: Date;
         updated_at: Date;
-      }>(`SELECT id, email, status, onboarding_status, created_at, updated_at FROM users WHERE email = $1 FOR UPDATE`, [
+      }>(`SELECT id, email, status, onboarding_status, onboarding_step, created_at, updated_at FROM users WHERE email = $1 FOR UPDATE`, [
         email,
       ]);
 
@@ -583,6 +586,7 @@ export class PgStore implements Store {
         email: string;
         status: IwaUserStatus;
         onboarding_status: OnboardingStatus;
+        onboarding_step: OnboardingStep;
         created_at: Date;
         updated_at: Date;
       };
@@ -597,11 +601,12 @@ export class PgStore implements Store {
           email: string;
           status: IwaUserStatus;
           onboarding_status: OnboardingStatus;
+          onboarding_step: OnboardingStep;
           created_at: Date;
           updated_at: Date;
         }>(
           `INSERT INTO users (id, email, status, onboarding_status) VALUES ($1, $2, 'active', 'new')
-           RETURNING id, email, status, onboarding_status, created_at, updated_at`,
+           RETURNING id, email, status, onboarding_status, onboarding_step, created_at, updated_at`,
           [userId, email],
         );
         userRow = inserted.rows[0];
@@ -628,9 +633,10 @@ export class PgStore implements Store {
       email: string;
       status: IwaUserStatus;
       onboarding_status: OnboardingStatus;
+      onboarding_step: OnboardingStep;
       created_at: Date;
       updated_at: Date;
-    }>(`SELECT id, email, status, onboarding_status, created_at, updated_at FROM users WHERE id = $1`, [id]);
+    }>(`SELECT id, email, status, onboarding_status, onboarding_step, created_at, updated_at FROM users WHERE id = $1`, [id]);
     if (r.rowCount === 0) return null;
     return toIwaUser(r.rows[0]);
   }
@@ -641,11 +647,12 @@ export class PgStore implements Store {
       email: string;
       status: IwaUserStatus;
       onboarding_status: OnboardingStatus;
+      onboarding_step: OnboardingStep;
       created_at: Date;
       updated_at: Date;
     }>(
       `UPDATE users SET status = $2, updated_at = now() WHERE id = $1
-       RETURNING id, email, status, onboarding_status, created_at, updated_at`,
+       RETURNING id, email, status, onboarding_status, onboarding_step, created_at, updated_at`,
       [id, status],
     );
     if (r.rowCount === 0) return null;
@@ -658,12 +665,40 @@ export class PgStore implements Store {
       email: string;
       status: IwaUserStatus;
       onboarding_status: OnboardingStatus;
+      onboarding_step: OnboardingStep;
       created_at: Date;
       updated_at: Date;
     }>(
-      `UPDATE users SET onboarding_status = $2, updated_at = now() WHERE id = $1
-       RETURNING id, email, status, onboarding_status, created_at, updated_at`,
+      `UPDATE users
+          SET onboarding_status = $2,
+              onboarding_step = CASE WHEN $2 = 'completed' THEN 'finish' ELSE 'profile' END,
+              updated_at = now()
+        WHERE id = $1
+       RETURNING id, email, status, onboarding_status, onboarding_step, created_at, updated_at`,
       [id, status],
+    );
+    if (r.rowCount === 0) return null;
+    return toIwaUser(r.rows[0]);
+  }
+
+  async setIwaUserOnboardingState(
+    id: string,
+    state: { status: OnboardingStatus; step: OnboardingStep },
+  ): Promise<IwaUser | null> {
+    const r = await this.pool.query<{
+      id: string;
+      email: string;
+      status: IwaUserStatus;
+      onboarding_status: OnboardingStatus;
+      onboarding_step: OnboardingStep;
+      created_at: Date;
+      updated_at: Date;
+    }>(
+      `UPDATE users
+          SET onboarding_status = $2, onboarding_step = $3, updated_at = now()
+        WHERE id = $1
+       RETURNING id, email, status, onboarding_status, onboarding_step, created_at, updated_at`,
+      [id, state.status, state.step],
     );
     if (r.rowCount === 0) return null;
     return toIwaUser(r.rows[0]);
@@ -789,6 +824,7 @@ function toIwaUser(row: {
   email: string;
   status: IwaUserStatus;
   onboarding_status?: OnboardingStatus;
+  onboarding_step?: OnboardingStep;
   created_at: Date;
   updated_at: Date;
 }): IwaUser {
@@ -797,6 +833,7 @@ function toIwaUser(row: {
     email: row.email,
     status: row.status,
     onboardingStatus: row.onboarding_status ?? "new",
+    onboardingStep: row.onboarding_step ?? (row.onboarding_status === "completed" ? "finish" : "profile"),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };

@@ -38,37 +38,47 @@ does not confer wallet or transaction authority.
   reference, transaction authorization or admin credential. Existing wallet
   signatures remain mandatory for financial and operator actions.
 
-## Milestone 1, Task 1.3A: onboarding foundation (current uncommitted work)
+## Milestone 1: Iwa Account onboarding (local-only work)
 
-Implemented in the `milestone/onboarding-foundation` worktree. It has not been
-committed, pushed, or deployed.
+Task 1.3A is preserved in local commit
+`b31e7037b921a724287e6e502ad24b873a0f1769` on
+`milestone/onboarding-foundation`. Task 1.3B is verified and local-only. No
+part of this milestone has been pushed, deployed, or applied to production.
 
-- An authenticated new user reaches `/app/onboarding` and remains `new` until
-  they explicitly start account setup. That one server-validated transition
-  persists `new -> incomplete` for the authenticated Iwa user only.
-- The persisted account status derives the current `profile` stage. The fixed
-  future sequence is profile/account setup, password and PIN, wallet
-  provisioning, recovery, and finish. Future stages fail closed until their
-  reviewed implementation work exists; this task never writes `completed`.
+- Migration `007_add_iwa_user_onboarding_step.sql` adds only
+  `users.onboarding_step`, with a NOT NULL `profile` default and database check
+  for `profile`, `passwordPin`, `walletProvisioning`, `recovery`, and `finish`.
+  It backfills existing `new` and `incomplete` users to `profile`, and
+  `completed` users to `finish`. It has not been run against the live database.
+- The authenticated account response now exposes server-owned
+  `onboardingStatus` and `onboardingStep`. The only Task 1.3B transitions are
+  `new/profile -> incomplete/profile -> incomplete/passwordPin`; retries of
+  the stored state are idempotent. Skips, reverse transitions, client-supplied
+  completion, and another user's state are rejected.
 - New and incomplete users cannot use `/app` or another saver-app route to
   bypass onboarding. Completed users remain eligible for `/app` and are
-  redirected away from the onboarding route.
-- The new mutation endpoint requires the existing HttpOnly Iwa session, an
-  allowed origin, and matching CSRF cookie/header proof. It accepts no user id
-  or client-supplied status, rejects invalid/out-of-order transitions, and does
-  not touch wallet signing authority.
-- The UI uses only the verified email already held by the Iwa account. No new
-  profile fields are defined in the repository, so none were invented.
+  redirected away from onboarding. `completed/finish` cannot be reached by the
+  Task 1.3B mutation.
+- The profile screen shows only the verified email already held by Iwa. The
+  password/PIN screen requires a matching 12 to 128 character wallet password
+  and matching six-digit PIN. The values remain React page memory only: they
+  are not sent to the backend, written to a database, browser storage, URL,
+  error, analytics, or log, and are empty after a reload.
+- The onboarding mutation endpoint continues to require the existing HttpOnly
+  Iwa session, allowed origin, and matching CSRF cookie/header. It is progress
+  metadata only and grants no wallet authority.
 
-Verification: focused frontend auth/onboarding 35/35; full frontend 709/709;
-focused backend Iwa Account 47/47; full backend 292 passed and 13 skipped;
-frontend and backend typechecks and production builds completed; `git diff
---check` passed. The local browser automation binary was unavailable, so there
-is no browser-automation claim.
+Verification: focused frontend onboarding 9/9; focused backend Iwa Account
+50/50; full frontend 713/713; full backend 295 passed and 14 skipped
+(database integration suite requires `TEST_DATABASE_URL`); frontend and backend
+typechecks and production builds passed; `git diff --check` passed. The local
+browser automation binary was unavailable, so there is no browser-automation
+claim.
 
-Next boundary: Task 1.3B may define and implement password/PIN requirements.
-It must not provision a wallet, create or expose key material, implement
-recovery, or mark onboarding completed.
+Next boundary: Task 1.3C may provision an embedded self-custodial wallet and
+locally use these ephemeral credentials for encryption. It must define and
+review wallet material, recovery, and browser-crypto handling separately; it
+must not turn the Iwa account session, password, or PIN into signing authority.
 
 ## Zama Prize Savings bounty (active work)
 

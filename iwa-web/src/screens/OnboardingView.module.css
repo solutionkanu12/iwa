@@ -122,6 +122,83 @@
   color: var(--mut);
 }
 
+.credentials {
+  display: grid;
+  gap: 1.15rem;
+}
+
+.credentialsHeading h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.credentialsHeading p,
+.help {
+  margin: 0.35rem 0 0;
+  color: var(--mut);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.fieldset {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.fieldset legend {
+  margin-bottom: 0.7rem;
+  color: var(--ink);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.label {
+  color: var(--mut);
+  font-size: 0.85rem;
+}
+
+.inputRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--brd);
+  border-radius: var(--radius-control);
+  background: var(--cloud);
+  color: var(--ink);
+  font: inherit;
+}
+
+.inputRow .input {
+  border-radius: var(--radius-control) 0 0 var(--radius-control);
+}
+
+.input:focus-visible,
+.visibility:focus-visible {
+  outline: 2px solid var(--iris);
+  outline-offset: 1px;
+}
+
+.visibility {
+  min-width: 4rem;
+  border: 1px solid var(--brd);
+  border-left: 0;
+  border-radius: 0 var(--radius-control) var(--radius-control) 0;
+  background: var(--mist);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.84rem;
+}
+
 @media (max-width: 420px) {
   .card {
     padding: 1.35rem 1.1rem;

@@ -63,6 +63,17 @@ suite("PgStore against a real Postgres", () => {
     await pool.query(sql);
     const accountsSql = readFileSync(resolve(HERE, "../migrations/005_iwa_accounts.sql"), "utf8");
     await pool.query(accountsSql);
+    const onboardingStatusSql = readFileSync(resolve(HERE, "../migrations/006_add_iwa_user_onboarding_status.sql"), "utf8");
+    await pool.query(onboardingStatusSql);
+    await pool.query(
+      `INSERT INTO users (id, email, status, onboarding_status) VALUES
+        ($1, 'migration-new@example.test', 'active', 'new'),
+        ($2, 'migration-incomplete@example.test', 'active', 'incomplete'),
+        ($3, 'migration-completed@example.test', 'active', 'completed')`,
+      [randomUUID(), randomUUID(), randomUUID()],
+    );
+    const onboardingStepSql = readFileSync(resolve(HERE, "../migrations/007_add_iwa_user_onboarding_step.sql"), "utf8");
+    await pool.query(onboardingStepSql);
     // Mirror production: RLS on, no policies. The backend connects as the
     // table owner and bypasses it; anon and authenticated get nothing.
     await pool.query(`
@@ -113,6 +124,36 @@ suite("PgStore against a real Postgres", () => {
     ]) {
       expect(tables).toContain(t);
     }
+  });
+
+  it("backfills onboarding steps, defaults future users, and constrains the allowed values", async () => {
+    const column = await pool.query<{ is_nullable: string; column_default: string | null }>(
+      `SELECT is_nullable, column_default
+         FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'onboarding_step'`,
+    );
+    expect(column.rows[0]?.is_nullable).toBe("NO");
+    expect(column.rows[0]?.column_default).toContain("profile");
+
+    const backfilled = await pool.query<{ email: string; onboarding_status: string; onboarding_step: string }>(
+      `SELECT email, onboarding_status, onboarding_step
+         FROM users
+        WHERE email LIKE 'migration-%@example.test'
+        ORDER BY email`,
+    );
+    expect(backfilled.rows).toEqual([
+      { email: "migration-completed@example.test", onboarding_status: "completed", onboarding_step: "finish" },
+      { email: "migration-incomplete@example.test", onboarding_status: "incomplete", onboarding_step: "profile" },
+      { email: "migration-new@example.test", onboarding_status: "new", onboarding_step: "profile" },
+    ]);
+
+    const fresh = await store.upsertUserFromIdentity({
+      provider: "email",
+      subject: "migration-future-user",
+      email: "migration-future@example.test",
+    });
+    expect(fresh).toMatchObject({ onboardingStatus: "new", onboardingStep: "profile" });
+    await expect(pool.query(`UPDATE users SET onboarding_step = 'not-a-step' WHERE id = $1`, [fresh.id])).rejects.toThrow();
   });
 
   it("creates an Iwa user from a verified identity and never stores a raw session token", async () => {

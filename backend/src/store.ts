@@ -18,6 +18,7 @@ import {
   type AuthProvider,
   type IwaUser,
   type IwaUserStatus,
+  type OnboardingStep,
   type OnboardingStatus,
   type VerifiedIdentity,
 } from "./iwaAccount.js";
@@ -179,6 +180,10 @@ export interface Store {
   getIwaUser(id: string): Promise<IwaUser | null>;
   setIwaUserStatus(id: string, status: IwaUserStatus): Promise<IwaUser | null>;
   setIwaUserOnboardingStatus(id: string, status: OnboardingStatus): Promise<IwaUser | null>;
+  setIwaUserOnboardingState(
+    id: string,
+    state: { status: OnboardingStatus; step: OnboardingStep },
+  ): Promise<IwaUser | null>;
   createAccountSession(
     userId: string,
     tokenHash: string,
@@ -466,6 +471,7 @@ export class MemoryStore implements Store {
         email,
         status: "active",
         onboardingStatus: "new",
+        onboardingStep: "profile",
         createdAt: now,
         updatedAt: now,
       };
@@ -501,6 +507,19 @@ export class MemoryStore implements Store {
     const user = this.users.get(id);
     if (user === undefined) return null;
     user.onboardingStatus = status;
+    user.onboardingStep = status === "completed" ? "finish" : "profile";
+    user.updatedAt = new Date().toISOString();
+    return structuredClone(user);
+  }
+
+  async setIwaUserOnboardingState(
+    id: string,
+    state: { status: OnboardingStatus; step: OnboardingStep },
+  ): Promise<IwaUser | null> {
+    const user = this.users.get(id);
+    if (user === undefined) return null;
+    user.onboardingStatus = state.status;
+    user.onboardingStep = state.step;
     user.updatedAt = new Date().toISOString();
     return structuredClone(user);
   }

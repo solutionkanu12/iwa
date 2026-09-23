@@ -869,7 +869,11 @@ export function createApp(options: AppOptions): Express {
         });
       }
 
-      const kind = onboardingTransitionKind(loaded.user.onboardingStatus, transition);
+      const kind = onboardingTransitionKind(
+        loaded.user.onboardingStatus,
+        loaded.user.onboardingStep,
+        transition,
+      );
       if (kind === null) {
         return res.status(409).json({
           error: "invalid_onboarding_transition",
@@ -879,7 +883,12 @@ export function createApp(options: AppOptions): Express {
 
       const user =
         kind === "start"
-          ? await store.setIwaUserOnboardingStatus(loaded.user.id, "incomplete")
+          ? await store.setIwaUserOnboardingState(loaded.user.id, { status: "incomplete", step: "profile" })
+          : kind === "advance"
+            ? await store.setIwaUserOnboardingState(loaded.user.id, {
+                status: "incomplete",
+                step: "passwordPin",
+              })
           : loaded.user;
       if (user === null) {
         return res.status(401).json({
@@ -887,7 +896,7 @@ export function createApp(options: AppOptions): Express {
           message: "Please sign in to Iwa again.",
         });
       }
-      res.json({ onboarding: onboardingProgress(user.onboardingStatus) });
+      res.json({ onboarding: onboardingProgress(user.onboardingStatus, user.onboardingStep) });
     } catch (e) {
       next(e);
     }

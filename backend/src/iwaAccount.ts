@@ -40,7 +40,7 @@ export const ONBOARDING_STEPS = [
 
 export type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
 export type OnboardingTransition = { from: "new" | OnboardingStep; to: OnboardingStep };
-export type OnboardingTransitionKind = "start" | "retry";
+export type OnboardingTransitionKind = "start" | "advance" | "retry";
 
 export interface OnboardingProgress {
   status: OnboardingStatus;
@@ -48,14 +48,11 @@ export interface OnboardingProgress {
 }
 
 /**
- * No future step is inferred from the browser. Until its companion work has
- * been completed, every started Iwa account remains at the profile stage.
+ * The database owns this stage. It is progress metadata only and never proves
+ * that a wallet, credential, or recovery method exists.
  */
-export function onboardingProgress(status: OnboardingStatus): OnboardingProgress {
-  return {
-    status,
-    step: status === "completed" ? "finish" : "profile",
-  };
+export function onboardingProgress(status: OnboardingStatus, step: OnboardingStep): OnboardingProgress {
+  return { status, step };
 }
 
 /**
@@ -65,13 +62,28 @@ export function onboardingProgress(status: OnboardingStatus): OnboardingProgress
  */
 export function onboardingTransitionKind(
   status: OnboardingStatus,
+  step: OnboardingStep,
   transition: OnboardingTransition,
 ): OnboardingTransitionKind | null {
-  if (status === "new" && transition.from === "new" && transition.to === "profile") return "start";
+  if (status === "new" && step === "profile" && transition.from === "new" && transition.to === "profile") {
+    return "start";
+  }
   if (
     status === "incomplete" &&
+    step === "profile" &&
     transition.to === "profile" &&
     (transition.from === "new" || transition.from === "profile")
+  ) {
+    return "retry";
+  }
+  if (status === "incomplete" && step === "profile" && transition.from === "profile" && transition.to === "passwordPin") {
+    return "advance";
+  }
+  if (
+    status === "incomplete" &&
+    step === "passwordPin" &&
+    transition.to === "passwordPin" &&
+    (transition.from === "profile" || transition.from === "passwordPin")
   ) {
     return "retry";
   }
@@ -97,6 +109,7 @@ export interface IwaUser {
   email: string;
   status: IwaUserStatus;
   onboardingStatus: OnboardingStatus;
+  onboardingStep: OnboardingStep;
   createdAt: string;
   updatedAt: string;
 }
@@ -267,12 +280,14 @@ export function publicUser(user: IwaUser): {
   email: string;
   status: IwaUserStatus;
   onboardingStatus: OnboardingStatus;
+  onboardingStep: OnboardingStep;
 } {
   return {
     id: user.id,
     email: user.email,
     status: user.status,
     onboardingStatus: user.onboardingStatus,
+    onboardingStep: user.onboardingStep,
   };
 }
 

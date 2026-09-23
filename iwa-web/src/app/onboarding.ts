@@ -1,4 +1,4 @@
-import type { OnboardingStatus } from "./iwaAuthGate";
+import type { OnboardingStatus, OnboardingStep } from "./iwaAuthGate";
 
 /**
  * The order is fixed before individual stages are implemented. A stage may
@@ -13,11 +13,27 @@ export const ONBOARDING_STEPS = [
   "finish",
 ] as const;
 
-export type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
 export type OnboardingDestination = "home" | "onboarding";
 
-export function onboardingStepFor(status: OnboardingStatus | undefined): OnboardingStep {
-  return status === "completed" ? "finish" : "profile";
+/**
+ * Only server-persisted stages that this milestone implements can render.
+ * Any absent or future stage fails closed to the account-profile entry point.
+ */
+export function onboardingStepFor(
+  status: OnboardingStatus | undefined,
+  persistedStep: OnboardingStep | undefined,
+): OnboardingStep {
+  if (status === "completed") return "finish";
+  if (status === "incomplete" && persistedStep === "passwordPin") return "passwordPin";
+  return "profile";
+}
+
+/** The only progress metadata the browser may send to the state machine. */
+export function onboardingTransitionRequest(
+  from: "new" | OnboardingStep,
+  to: OnboardingStep,
+): { from: "new" | OnboardingStep; to: OnboardingStep } {
+  return { from, to };
 }
 
 /** Routes that would expose the saver app before account onboarding completes. */

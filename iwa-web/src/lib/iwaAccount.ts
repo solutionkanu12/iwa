@@ -2,8 +2,8 @@
 // coordination client in backend.ts: this never sends a Bearer token and
 // never asks a wallet to sign.
 
-import type { IwaUser } from "../app/iwaAuthGate";
-import type { OnboardingStep } from "../app/onboarding";
+import { onboardingTransitionRequest } from "../app/onboarding";
+import type { IwaUser, OnboardingStep } from "../app/iwaAuthGate";
 import { iwaSupabaseAuth } from "./supabaseAuth";
 
 const BASE_URL = (import.meta.env.VITE_BACKEND_URL ?? "http://localhost:8080").replace(/\/$/, "");
@@ -386,11 +386,18 @@ export const iwaAccount = {
     await call("/api/auth/logout-all", { method: "POST", body: "{}" });
   },
 
-  async startOnboarding(): Promise<OnboardingProgress> {
+  async transitionOnboarding(
+    from: "new" | OnboardingStep,
+    to: OnboardingStep,
+  ): Promise<OnboardingProgress> {
     return call("/api/onboarding/transition", {
       method: "POST",
-      body: JSON.stringify({ from: "new", to: "profile" }),
+      body: JSON.stringify(onboardingTransitionRequest(from, to)),
     });
+  },
+
+  async startOnboarding(): Promise<OnboardingProgress> {
+    return this.transitionOnboarding("new", "profile");
   },
 };
 

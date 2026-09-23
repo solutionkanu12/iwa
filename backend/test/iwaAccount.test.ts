@@ -451,6 +451,7 @@ describe("new user", () => {
     expect(res.body.user.email).toBe("alice@example.com");
     expect(res.body.user.status).toBe("active");
     expect(res.body.user.onboardingStatus).toBe("new");
+    expect(res.body.user.onboardingStep).toBe("profile");
     expect(typeof res.body.user.id).toBe("string");
     expect(res.body.user.id.length).toBeGreaterThan(8);
     expect(res.body.token).toBeUndefined();
@@ -466,6 +467,7 @@ describe("new user", () => {
     expect(res.body.user.email).toBe("bob@example.com");
     expect(res.body.user.status).toBe("active");
     expect(res.body.user.onboardingStatus).toBe("new");
+    expect(res.body.user.onboardingStep).toBe("profile");
   });
 
   it("maps a duplicate Google identity to the same user and preserves onboarding status", async () => {
@@ -474,6 +476,7 @@ describe("new user", () => {
     const second = await login("google-alice-again").expect(200);
     expect(second.body.user.id).toBe(first.body.user.id);
     expect(second.body.user.onboardingStatus).toBe("incomplete");
+    expect(second.body.user.onboardingStep).toBe("profile");
   });
 
   it("distinguishes fully-onboarded user from incomplete or new user", async () => {
@@ -487,6 +490,7 @@ describe("new user", () => {
     await store.setIwaUserOnboardingStatus(res.body.user.id, "completed");
     const completedRes = await login("google-carol").expect(200);
     expect(completedRes.body.user.onboardingStatus).toBe("completed");
+    expect(completedRes.body.user.onboardingStep).toBe("finish");
   });
 
   it("links a verified email identity to the existing user with the same normalized email", async () => {
@@ -665,16 +669,30 @@ describe("onboarding foundation", () => {
 
     const restored = await me(cookie).expect(200);
     expect(restored.body.user.onboardingStatus).toBe("incomplete");
+    expect(restored.body.user.onboardingStep).toBe("profile");
   });
 
-  it("keeps incomplete onboarding progress across a new Iwa session", async () => {
+  it("persists the password and PIN stage across refresh and a new Iwa session", async () => {
     const first = await login("google-alice").expect(200);
     const { cookie, token } = csrfFrom(first);
     await transitionOnboarding(cookie, token).expect(200);
+    await transitionOnboarding(cookie, token, { from: "profile", to: "passwordPin" }).expect(200);
 
     const second = await login("google-alice-again").expect(200);
     expect(second.body.user.onboardingStatus).toBe("incomplete");
-    expect((await me(cookieHeaderFrom(second))).body.user.onboardingStatus).toBe("incomplete");
+    expect(second.body.user.onboardingStep).toBe("passwordPin");
+    const refreshed = await me(cookieHeaderFrom(second)).expect(200);
+    expect(refreshed.body.user).toMatchObject({ onboardingStatus: "incomplete", onboardingStep: "passwordPin" });
+  });
+
+  it("accepts a same-state password and PIN retry without advancing anything else", async () => {
+    const signedIn = await login("google-alice").expect(200);
+    const { cookie, token } = csrfFrom(signedIn);
+    await transitionOnboarding(cookie, token).expect(200);
+    await transitionOnboarding(cookie, token, { from: "profile", to: "passwordPin" }).expect(200);
+
+    const retried = await transitionOnboarding(cookie, token, { from: "passwordPin", to: "passwordPin" }).expect(200);
+    expect(retried.body.onboarding).toEqual({ status: "incomplete", step: "passwordPin" });
   });
 
   it("only changes the authenticated user's onboarding state", async () => {
@@ -708,7 +726,7 @@ describe("onboarding foundation", () => {
       .expect(403);
   });
 
-  it("rejects invalid or out-of-order onboarding transitions", async () => {
+  it("rejects skipped and reverse onboarding transitions", async () => {
     const signedIn = await login("google-alice").expect(200);
     const { cookie, token } = csrfFrom(signedIn);
 
@@ -716,7 +734,29 @@ describe("onboarding foundation", () => {
     expect((await me(cookie)).body.user.onboardingStatus).toBe("new");
 
     await transitionOnboarding(cookie, token).expect(200);
-    await transitionOnboarding(cookie, token, { from: "profile", to: "passwordPin" }).expect(409);
+    await transitionOnboarding(cookie, token, { from: "profile", to: "passwordPin" }).expect(200);
+    await transitionOnboarding(cookie, token, { from: "passwordPin", to: "profile" }).expect(409);
+    await transitionOnboarding(cookie, token, { from: "passwordPin", to: "walletProvisioning" }).expect(409);
+    expect((await me(cookie)).body.user).toMatchObject({ onboardingStatus: "incomplete", onboardingStep: "passwordPin" });
+  });
+
+  it("refuses any credential values in onboarding progress requests", async () => {
+    const signedIn = await login("google-alice").expect(200);
+    const { cookie, token } = csrfFrom(signedIn);
+    await transitionOnboarding(cookie, token).expect(200);
+
+    await transitionOnboarding(cookie, token, {
+      from: "profile",
+      to: "passwordPin",
+      password: "never-send-a-wallet-password",
+      pin: "123456",
+    }).expect(400);
+    await transitionOnboarding(cookie, token, {
+      from: "profile",
+      to: "passwordPin",
+      onboardingStatus: "completed",
+    }).expect(400);
+    expect((await me(cookie)).body.user).toMatchObject({ onboardingStatus: "incomplete", onboardingStep: "profile" });
   });
 
   it("never lets the start transition complete onboarding", async () => {
@@ -725,7 +765,7 @@ describe("onboarding foundation", () => {
     const { cookie, token } = csrfFrom(signedIn);
 
     await transitionOnboarding(cookie, token).expect(409);
-    expect((await me(cookie)).body.user.onboardingStatus).toBe("completed");
+    expect((await me(cookie)).body.user).toMatchObject({ onboardingStatus: "completed", onboardingStep: "finish" });
   });
 });
 
@@ -819,6 +859,22 @@ describe("schema", () => {
       "provider_token",
       "viewing_key",
     ]) {
+      expect(sql).not.toContain(banned);
+    }
+  });
+
+  it("defines only persisted onboarding progress metadata in migration 007", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const sql = readFileSync(resolve(here, "../migrations/007_add_iwa_user_onboarding_step.sql"), "utf8")
+      .replace(/--.*$/gm, "")
+      .toLowerCase();
+    expect(sql).toContain("onboarding_step");
+    expect(sql).toContain("default 'profile'");
+    expect(sql).toContain("set not null");
+    for (const step of ["profile", "passwordpin", "walletprovisioning", "recovery", "finish"]) {
+      expect(sql).toContain(`'${step}'`);
+    }
+    for (const banned of ["password_hash", "password_digest", "pin_hash", "pin_secret", "private_key", "seed", "mnemonic", "recovery_secret"]) {
       expect(sql).not.toContain(banned);
     }
   });

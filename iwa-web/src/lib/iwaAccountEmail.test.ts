@@ -40,4 +40,28 @@ describe("Iwa email sign-in initiation", () => {
       },
     });
   });
+
+  it("sends only onboarding step metadata and never wallet credentials", async () => {
+    vi.stubGlobal("document", { cookie: "iwa_csrf=test-csrf" });
+    const fetch = vi.fn(async (_url: string, _init?: RequestInit) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ onboarding: { status: "incomplete", step: "passwordPin" } }),
+    }));
+    vi.stubGlobal("fetch", fetch);
+
+    await iwaAccount.transitionOnboarding("profile", "passwordPin");
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringMatching(/\/api\/onboarding\/transition$/),
+      expect.objectContaining({
+        credentials: "include",
+        method: "POST",
+        body: JSON.stringify({ from: "profile", to: "passwordPin" }),
+      }),
+    );
+    const request = fetch.mock.calls[0]?.[1] as RequestInit;
+    expect(String(request.body)).not.toContain("wallet-password");
+    expect(String(request.body)).not.toContain("123456");
+  });
 });
