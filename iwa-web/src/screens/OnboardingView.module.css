@@ -1,0 +1,129 @@
+.page {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: clamp(1rem, 4vw, 2.5rem);
+}
+
+.card {
+  width: min(100%, 38rem);
+  padding: clamp(1.5rem, 4vw, 2.5rem);
+  box-shadow: var(--shadow-soft);
+}
+
+.mark {
+  margin-bottom: 0.85rem;
+}
+
+.eyebrow,
+.accountLabel {
+  margin: 0;
+  color: var(--mut);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.title {
+  margin: 0.25rem 0 0.6rem;
+  font-size: clamp(1.75rem, 5vw, 2.4rem);
+  line-height: 1.08;
+}
+
+.lede {
+  max-width: 34rem;
+  color: var(--mut);
+}
+
+.account {
+  margin: 1.5rem 0;
+  padding: 1rem 0;
+  border-top: 1px solid var(--brd);
+  border-bottom: 1px solid var(--brd);
+}
+
+.email {
+  margin-top: 0.2rem;
+  color: var(--ink);
+  font-family: var(--font-data);
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.steps {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0 0 1.5rem;
+  padding: 0;
+  list-style: none;
+}
+
+.step {
+  display: grid;
+  grid-template-columns: 1.8rem 1fr;
+  gap: 0.75rem;
+  align-items: start;
+  padding: 0.8rem 0.1rem;
+  border-bottom: 1px solid var(--brd);
+  color: var(--mut);
+}
+
+.stepNumber {
+  display: grid;
+  place-items: center;
+  width: 1.55rem;
+  height: 1.55rem;
+  border: 1px solid var(--brd);
+  border-radius: 50%;
+  font-family: var(--font-data);
+  font-size: 0.72rem;
+}
+
+.step strong,
+.step small {
+  display: block;
+}
+
+.step strong {
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+}
+
+.step small {
+  margin-top: 0.08rem;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.step[data-state="current"] .stepNumber {
+  border-color: var(--iris);
+  background: var(--iris);
+  color: var(--cloud);
+}
+
+.step[data-state="current"] strong {
+  color: var(--iris-dk);
+}
+
+.error,
+.notice {
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.error {
+  color: var(--ink);
+}
+
+.notice {
+  color: var(--mut);
+}
+
+@media (max-width: 420px) {
+  .card {
+    padding: 1.35rem 1.1rem;
+  }
+}

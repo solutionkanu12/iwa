@@ -3,6 +3,7 @@
 // never asks a wallet to sign.
 
 import type { IwaUser } from "../app/iwaAuthGate";
+import type { OnboardingStep } from "../app/onboarding";
 import { iwaSupabaseAuth } from "./supabaseAuth";
 
 const BASE_URL = (import.meta.env.VITE_BACKEND_URL ?? "http://localhost:8080").replace(/\/$/, "");
@@ -86,6 +87,11 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
 export interface SessionView {
   user: IwaUser;
   expiresAt: string;
+}
+
+export interface OnboardingProgress {
+  status: "new" | "incomplete" | "completed";
+  step: OnboardingStep;
 }
 
 /**
@@ -378,6 +384,13 @@ export const iwaAccount = {
 
   async logoutAll(): Promise<void> {
     await call("/api/auth/logout-all", { method: "POST", body: "{}" });
+  },
+
+  async startOnboarding(): Promise<OnboardingProgress> {
+    return call("/api/onboarding/transition", {
+      method: "POST",
+      body: JSON.stringify({ from: "new", to: "profile" }),
+    });
   },
 };
 

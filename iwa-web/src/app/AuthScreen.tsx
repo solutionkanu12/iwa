@@ -5,7 +5,7 @@ import { Island } from "../components/Island";
 import { iwaAccount, IwaAccountError } from "../lib/iwaAccount";
 import styles from "./AuthScreen.module.css";
 
-function CowrieGlyph() {
+export function CowrieGlyph() {
   return (
     <svg width="28" height="30" viewBox="0 0 60 70" aria-hidden="true">
       <ellipse cx="30" cy="36" rx="20" ry="26" fill="#B6A6F2" />

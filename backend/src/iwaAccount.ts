@@ -25,6 +25,73 @@ export type IwaUserStatus = "active" | "suspended";
 export type OnboardingStatus = "new" | "incomplete" | "completed";
 export type AuthProvider = "google" | "email";
 
+/**
+ * The fixed account-and-wallet onboarding order. This account layer owns only
+ * the entry transition today; later stages need their own reviewed security
+ * requirements before the server will permit them.
+ */
+export const ONBOARDING_STEPS = [
+  "profile",
+  "passwordPin",
+  "walletProvisioning",
+  "recovery",
+  "finish",
+] as const;
+
+export type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
+export type OnboardingTransition = { from: "new" | OnboardingStep; to: OnboardingStep };
+export type OnboardingTransitionKind = "start" | "retry";
+
+export interface OnboardingProgress {
+  status: OnboardingStatus;
+  step: OnboardingStep;
+}
+
+/**
+ * No future step is inferred from the browser. Until its companion work has
+ * been completed, every started Iwa account remains at the profile stage.
+ */
+export function onboardingProgress(status: OnboardingStatus): OnboardingProgress {
+  return {
+    status,
+    step: status === "completed" ? "finish" : "profile",
+  };
+}
+
+/**
+ * Only the opening state change belongs to this foundation. Retrying that
+ * same start request after its response was lost is harmless, while every
+ * future or out-of-order step is fail-closed.
+ */
+export function onboardingTransitionKind(
+  status: OnboardingStatus,
+  transition: OnboardingTransition,
+): OnboardingTransitionKind | null {
+  if (status === "new" && transition.from === "new" && transition.to === "profile") return "start";
+  if (
+    status === "incomplete" &&
+    transition.to === "profile" &&
+    (transition.from === "new" || transition.from === "profile")
+  ) {
+    return "retry";
+  }
+  return null;
+}
+
+export function parseOnboardingTransition(value: unknown): OnboardingTransition | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).length !== 2) return null;
+  const from = record.from;
+  const to = record.to;
+  if (from !== "new" && !ONBOARDING_STEPS.includes(from as OnboardingStep)) return null;
+  if (!ONBOARDING_STEPS.includes(to as OnboardingStep)) return null;
+  return {
+    from: from === "new" ? "new" : (from as OnboardingStep),
+    to: to as OnboardingStep,
+  };
+}
+
 export interface IwaUser {
   id: string;
   email: string;

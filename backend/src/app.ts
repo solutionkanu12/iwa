@@ -57,7 +57,10 @@ import {
   newCsrfToken,
   newSessionToken,
   normalizeEmail,
+  onboardingProgress,
+  onboardingTransitionKind,
   parseCookieHeader,
+  parseOnboardingTransition,
   publicUser,
   sameSiteFor,
   sessionCookieAttributes,
@@ -829,6 +832,62 @@ export function createApp(options: AppOptions): Express {
       }
       clearAuthCookies(req, res);
       res.status(204).end();
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  // --- Account onboarding ---
+  //
+  // This is deliberately separate from wallet and chain authorization. It
+  // records only that the authenticated Iwa user has begun account setup;
+  // upcoming password/PIN and wallet stages cannot be advanced by this route.
+  app.post("/api/onboarding/transition", async (req, res, next) => {
+    if (!mutate(req, res)) return;
+    try {
+      if (!requireOrigin(req, res)) return;
+      const loaded = await loadAccountSession(req);
+      if (!loaded.ok) {
+        return res.status(401).json({
+          error: "session_invalid",
+          message: "Please sign in to Iwa again.",
+        });
+      }
+      if (!requireCsrf(req, res)) return;
+      if (loaded.user.status === "suspended") {
+        return res.status(403).json({
+          error: "account_suspended",
+          message: "This Iwa account is suspended. Your on-chain funds are untouched.",
+        });
+      }
+
+      const transition = parseOnboardingTransition(req.body);
+      if (transition === null) {
+        return res.status(400).json({
+          error: "invalid_onboarding_transition",
+          message: "That onboarding step could not be verified.",
+        });
+      }
+
+      const kind = onboardingTransitionKind(loaded.user.onboardingStatus, transition);
+      if (kind === null) {
+        return res.status(409).json({
+          error: "invalid_onboarding_transition",
+          message: "That onboarding step is not available yet.",
+        });
+      }
+
+      const user =
+        kind === "start"
+          ? await store.setIwaUserOnboardingStatus(loaded.user.id, "incomplete")
+          : loaded.user;
+      if (user === null) {
+        return res.status(401).json({
+          error: "session_invalid",
+          message: "Please sign in to Iwa again.",
+        });
+      }
+      res.json({ onboarding: onboardingProgress(user.onboardingStatus) });
     } catch (e) {
       next(e);
     }

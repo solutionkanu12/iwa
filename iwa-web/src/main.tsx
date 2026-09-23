@@ -1,5 +1,5 @@
 import "./lib/polyfills.ts";
-import { StrictMode } from "react";
+import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles/global.css";
 import { App } from "./App.tsx";
@@ -13,6 +13,7 @@ import { AuthLoading, AuthScreen, AuthSuspended } from "./app/AuthScreen.tsx";
 import { AuthCallbackView } from "./screens/AuthCallbackView.tsx";
 import { AuthConfirmView } from "./screens/AuthConfirmView.tsx";
 import { requiresIwaSession } from "./app/iwaAuthGate.ts";
+import { onboardingRedirect } from "./app/onboarding.ts";
 import { useRoute } from "./lib/router.ts";
 
 // The single entry for the marketing landing page and the application alike,
@@ -32,8 +33,14 @@ const OPERATOR_CONSOLE_ENABLED =
   import.meta.env.DEV || import.meta.env.VITE_ENABLE_OPERATOR_CONSOLE === "true";
 
 function AppRoot() {
-  const { route, navigate } = useRoute();
+  const { route, navigate, replace } = useRoute();
   const auth = useIwaAuth();
+  const onboardingDestination =
+    auth.phase === "authenticated" ? onboardingRedirect(route.name, auth.user?.onboardingStatus) : null;
+
+  useEffect(() => {
+    if (onboardingDestination !== null) replace({ name: onboardingDestination });
+  }, [onboardingDestination, replace]);
 
   if (route.name === "landing") {
     return <LandingPage onEnterCircle={() => navigate({ name: "home" })} />;
@@ -67,6 +74,10 @@ function AppRoot() {
       );
     }
   }
+
+  // Never paint an app screen while replacing a bypassed route. The status
+  // comes from the server-restored Iwa session, not browser storage.
+  if (onboardingDestination !== null) return <AuthLoading />;
 
   return <App route={route} navigate={navigate} />;
 }

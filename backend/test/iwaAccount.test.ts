@@ -167,6 +167,19 @@ function csrfFrom(res: { headers: Record<string, unknown> }): { cookie: string; 
   return { cookie, token };
 }
 
+function transitionOnboarding(
+  cookie: string,
+  token: string,
+  body: unknown = { from: "new", to: "profile" },
+) {
+  return request(app)
+    .post("/api/onboarding/transition")
+    .set("Origin", ORIGIN)
+    .set("Cookie", cookie)
+    .set(IWA_CSRF_HEADER, token)
+    .send(body);
+}
+
 function signEs256Jwt(
   payload: Record<string, unknown>,
   privateKey: KeyObject,
@@ -635,6 +648,84 @@ describe("session security", () => {
       .send({});
     expect(res.status).toBe(401);
     expect(res.body.error).toBe("missing_auth");
+  });
+});
+
+describe("onboarding foundation", () => {
+  it("moves a new user to incomplete only when they start onboarding", async () => {
+    const signedIn = await login("google-alice").expect(200);
+    expect(signedIn.body.user.onboardingStatus).toBe("new");
+
+    const { cookie, token } = csrfFrom(signedIn);
+    const started = await transitionOnboarding(cookie, token).expect(200);
+    expect(started.body.onboarding).toEqual({ status: "incomplete", step: "profile" });
+
+    const retried = await transitionOnboarding(cookie, token).expect(200);
+    expect(retried.body.onboarding).toEqual({ status: "incomplete", step: "profile" });
+
+    const restored = await me(cookie).expect(200);
+    expect(restored.body.user.onboardingStatus).toBe("incomplete");
+  });
+
+  it("keeps incomplete onboarding progress across a new Iwa session", async () => {
+    const first = await login("google-alice").expect(200);
+    const { cookie, token } = csrfFrom(first);
+    await transitionOnboarding(cookie, token).expect(200);
+
+    const second = await login("google-alice-again").expect(200);
+    expect(second.body.user.onboardingStatus).toBe("incomplete");
+    expect((await me(cookieHeaderFrom(second))).body.user.onboardingStatus).toBe("incomplete");
+  });
+
+  it("only changes the authenticated user's onboarding state", async () => {
+    const alice = await login("google-alice").expect(200);
+    const bob = await login("email-bob").expect(200);
+    const { cookie, token } = csrfFrom(bob);
+
+    await transitionOnboarding(cookie, token, { from: "new", to: "profile", userId: alice.body.user.id }).expect(400);
+    expect((await me(cookieHeaderFrom(alice))).body.user.onboardingStatus).toBe("new");
+    expect((await me(cookie)).body.user.onboardingStatus).toBe("new");
+
+    await transitionOnboarding(cookie, token).expect(200);
+    expect((await me(cookie)).body.user.onboardingStatus).toBe("incomplete");
+  });
+
+  it("rejects unauthenticated onboarding mutations", async () => {
+    await request(app)
+      .post("/api/onboarding/transition")
+      .set("Origin", ORIGIN)
+      .send({ from: "new", to: "profile" })
+      .expect(401);
+  });
+
+  it("rejects a mutation without CSRF proof", async () => {
+    const signedIn = await login("google-alice").expect(200);
+    await request(app)
+      .post("/api/onboarding/transition")
+      .set("Origin", ORIGIN)
+      .set("Cookie", cookieHeaderFrom(signedIn))
+      .send({ from: "new", to: "profile" })
+      .expect(403);
+  });
+
+  it("rejects invalid or out-of-order onboarding transitions", async () => {
+    const signedIn = await login("google-alice").expect(200);
+    const { cookie, token } = csrfFrom(signedIn);
+
+    await transitionOnboarding(cookie, token, { from: "new", to: "walletProvisioning" }).expect(409);
+    expect((await me(cookie)).body.user.onboardingStatus).toBe("new");
+
+    await transitionOnboarding(cookie, token).expect(200);
+    await transitionOnboarding(cookie, token, { from: "profile", to: "passwordPin" }).expect(409);
+  });
+
+  it("never lets the start transition complete onboarding", async () => {
+    const signedIn = await login("google-carol").expect(200);
+    await store.setIwaUserOnboardingStatus(signedIn.body.user.id as string, "completed");
+    const { cookie, token } = csrfFrom(signedIn);
+
+    await transitionOnboarding(cookie, token).expect(409);
+    expect((await me(cookie)).body.user.onboardingStatus).toBe("completed");
   });
 });
 
