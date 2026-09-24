@@ -1,0 +1,225 @@
+name: B0.1 Starknet STRK20 embedded-signer spike
+
+on:
+  workflow_dispatch:
+
+# This spike only reads this temporary branch. It has no deployment, packages,
+# environments, repository writes, or production credentials.
+permissions:
+  contents: read
+
+concurrency:
+  group: starknet-strk20-b01-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  b01-devnet:
+    name: B0.1 upstream baseline and embedded signer
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_TERM_COLOR: always
+      PRIVACY_REVISION: b40bf109c8e5b97d9d6e8ec6db48b16b9d10a106
+      RUST_VERSION: 1.91.0
+      NODE_VERSION: 20.20.2
+      SCARB_VERSION: 2.18.0
+      VESU_SCARB_VERSION: 2.11.4
+      DEVNET_VERSION: 0.8.0-rc.3
+      UNIVERSAL_SIERRA_COMPILER_VERSION: v2.8.0
+
+    steps:
+      - name: Check out temporary spike branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Record pinned-runner metadata
+        run: |
+          {
+            echo "## IWA B0.1 remote runner"
+            echo
+            echo "- GitHub Actions run ID: \`${GITHUB_RUN_ID}\`"
+            echo "- Upstream starknet-privacy revision: \`${PRIVACY_REVISION}\`"
+            echo "- Network: local patched Starknet devnet only (no mainnet, no public testnet)"
+            echo "- Artifacts/caches: none retained by this workflow"
+            echo "- Production credentials: none used"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: 1.91.0
+
+      - name: Install pinned Node runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20.20.2
+
+      - name: Install pinned Scarb for privacy and Iwa contract checks
+        uses: software-mansion/setup-scarb@2a96b748888e3329ee44ac9ac073d930e692b3cd # v1
+        with:
+          scarb-version: 2.18.0
+
+      - name: Install official patched devnet binary
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/starknet-devnet.tar.gz"
+          curl --fail --location --retry 3 --silent --show-error \
+            "https://github.com/0xSpaceShard/starknet-devnet/releases/download/v${DEVNET_VERSION}/starknet-devnet-x86_64-unknown-linux-gnu.tar.gz" \
+            --output "$archive"
+          tar --extract --gzip --file "$archive" --directory /usr/local/bin
+          chmod +x /usr/local/bin/starknet-devnet
+          starknet-devnet --version
+          rm -f "$archive"
+
+      - name: Install pinned Universal Sierra Compiler
+        uses: software-mansion/setup-universal-sierra-compiler@30c139bca57cc0561cfae6f5353825bbc42c9f37 # v1
+        with:
+          universal-sierra-compiler-version: v2.8.0
+
+      - name: Verify exact pinned versions
+        run: |
+          set -euo pipefail
+          test "$(rustc --version | awk '{print $2}')" = "$RUST_VERSION"
+          test "$(node --version)" = "v${NODE_VERSION}"
+          test "$(scarb --version | awk '{print $2}')" = "$SCARB_VERSION"
+          starknet-devnet --version | grep --fixed-strings "$DEVNET_VERSION"
+          universal-sierra-compiler --version | grep --fixed-strings "${UNIVERSAL_SIERRA_COMPILER_VERSION#v}"
+          {
+            echo "- Rust: \`$(rustc --version)\`"
+            echo "- Node: \`$(node --version)\`"
+            echo "- Scarb: \`$(scarb --version)\`"
+            echo "- Starknet devnet: \`$(starknet-devnet --version)\`"
+            echo "- Universal Sierra Compiler: \`$(universal-sierra-compiler --version)\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fetch and verify pinned upstream source
+        run: |
+          set -euo pipefail
+          privacy_dir="$RUNNER_TEMP/starknet-privacy"
+          git clone --filter=blob:none https://github.com/starkware-libs/starknet-privacy.git "$privacy_dir"
+          git -C "$privacy_dir" checkout --detach "$PRIVACY_REVISION"
+          test "$(git -C "$privacy_dir" rev-parse HEAD)" = "$PRIVACY_REVISION"
+          echo "PRIVACY_DIR=$privacy_dir" >> "$GITHUB_ENV"
+
+      # Keep runner logs safe even when an upstream command fails. The raw stream
+      # stays only in the disposable process; no target/, node_modules, logs, or
+      # generated key material is uploaded or cached.
+      - name: Build exact upstream privacy/devnet prerequisites
+        run: |
+          set -euo pipefail
+          redact_output() {
+            sed -E \
+              -e 's/((private|viewing|recovery)[_-]?(key|seed|secret)[[:space:]]*[:=][[:space:]]*)[^[:space:],}]+/\1[REDACTED]/Ig' \
+              -e 's/("private_key"[[:space:]]*:[[:space:]]*")[^"]+("?)/\1[REDACTED]\2/Ig'
+          }
+          run_sanitized() {
+            set +e
+            "$@" 2>&1 | redact_output
+            command_status=${PIPESTATUS[0]}
+            set -e
+            return "$command_status"
+          }
+          cd "$PRIVACY_DIR"
+          rm -rf target/dev
+          run_sanitized scarb --profile release build -p privacy
+          run_sanitized scarb build -p privacy -p vesu_lending_anonymizer -p ekubo_swap_anonymizer -p shadow_account_anonymizer
+          run_sanitized scarb build -t -p shadow_account_anonymizer
+          run_sanitized scarb build -t -p privacy
+          run_sanitized bash -lc 'cd e2e/contracts/ekubo && scarb build'
+          run_sanitized bash -lc 'cd e2e/contracts/test-token && scarb build'
+
+      - name: Install exact Vesu-compatible Scarb
+        uses: software-mansion/setup-scarb@2a96b748888e3329ee44ac9ac073d930e692b3cd # v1
+        with:
+          scarb-version: 2.11.4
+
+      - name: Build exact upstream discovery and TypeScript prerequisites
+        run: |
+          set -euo pipefail
+          redact_output() {
+            sed -E \
+              -e 's/((private|viewing|recovery)[_-]?(key|seed|secret)[[:space:]]*[:=][[:space:]]*)[^[:space:],}]+/\1[REDACTED]/Ig' \
+              -e 's/("private_key"[[:space:]]*:[[:space:]]*")[^"]+("?)/\1[REDACTED]\2/Ig'
+          }
+          run_sanitized() {
+            set +e
+            "$@" 2>&1 | redact_output
+            command_status=${PIPESTATUS[0]}
+            set -e
+            return "$command_status"
+          }
+          cd "$PRIVACY_DIR"
+          run_sanitized bash -lc 'cd e2e/contracts/vesu && scarb build'
+          run_sanitized cargo build --release -p discovery-service
+          run_sanitized bash -lc 'cd sdk && npm ci && npm run build'
+          run_sanitized bash -lc 'cd client && npm ci && npm run build'
+          run_sanitized bash -lc 'cd proof-interceptor && npm ci && npm run build'
+          run_sanitized bash -lc 'cd e2e && npm ci'
+
+      - name: Run official upstream devnet baseline before Iwa adaptation
+        run: |
+          set -euo pipefail
+          redact_output() {
+            sed -E \
+              -e 's/((private|viewing|recovery)[_-]?(key|seed|secret)[[:space:]]*[:=][[:space:]]*)[^[:space:],}]+/\1[REDACTED]/Ig' \
+              -e 's/("private_key"[[:space:]]*:[[:space:]]*")[^"]+("?)/\1[REDACTED]\2/Ig'
+          }
+          set +e
+          (cd "$PRIVACY_DIR/e2e" && npm run test:devnet) 2>&1 | redact_output
+          command_status=${PIPESTATUS[0]}
+          set -e
+          test "$command_status" -eq 0
+          echo "- Upstream devnet baseline: **PASS**" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run Iwa minimal-account embedded-signer compatibility test
+        run: |
+          set -euo pipefail
+          test -f "$GITHUB_WORKSPACE/spikes/starknet-strk20-b01/embedded-signer.test.ts"
+          if rg -n "WalletAccountV6|walletV6|wallet[_-]?api|localStorage|sessionStorage|indexedDB|console\\." \
+            "$GITHUB_WORKSPACE/spikes/starknet-strk20-b01/embedded-signer.test.ts"; then
+            echo "The temporary embedded-signer harness must not depend on a browser wallet, persist secrets, or log secrets." >&2
+            exit 1
+          fi
+          cp "$GITHUB_WORKSPACE/spikes/starknet-strk20-b01/embedded-signer.test.ts" \
+            "$PRIVACY_DIR/e2e/tests/devnet/iwa-embedded-signer.test.ts"
+          redact_output() {
+            sed -E \
+              -e 's/((private|viewing|recovery)[_-]?(key|seed|secret)[[:space:]]*[:=][[:space:]]*)[^[:space:],}]+/\1[REDACTED]/Ig' \
+              -e 's/("private_key"[[:space:]]*:[[:space:]]*")[^"]+("?)/\1[REDACTED]\2/Ig'
+          }
+          set +e
+          (cd "$PRIVACY_DIR/e2e" && npx vitest run tests/devnet/iwa-embedded-signer.test.ts) 2>&1 | redact_output
+          command_status=${PIPESTATUS[0]}
+          set -e
+          test "$command_status" -eq 0
+          echo "- Local minimal-account signer / privacy SDK path: **PASS**" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Restore exact Iwa Scarb version and compile-only compatibility check
+        uses: software-mansion/setup-scarb@2a96b748888e3329ee44ac9ac073d930e692b3cd # v1
+        with:
+          scarb-version: 2.18.0
+
+      - name: Record Iwa helper devnet compatibility boundary
+        run: |
+          set -euo pipefail
+          iwa_manifest="$GITHUB_WORKSPACE/contracts/starknet/Scarb.toml"
+          iwa_privacy_revision="$(sed -nE 's/.*starknet-privacy.*rev = "([0-9a-f]+)".*/\1/p' "$iwa_manifest")"
+          test -n "$iwa_privacy_revision"
+          scarb build --manifest-path "$iwa_manifest"
+          {
+            echo "- Iwa contract compilation at its own pinned privacy revision (\`${iwa_privacy_revision}\`): **PASS**"
+            if test "$iwa_privacy_revision" != "$PRIVACY_REVISION"; then
+              echo "- IwaCircle/IwaStrk20Helper devnet deployment: **BLOCKED (intentional revision boundary)** - the production contracts pin \`${iwa_privacy_revision}\`, while the official baseline/devnet harness pins \`${PRIVACY_REVISION}\`. This workflow does not mix those revisions or modify production contracts."
+            else
+              echo "- IwaCircle/IwaStrk20Helper devnet deployment: **NOT RUN** - a separate deployment harness and constructor/dependency review is still required."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Write disposable-runner cleanup note
+        if: always()
+        run: |
+          echo "- Cleanup: this job uploads no artifacts and saves no dependency/build cache; GitHub disposes of its runner filesystem after completion." >> "$GITHUB_STEP_SUMMARY"
