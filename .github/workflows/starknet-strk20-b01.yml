@@ -79,6 +79,7 @@ jobs:
           rm -f "$archive"
 
       - name: Install pinned Universal Sierra Compiler
+        id: setup-universal-sierra-compiler
         uses: software-mansion/setup-universal-sierra-compiler@30c139bca57cc0561cfae6f5353825bbc42c9f37 # v1
         with:
           universal-sierra-compiler-version: v2.8.0
@@ -90,13 +91,20 @@ jobs:
           test "$(node --version)" = "v${NODE_VERSION}"
           test "$(scarb --version | awk '{print $2}')" = "$SCARB_VERSION"
           starknet-devnet --version | grep --fixed-strings "$DEVNET_VERSION"
-          universal-sierra-compiler --version | grep --fixed-strings "${UNIVERSAL_SIERRA_COMPILER_VERSION#v}"
+          usc_version="${{ steps.setup-universal-sierra-compiler.outputs.universal-sierra-compiler-version }}"
+          case "$usc_version" in
+            *"${UNIVERSAL_SIERRA_COMPILER_VERSION#v}"*) ;;
+            *)
+              echo "Expected Universal Sierra Compiler ${UNIVERSAL_SIERRA_COMPILER_VERSION}; setup action reported: $usc_version" >&2
+              exit 1
+              ;;
+          esac
           {
             echo "- Rust: \`$(rustc --version)\`"
             echo "- Node: \`$(node --version)\`"
             echo "- Scarb: \`$(scarb --version)\`"
             echo "- Starknet devnet: \`$(starknet-devnet --version)\`"
-            echo "- Universal Sierra Compiler: \`$(universal-sierra-compiler --version)\`"
+            echo "- Universal Sierra Compiler (setup action): \`$usc_version\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Fetch and verify pinned upstream source
