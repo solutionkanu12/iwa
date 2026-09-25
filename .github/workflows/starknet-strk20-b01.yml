@@ -265,6 +265,83 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # B0.2 deliberately records the revision/API/class boundary before any
+      # Iwa deployment test is introduced. Both pool artifacts are compiled by
+      # Iwa's declared Scarb 2.18.0 so their class hashes are comparable; this
+      # neither changes Iwa's dependency nor deploys a contract.
+      - name: Record B0.2 Iwa/privacy compatibility diff before deployment harness
+        run: |
+          set -euo pipefail
+          iwa_manifest="$GITHUB_WORKSPACE/contracts/starknet/Scarb.toml"
+          iwa_privacy_revision="$(sed -nE 's/.*starknet-privacy.*rev = "([0-9a-f]+)".*/\1/p' "$iwa_manifest")"
+          test -n "$iwa_privacy_revision"
+          iwa_privacy_dir="$RUNNER_TEMP/starknet-privacy-iwa-b02"
+          git clone --filter=blob:none https://github.com/starkware-libs/starknet-privacy.git "$iwa_privacy_dir"
+          git -C "$iwa_privacy_dir" checkout --detach "$iwa_privacy_revision"
+          test "$(git -C "$iwa_privacy_dir" rev-parse HEAD)" = "$iwa_privacy_revision"
+
+          # Iwa's manifest declares Cairo 2.18.0. Build the exact pinned
+          # privacy source with that compiler solely to obtain the class/ABI
+          # evidence for the pending devnet deployment decision.
+          (cd "$iwa_privacy_dir" && scarb --profile release build -p privacy)
+
+          (
+          cd "$PRIVACY_DIR/e2e"
+          B01_POOL_ARTIFACT="$PRIVACY_DIR/target/release/privacy_Privacy.contract_class.json" \
+          IWA_POOL_ARTIFACT="$iwa_privacy_dir/target/release/privacy_Privacy.contract_class.json" \
+          IWA_CIRCLE_ARTIFACT="$GITHUB_WORKSPACE/contracts/starknet/target/dev/iwa_IwaCircle.contract_class.json" \
+          IWA_HELPER_ARTIFACT="$GITHUB_WORKSPACE/contracts/starknet/target/dev/iwa_IwaStrk20Helper.contract_class.json" \
+          IWA_PRIVACY_REVISION="$iwa_privacy_revision" \
+          node --input-type=module <<'NODE'
+          import { readFileSync } from "node:fs";
+          import { hash } from "starknet";
+
+          const readArtifact = (name, path) => {
+            const artifact = JSON.parse(readFileSync(path, "utf8"));
+            const abi = typeof artifact.abi === "string" ? JSON.parse(artifact.abi) : artifact.abi;
+            if (!Array.isArray(abi)) throw new Error(`${name}: ABI is not an array`);
+            return { name, artifact, abi };
+          };
+          const classHash = ({ artifact }) => hash.computeContractClassHash(artifact);
+          const constructor = ({ abi }) => {
+            const item = abi.find((entry) => entry.type === "constructor");
+            if (!item) return "<none>";
+            return item.inputs.map(({ name, type }) => `${name}:${type}`).join(", ");
+          };
+          const functions = ({ abi }) => new Set(
+            abi.filter((entry) => entry.type === "interface").flatMap((entry) =>
+              (entry.items ?? []).filter((item) => item.type === "function").map((item) => item.name),
+            ),
+          );
+          const quoted = (value) => `\`${value}\``;
+
+          const b01Pool = readArtifact("B0.1 pool", process.env.B01_POOL_ARTIFACT);
+          const iwaPool = readArtifact("Iwa-pinned pool", process.env.IWA_POOL_ARTIFACT);
+          const circle = readArtifact("IwaCircle", process.env.IWA_CIRCLE_ARTIFACT);
+          const helper = readArtifact("IwaStrk20Helper", process.env.IWA_HELPER_ARTIFACT);
+          const b01Functions = functions(b01Pool);
+          const iwaFunctions = functions(iwaPool);
+          const added = [...b01Functions].filter((name) => !iwaFunctions.has(name)).sort();
+          const removed = [...iwaFunctions].filter((name) => !b01Functions.has(name)).sort();
+
+          console.log("## B0.2 compatibility diff (before deployment harness)");
+          console.log("");
+          console.log(`- Iwa-pinned privacy revision: ${quoted(process.env.IWA_PRIVACY_REVISION)}`);
+          console.log(`- B0.1 upstream privacy revision: ${quoted(process.env.PRIVACY_REVISION)}`);
+          console.log(`- Pool class hash, Iwa pin / Scarb 2.18.0: ${quoted(classHash(iwaPool))}`);
+          console.log(`- Pool class hash, B0.1 pin / Scarb 2.18.0: ${quoted(classHash(b01Pool))}`);
+          console.log(`- IwaCircle class hash / Scarb 2.18.0: ${quoted(classHash(circle))}`);
+          console.log(`- IwaStrk20Helper class hash / Scarb 2.18.0: ${quoted(classHash(helper))}`);
+          console.log(`- Privacy constructor (Iwa pin): ${quoted(constructor(iwaPool))}`);
+          console.log(`- Privacy constructor (B0.1 pin): ${quoted(constructor(b01Pool))}`);
+          console.log(`- IwaCircle constructor: ${quoted(constructor(circle))}`);
+          console.log(`- IwaStrk20Helper constructor: ${quoted(constructor(helper))}`);
+          console.log(`- Pool ABI functions added at B0.1 pin: ${added.length ? added.map(quoted).join(", ") : "none"}`);
+          console.log(`- Pool ABI functions absent at B0.1 pin: ${removed.length ? removed.map(quoted).join(", ") : "none"}`);
+          console.log("- Iwa helper surface checked: imports OpenNoteDeposit and exposes only privacy_invoke; it does not call the changed pool admin/view methods.");
+          NODE
+          ) >> "$GITHUB_STEP_SUMMARY"
+
       - name: Write disposable-runner cleanup note
         if: always()
         run: |
