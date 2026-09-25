@@ -794,6 +794,28 @@ The application must clearly verify:
 
 Wrong-network actions must fail closed.
 
+### Iwa Wallet vault foundation (B1-A)
+
+The local vault is cold after creation, reload, logout, timeout, or explicit
+lock. Cold unlock requires the wallet vault password and a fresh
+user-verified assertion from a dedicated PRF-capable WebAuthn credential. The
+password is a PBKDF2-HMAC-SHA-256 KDF input at 600,000 iterations and is never
+sent or persisted. AES-256-GCM uses fresh 96-bit IVs and immutable
+record-associated data. Unsupported WebAuthn/PRF environments fail closed.
+
+The PIN is not a key or recovery factor. It is a six-digit in-memory
+convenience check with a five-failure lockout during an already warm session.
+No vault secret may enter localStorage, sessionStorage, cookies, URLs, logs,
+telemetry, analytics, service-worker caches, network requests, or backend
+storage. Recovery uses a separately user-held high-entropy key and a
+versioned AES-GCM package; fully offline recovery cannot prove a package is
+the newest valid package, so recovered packages must be replaced after use.
+
+Active same-origin XSS or a malicious dependency can act while a browser vault
+is decrypted. B1-A limits the exposure window but does not claim to eliminate
+this web-origin trust boundary; production signing additionally requires the
+separate CSP/dependency/intent-review gate.
+
 ## Backend security
 
 Backend stores only public/non-sensitive information unless a future feature receives a new explicit security design.

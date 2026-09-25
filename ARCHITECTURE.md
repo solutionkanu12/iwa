@@ -584,6 +584,24 @@ independent, and wallet signatures continue to authorize every financial or
 operator action. No account session can stand in for Starknet, Celo or EVM
 wallet authorization.
 
+## Iwa Wallet local vault foundation (B1-A)
+
+Iwa Wallet authority is a separate browser-local subsystem. Iwa Account email,
+Google, Supabase, and the opaque Iwa session can display product data but cannot
+unlock or authorize the vault.
+
+The initial vault stores a password-and-dedicated-WebAuthn-PRF wrapped random
+vault root secret plus independently AES-GCM encrypted authority records in
+IndexedDB. Every ciphertext is bound to a wallet ID, record type, namespace,
+and version. The backend has no ciphertext decryption key, password, passkey
+PRF result, recovery key, or authority material.
+
+The passkey requires user verification and an actual 32-byte PRF result; there
+is no email, Google, session, password-only, or non-PRF fallback. The six-digit
+PIN is process-memory-only warm-session confirmation and cannot cold unlock,
+recover, export, enroll, or sign. B1-A contains synthetic test authorities
+only; it does not provision any chain account or transaction signer.
+
 ## Starknet frontend adapter
 
 Responsible for:

@@ -80,6 +80,31 @@ locally use these ephemeral credentials for encryption. It must define and
 review wallet material, recovery, and browser-crypto handling separately; it
 must not turn the Iwa account session, password, or PIN into signing authority.
 
+## Task 1.3C-B1-A: local vault foundation (local-only)
+
+The B1-A implementation is isolated on `milestone/iwa-wallet-vault-foundation`
+from Task 1.3B. It adds no chain authority, blockchain account deployment,
+production configuration, backend API, or wallet UI.
+
+- The browser vault uses a random root secret encrypted under PBKDF2-HMAC-SHA-256
+  (600,000 iterations) plus a dedicated, user-verified WebAuthn PRF result;
+  password-only, Iwa-session-only, and non-PRF paths fail closed.
+- Root and future authority records are AES-256-GCM envelopes bound to wallet,
+  record type, namespace, and version. IndexedDB stores only encrypted records
+  and public passkey metadata. Current authorities are synthetic test material.
+- The six-digit PIN is in-memory warm-session confirmation only; it cannot
+  cold unlock, recover, export, or sign. Lock, timeout, reload, and failed
+  PIN attempts clear the in-memory authority boundary.
+- Recovery packages are encrypted locally with a separate user-held 32-byte
+  recovery key and restore the same synthetic identities into new password and
+  passkey wrapping. Offline rollback freshness remains an explicit limitation;
+  a recovery package is replaced after recovery.
+
+This is local-only work. It has not been pushed, deployed, or used with real
+wallet keys or funds. The next proposed boundary is B1-B wallet-passkey UX and
+standalone recovery portability review, followed later by chain-specific
+provisioning approval.
+
 ## Zama Prize Savings bounty (active work)
 
 Branch `feature/zama-prize-savings`. Standalone spike-to-bounty track inside
