@@ -428,23 +428,41 @@ jobs:
             echo "The B0.2 harness must not use a browser wallet, persist local secrets, or print secret material." >&2
             exit 1
           fi
-          (cd "$GITHUB_WORKSPACE/contracts/starknet" && scarb build)
+          # The Actions log endpoint requires authentication even for this public
+          # temporary branch. Emit only non-secret component-boundary annotations
+          # so an unavailable log cannot conceal which disposable-test stage failed.
+          if ! (cd "$GITHUB_WORKSPACE/contracts/starknet" && scarb build); then
+            echo "::error title=B0.2 artifact build failed::Current Iwa Cairo artifacts did not build with Scarb 2.18.0."
+            exit 1
+          fi
           artifact_dir="$GITHUB_WORKSPACE/contracts/starknet/target/dev"
-          test -f "$artifact_dir/iwa_IwaCircle.contract_class.json"
-          test -f "$artifact_dir/iwa_IwaCircle.compiled_contract_class.json"
-          test -f "$artifact_dir/iwa_IwaStrk20Helper.contract_class.json"
-          test -f "$artifact_dir/iwa_IwaStrk20Helper.compiled_contract_class.json"
-          cp "$harness" "$IWA_PRIVACY_DIR/e2e/tests/devnet/iwa-contract-embedded-signer.test.ts"
+          for artifact in \
+            "$artifact_dir/iwa_IwaCircle.contract_class.json" \
+            "$artifact_dir/iwa_IwaCircle.compiled_contract_class.json" \
+            "$artifact_dir/iwa_IwaStrk20Helper.contract_class.json" \
+            "$artifact_dir/iwa_IwaStrk20Helper.compiled_contract_class.json"; do
+            if ! test -f "$artifact"; then
+              echo "::error title=B0.2 artifact missing::Expected temporary Iwa artifact was not created: ${artifact##*/}"
+              exit 1
+            fi
+          done
+          if ! cp "$harness" "$IWA_PRIVACY_DIR/e2e/tests/devnet/iwa-contract-embedded-signer.test.ts"; then
+            echo "::error title=B0.2 test staging failed::Could not stage the temporary test file into the exact Iwa-pinned upstream E2E suite."
+            exit 1
+          fi
           redact_output() {
             sed -E \
               -e 's/((private|viewing|recovery)[_-]?(key|seed|secret)[[:space:]]*[:=][[:space:]]*)[^[:space:],}]+/\1[REDACTED]/Ig' \
               -e 's/("private_key"[[:space:]]*:[[:space:]]*")[^"]+("?)/\1[REDACTED]\2/Ig'
           }
           set +e
-          (cd "$IWA_PRIVACY_DIR/e2e" && IWA_ARTIFACT_DIR="$artifact_dir" npx vitest run tests/devnet/iwa-contract-embedded-signer.test.ts) 2>&1 | redact_output
+          (cd "$IWA_PRIVACY_DIR/e2e" && IWA_ARTIFACT_DIR="$artifact_dir" npx vitest run tests/devnet/iwa-contract-embedded-signer.test.ts --reporter=default --reporter=github-actions) 2>&1 | redact_output
           command_status=${PIPESTATUS[0]}
           set -e
-          test "$command_status" -eq 0
+          if test "$command_status" -ne 0; then
+            echo "::error title=B0.2 embedded-signer test failed::Vitest returned a non-zero status after staging. The GitHub Actions reporter emits a sanitized test-level annotation."
+            exit "$command_status"
+          fi
           echo "- B0.2 temporary IwaCircle/IwaStrk20Helper deployment and wallet-free embedded-signer path: **PASS**" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Write disposable-runner cleanup note
