@@ -436,6 +436,22 @@ jobs:
             exit 1
           fi
           artifact_dir="$GITHUB_WORKSPACE/contracts/starknet/target/dev"
+          usc_binary="$(command -v universal-sierra-compiler || true)"
+          if test -z "$usc_binary"; then
+            echo "::error title=B0.2 Sierra compiler unavailable::The pinned Universal Sierra Compiler is required only to create disposable CASM deployment artifacts."
+            exit 1
+          fi
+          # Iwa intentionally requests Sierra output only. Compile the two
+          # existing Sierra artifacts into runner-local CASM files instead of
+          # changing the production Scarb target to `casm = true`.
+          for contract in IwaCircle IwaStrk20Helper; do
+            if ! "$usc_binary" compile-contract \
+              --sierra-path "$artifact_dir/iwa_${contract}.contract_class.json" \
+              --output-path "$artifact_dir/iwa_${contract}.compiled_contract_class.json"; then
+              echo "::error title=B0.2 temporary CASM compilation failed::The pinned Universal Sierra Compiler could not compile ${contract} for the disposable devnet deployment."
+              exit 1
+            fi
+          done
           for artifact in \
             "$artifact_dir/iwa_IwaCircle.contract_class.json" \
             "$artifact_dir/iwa_IwaCircle.compiled_contract_class.json" \
