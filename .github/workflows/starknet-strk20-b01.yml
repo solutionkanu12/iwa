@@ -339,8 +339,113 @@ jobs:
           console.log(`- Pool ABI functions added at B0.1 pin: ${added.length ? added.map(quoted).join(", ") : "none"}`);
           console.log(`- Pool ABI functions absent at B0.1 pin: ${removed.length ? removed.map(quoted).join(", ") : "none"}`);
           console.log("- Iwa helper surface checked: imports OpenNoteDeposit and exposes only privacy_invoke; it does not call the changed pool admin/view methods.");
+          console.log(
+            `::notice title=B0.2 compatibility diff::Iwa privacy ${process.env.IWA_PRIVACY_REVISION}; ` +
+              `pool class hashes Iwa=${classHash(iwaPool)} B0.1=${classHash(b01Pool)}; ` +
+              `IwaCircle=${classHash(circle)}; IwaStrk20Helper=${classHash(helper)}`,
+          );
           NODE
-          ) >> "$GITHUB_STEP_SUMMARY"
+          ) | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Install the exact Iwa-pinned privacy Scarb baseline
+        uses: software-mansion/setup-scarb@2a96b748888e3329ee44ac9ac073d930e692b3cd # v1
+        with:
+          scarb-version: 2.17.0
+
+      - name: Fetch and build the exact Iwa-pinned privacy/devnet stack
+        run: |
+          set -euo pipefail
+          iwa_manifest="$GITHUB_WORKSPACE/contracts/starknet/Scarb.toml"
+          iwa_privacy_revision="$(sed -nE 's/.*starknet-privacy.*rev = "([0-9a-f]+)".*/\1/p' "$iwa_manifest")"
+          test -n "$iwa_privacy_revision"
+          iwa_privacy_dir="$RUNNER_TEMP/starknet-privacy-iwa-b02-e2e"
+          git clone --filter=blob:none https://github.com/starkware-libs/starknet-privacy.git "$iwa_privacy_dir"
+          git -C "$iwa_privacy_dir" checkout --detach "$iwa_privacy_revision"
+          test "$(git -C "$iwa_privacy_dir" rev-parse HEAD)" = "$iwa_privacy_revision"
+          echo "IWA_PRIVACY_DIR=$iwa_privacy_dir" >> "$GITHUB_ENV"
+          cd "$iwa_privacy_dir"
+          rm -rf target/dev
+          scarb --profile release build -p privacy
+          scarb build -p privacy -p vesu_lending_anonymizer -p ekubo_swap_anonymizer -p shadow_account_anonymizer
+          scarb build -t -p shadow_account_anonymizer
+          scarb build -t -p privacy
+          (cd e2e/contracts/ekubo && scarb build)
+          (cd e2e/contracts/test-token && scarb build)
+
+      - name: Build exact Iwa-pinned Vesu compatibility dependency
+        uses: software-mansion/setup-scarb@2a96b748888e3329ee44ac9ac073d930e692b3cd # v1
+        with:
+          scarb-version: 2.11.4
+
+      - name: Build Iwa-pinned discovery and TypeScript prerequisites
+        run: |
+          set -euo pipefail
+          redact_output() {
+            sed -E \
+              -e 's/((private|viewing|recovery)[_-]?(key|seed|secret)[[:space:]]*[:=][[:space:]]*)[^[:space:],}]+/\1[REDACTED]/Ig' \
+              -e 's/("private_key"[[:space:]]*:[[:space:]]*")[^"]+("?)/\1[REDACTED]\2/Ig'
+          }
+          run_sanitized() {
+            set +e
+            "$@" 2>&1 | redact_output
+            command_status=${PIPESTATUS[0]}
+            set -e
+            return "$command_status"
+          }
+          (cd "$IWA_PRIVACY_DIR/e2e/contracts/vesu" && run_sanitized scarb build)
+          cd "$IWA_PRIVACY_DIR"
+          run_sanitized cargo build --release -p discovery-service
+          run_sanitized bash -lc 'cd sdk && npm ci && npm run build'
+          run_sanitized bash -lc 'cd client && npm ci && npm run build'
+          run_sanitized bash -lc 'cd e2e && npm ci'
+
+      - name: Run official Iwa-pinned privacy devnet baseline before Iwa deployment
+        run: |
+          set -euo pipefail
+          redact_output() {
+            sed -E \
+              -e 's/((private|viewing|recovery)[_-]?(key|seed|secret)[[:space:]]*[:=][[:space:]]*)[^[:space:],}]+/\1[REDACTED]/Ig' \
+              -e 's/("private_key"[[:space:]]*:[[:space:]]*")[^"]+("?)/\1[REDACTED]\2/Ig'
+          }
+          set +e
+          (cd "$IWA_PRIVACY_DIR/e2e" && npm run test:devnet) 2>&1 | redact_output
+          command_status=${PIPESTATUS[0]}
+          set -e
+          test "$command_status" -eq 0
+          echo "- Official Iwa-pinned privacy devnet baseline: **PASS**" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Restore Iwa compiler and build temporary deployment artifacts
+        uses: software-mansion/setup-scarb@2a96b748888e3329ee44ac9ac073d930e692b3cd # v1
+        with:
+          scarb-version: 2.18.0
+
+      - name: Run B0.2 current Iwa contract embedded-signer devnet proof
+        run: |
+          set -euo pipefail
+          harness="$GITHUB_WORKSPACE/spikes/starknet-strk20-b02/iwa-contract-embedded-signer.test.ts"
+          test -f "$harness"
+          if rg -n "WalletAccountV6|walletV6|wallet[_-]?api|localStorage|sessionStorage|indexedDB|console\\.|process\\.(stdout|stderr)" "$harness"; then
+            echo "The B0.2 harness must not use a browser wallet, persist local secrets, or print secret material." >&2
+            exit 1
+          fi
+          (cd "$GITHUB_WORKSPACE/contracts/starknet" && scarb build)
+          artifact_dir="$GITHUB_WORKSPACE/contracts/starknet/target/dev"
+          test -f "$artifact_dir/iwa_IwaCircle.contract_class.json"
+          test -f "$artifact_dir/iwa_IwaCircle.compiled_contract_class.json"
+          test -f "$artifact_dir/iwa_IwaStrk20Helper.contract_class.json"
+          test -f "$artifact_dir/iwa_IwaStrk20Helper.compiled_contract_class.json"
+          cp "$harness" "$IWA_PRIVACY_DIR/e2e/tests/devnet/iwa-contract-embedded-signer.test.ts"
+          redact_output() {
+            sed -E \
+              -e 's/((private|viewing|recovery)[_-]?(key|seed|secret)[[:space:]]*[:=][[:space:]]*)[^[:space:],}]+/\1[REDACTED]/Ig' \
+              -e 's/("private_key"[[:space:]]*:[[:space:]]*")[^"]+("?)/\1[REDACTED]\2/Ig'
+          }
+          set +e
+          (cd "$IWA_PRIVACY_DIR/e2e" && IWA_ARTIFACT_DIR="$artifact_dir" npx vitest run tests/devnet/iwa-contract-embedded-signer.test.ts) 2>&1 | redact_output
+          command_status=${PIPESTATUS[0]}
+          set -e
+          test "$command_status" -eq 0
+          echo "- B0.2 temporary IwaCircle/IwaStrk20Helper deployment and wallet-free embedded-signer path: **PASS**" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Write disposable-runner cleanup note
         if: always()
