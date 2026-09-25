@@ -625,14 +625,9 @@ describe("Iwa B0.2 current-contract embedded-signer devnet proof", () => {
     const notes = discovered.notes.get(BigInt(env.env.strk)) ?? [];
     expect(notes.some((note) => note.amount === POT_AMOUNT)).toBe(true);
     const wrongViewingKeyTransfers = transfersFor(embeddedAlice, randomScalar(VIEWING_KEY_MAX), env);
-    const wrongViewingKeyNotes = await wrongViewingKeyTransfers.discoverNotes({
-      tokens: [BigInt(env.env.strk)],
-    });
-    expect(
-      (wrongViewingKeyNotes.notes.get(BigInt(env.env.strk)) ?? []).some(
-        (note) => note.amount === POT_AMOUNT,
-      ),
-    ).toBe(false);
+    await expect(
+      wrongViewingKeyTransfers.discoverNotes({ tokens: [BigInt(env.env.strk)] }),
+    ).rejects.toThrow("viewing_key does not match the registered public key");
     await expect(devnet.executeOutside(payout.callAndProof)).rejects.toThrow();
 
     const liability = await env.env.node.callContract({
