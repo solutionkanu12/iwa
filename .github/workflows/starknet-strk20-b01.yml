@@ -87,24 +87,59 @@ jobs:
       - name: Verify exact pinned versions
         run: |
           set -euo pipefail
-          test "$(rustc --version | awk '{print $2}')" = "$RUST_VERSION"
-          test "$(node --version)" = "v${NODE_VERSION}"
-          test "$(scarb --version | awk '{print $2}')" = "$SCARB_VERSION"
-          starknet-devnet --version | grep --fixed-strings "$DEVNET_VERSION"
-          usc_version="${{ steps.setup-universal-sierra-compiler.outputs.universal-sierra-compiler-version }}"
-          case "$usc_version" in
-            *"${UNIVERSAL_SIERRA_COMPILER_VERSION#v}"*) ;;
-            *)
-              echo "Expected Universal Sierra Compiler ${UNIVERSAL_SIERRA_COMPILER_VERSION}; setup action reported: $usc_version" >&2
-              exit 1
-              ;;
-          esac
+          normalize_output() {
+            local value="$1"
+            value="${value//$'\r'/}"
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
+            printf '%s' "$value"
+          }
+          capture_probe() {
+            local label="$1"
+            shift
+            local value status
+            if value="$("$@" 2>&1)"; then
+              normalize_output "$value"
+              return 0
+            fi
+            status=$?
+            value="$(normalize_output "$value")"
+            printf 'VERSION CHECK FAILED [%s]: probe exited %s; normalized output: %q\n' \
+              "$label" "$status" "$value" >&2
+            return "$status"
+          }
+          require_expected_version() {
+            local label="$1"
+            local expected="$2"
+            local actual="$3"
+            if [[ "$actual" == *"$expected"* ]]; then
+              return 0
+            fi
+            printf 'VERSION CHECK FAILED [%s]: expected normalized output containing %q; received: %q\n' \
+              "$label" "$expected" "$actual" >&2
+            return 1
+          }
+          summary_value() {
+            local value="$1"
+            printf '%s' "${value//$'\n'/; }"
+          }
+          rust_version="$(capture_probe 'Rust' rustc --version)"
+          node_version="$(capture_probe 'Node' node --version)"
+          scarb_version="$(capture_probe 'Scarb' scarb --version)"
+          devnet_version="$(capture_probe 'Starknet devnet' starknet-devnet --version)"
+          usc_version="$(normalize_output '${{ steps.setup-universal-sierra-compiler.outputs.universal-sierra-compiler-version }}')"
+          require_expected_version 'Rust' "$RUST_VERSION" "$rust_version"
+          require_expected_version 'Node' "v${NODE_VERSION}" "$node_version"
+          require_expected_version 'Scarb' "$SCARB_VERSION" "$scarb_version"
+          require_expected_version 'Starknet devnet' "$DEVNET_VERSION" "$devnet_version"
+          require_expected_version 'Universal Sierra Compiler setup action' \
+            "${UNIVERSAL_SIERRA_COMPILER_VERSION#v}" "$usc_version"
           {
-            echo "- Rust: \`$(rustc --version)\`"
-            echo "- Node: \`$(node --version)\`"
-            echo "- Scarb: \`$(scarb --version)\`"
-            echo "- Starknet devnet: \`$(starknet-devnet --version)\`"
-            echo "- Universal Sierra Compiler (setup action): \`$usc_version\`"
+            echo "- Rust: \`$(summary_value "$rust_version")\`"
+            echo "- Node: \`$(summary_value "$node_version")\`"
+            echo "- Scarb: \`$(summary_value "$scarb_version")\`"
+            echo "- Starknet devnet: \`$(summary_value "$devnet_version")\`"
+            echo "- Universal Sierra Compiler (setup action): \`$(summary_value "$usc_version")\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Fetch and verify pinned upstream source
