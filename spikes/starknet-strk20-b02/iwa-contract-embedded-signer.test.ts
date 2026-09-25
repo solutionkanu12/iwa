@@ -584,7 +584,8 @@ describe("Iwa B0.2 current-contract embedded-signer devnet proof", () => {
 
     const payout = await aliceTransfers
       .build({ autoDiscover: { notes: "refresh", channels: "refresh" } })
-      .with(env.env.strk, (token) => token.transfer({ recipient: embeddedAlice.address, amount: Open }))
+      .with(env.env.strk)
+      .transfer({ recipient: embeddedAlice.address, amount: Open })
       .done()
       .invoke(({ openNotes }) => {
         if (openNotes.length !== 1) throw new Error("expected exactly one payout open note");
