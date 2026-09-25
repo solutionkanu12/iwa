@@ -255,7 +255,7 @@ jobs:
           iwa_manifest="$GITHUB_WORKSPACE/contracts/starknet/Scarb.toml"
           iwa_privacy_revision="$(sed -nE 's/.*starknet-privacy.*rev = "([0-9a-f]+)".*/\1/p' "$iwa_manifest")"
           test -n "$iwa_privacy_revision"
-          scarb build --manifest-path "$iwa_manifest"
+          (cd "$(dirname "$iwa_manifest")" && scarb build)
           {
             echo "- Iwa contract compilation at its own pinned privacy revision (\`${iwa_privacy_revision}\`): **PASS**"
             if test "$iwa_privacy_revision" != "$PRIVACY_REVISION"; then
