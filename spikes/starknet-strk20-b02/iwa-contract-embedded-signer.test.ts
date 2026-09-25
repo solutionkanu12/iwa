@@ -583,7 +583,7 @@ describe("Iwa B0.2 current-contract embedded-signer devnet proof", () => {
     });
 
     const payout = await aliceTransfers
-      .build({ autoDiscover: { notes: "refresh", channels: "refresh" } })
+      .build({ autoSetup: true, autoDiscover: { notes: "refresh", channels: "refresh" } })
       .with(env.env.strk)
       .transfer({ recipient: embeddedAlice.address, amount: Open })
       .done()
