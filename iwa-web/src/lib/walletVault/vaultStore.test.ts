@@ -23,7 +23,7 @@ describe("wallet vault persistence", () => {
     const store = new InMemoryVaultStore();
     const encrypted = await record("wallet-persisted");
 
-    await store.save(encrypted);
+    await store.create(encrypted);
     const loaded = await store.load("wallet-persisted");
 
     expect(loaded).toEqual(encrypted);
@@ -44,10 +44,22 @@ describe("wallet vault persistence", () => {
 
   it("deletes the complete encrypted local record", async () => {
     const store = new InMemoryVaultStore();
-    await store.save(await record("wallet-delete"));
+    await store.create(await record("wallet-delete"));
 
     await store.remove("wallet-delete");
 
     await expect(store.load("wallet-delete")).resolves.toBeNull();
+  });
+
+  it("compare-and-deletes only the import record it originally inserted", async () => {
+    const store = new InMemoryVaultStore();
+    const stale = await record("wallet-cas");
+    await store.create(stale);
+    await store.remove("wallet-cas");
+    const replacement = await record("wallet-cas");
+    await store.create(replacement);
+
+    await expect(store.removeIfUnchanged(stale)).resolves.toBe(false);
+    await expect(store.load("wallet-cas")).resolves.toEqual(replacement);
   });
 });

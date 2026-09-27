@@ -180,6 +180,24 @@ function transitionOnboarding(
     .send(body);
 }
 
+function reserveWalletSetup(cookie: string, token: string) {
+  return request(app)
+    .post("/api/onboarding/wallet/reserve")
+    .set("Origin", ORIGIN)
+    .set("Cookie", cookie)
+    .set(IWA_CSRF_HEADER, token)
+    .send({});
+}
+
+function markWalletProvisioned(cookie: string, token: string, walletId: string) {
+  return request(app)
+    .post("/api/onboarding/wallet/provisioned")
+    .set("Origin", ORIGIN)
+    .set("Cookie", cookie)
+    .set(IWA_CSRF_HEADER, token)
+    .send({ walletId });
+}
+
 function signEs256Jwt(
   payload: Record<string, unknown>,
   privateKey: KeyObject,
@@ -766,6 +784,57 @@ describe("onboarding foundation", () => {
 
     await transitionOnboarding(cookie, token).expect(409);
     expect((await me(cookie)).body.user).toMatchObject({ onboardingStatus: "completed", onboardingStep: "finish" });
+  });
+
+  it("reserves one opaque wallet identifier and advances only after the matching local vault is reported", async () => {
+    const signedIn = await login("google-alice").expect(200);
+    const { cookie, token } = csrfFrom(signedIn);
+    await transitionOnboarding(cookie, token).expect(200);
+    await transitionOnboarding(cookie, token, { from: "profile", to: "passwordPin" }).expect(200);
+
+    await request(app)
+      .post("/api/onboarding/wallet/reserve")
+      .set("Origin", ORIGIN)
+      .set("Cookie", cookie)
+      .set(IWA_CSRF_HEADER, token)
+      .send({ password: "never-send-a-wallet-password", pin: "123456" })
+      .expect(400);
+
+    const firstReservation = await reserveWalletSetup(cookie, token).expect(200);
+    const walletId = firstReservation.body.wallet?.walletId;
+    expect(typeof walletId).toBe("string");
+    expect(firstReservation.body.wallet).toEqual({ walletId, status: "reserved" });
+    expect(JSON.stringify(firstReservation.body)).not.toMatch(/password|pin|prf|secret|key/i);
+
+    const repeatedReservation = await reserveWalletSetup(cookie, token).expect(200);
+    expect(repeatedReservation.body.wallet).toEqual({ walletId, status: "reserved" });
+    await transitionOnboarding(cookie, token, { from: "passwordPin", to: "walletProvisioning" }).expect(409);
+    await markWalletProvisioned(cookie, token, "00000000-0000-4000-8000-000000000001").expect(409);
+    await request(app)
+      .post("/api/onboarding/wallet/provisioned")
+      .set("Origin", ORIGIN)
+      .set("Cookie", cookie)
+      .set(IWA_CSRF_HEADER, token)
+      .send({ walletId, password: "never-send-a-wallet-password", pin: "123456" })
+      .expect(400);
+
+    const provisioned = await markWalletProvisioned(cookie, token, walletId).expect(200);
+    expect(provisioned.body.onboarding).toEqual({ status: "incomplete", step: "walletProvisioning" });
+    expect(provisioned.body.wallet).toEqual({ walletId, status: "vaultProvisioned" });
+    await markWalletProvisioned(cookie, token, walletId).expect(200);
+
+    const returned = await login("google-alice-again").expect(200);
+    expect(returned.body.user).toMatchObject({ onboardingStatus: "incomplete", onboardingStep: "walletProvisioning" });
+
+    const restored = await request(app)
+      .get("/api/onboarding/wallet")
+      .set("Origin", ORIGIN)
+      .set("Cookie", cookie)
+      .expect(200);
+    expect(restored.body.wallet).toEqual({ walletId, status: "vaultProvisioned" });
+
+    await transitionOnboarding(cookie, token, { from: "walletProvisioning", to: "recovery" }).expect(200);
+    expect((await me(cookie)).body.user).toMatchObject({ onboardingStatus: "incomplete", onboardingStep: "recovery" });
   });
 });
 

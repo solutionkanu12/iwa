@@ -13,6 +13,7 @@ import {
   normalizeEmail,
   type AccountSessionRecord,
   type IwaUser,
+  type IwaWalletSetup,
   type IwaUserStatus,
   type OnboardingStep,
   type OnboardingStatus,
@@ -32,6 +33,24 @@ import {
   type IndexedCircle,
   type Store,
 } from "./store.js";
+
+interface IwaUserRow {
+  id: string;
+  email: string;
+  status: IwaUserStatus;
+  onboarding_status: OnboardingStatus;
+  onboarding_step: OnboardingStep;
+  created_at: Date;
+  updated_at: Date;
+}
+
+interface IwaWalletSetupRow {
+  user_id: string;
+  wallet_id: string;
+  setup_status: IwaWalletSetup["status"];
+  created_at: Date;
+  updated_at: Date;
+}
 
 interface DraftRow {
   id: string;
@@ -85,6 +104,16 @@ function toDraft(d: DraftRow, slots: SlotRow[]): CircleDraft {
     createdTx: d.created_tx,
     createdAt: d.created_at.toISOString(),
     slots: slots.map(toSlot).sort((a, b) => a.slotIndex - b.slotIndex),
+  };
+}
+
+function toIwaWalletSetup(row: IwaWalletSetupRow): IwaWalletSetup {
+  return {
+    userId: row.user_id,
+    walletId: row.wallet_id,
+    status: row.setup_status,
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
   };
 }
 
@@ -702,6 +731,109 @@ export class PgStore implements Store {
     );
     if (r.rowCount === 0) return null;
     return toIwaUser(r.rows[0]);
+  }
+
+  async reserveIwaWalletSetup(userId: string): Promise<IwaWalletSetup | null> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const user = await client.query<{ onboarding_status: OnboardingStatus; onboarding_step: OnboardingStep }>(
+        "SELECT onboarding_status, onboarding_step FROM users WHERE id = $1 FOR UPDATE",
+        [userId],
+      );
+      if (
+        user.rowCount === 0 ||
+        user.rows[0]?.onboarding_status !== "incomplete" ||
+        user.rows[0]?.onboarding_step !== "passwordPin"
+      ) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      const inserted = await client.query<IwaWalletSetupRow>(
+        `INSERT INTO iwa_wallet_setups (user_id, wallet_id, setup_status)
+         VALUES ($1, $2, 'reserved')
+         ON CONFLICT (user_id) DO UPDATE SET user_id = EXCLUDED.user_id
+         RETURNING user_id, wallet_id, setup_status, created_at, updated_at`,
+        [userId, randomUUID()],
+      );
+      await client.query("COMMIT");
+      return toIwaWalletSetup(inserted.rows[0]!);
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  async getIwaWalletSetup(userId: string): Promise<IwaWalletSetup | null> {
+    const result = await this.pool.query<IwaWalletSetupRow>(
+      `SELECT user_id, wallet_id, setup_status, created_at, updated_at
+         FROM iwa_wallet_setups WHERE user_id = $1`,
+      [userId],
+    );
+    return result.rowCount === 0 ? null : toIwaWalletSetup(result.rows[0]!);
+  }
+
+  async completeIwaWalletProvisioning(
+    userId: string,
+    walletId: string,
+  ): Promise<{ user: IwaUser; wallet: IwaWalletSetup } | null> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const user = await client.query<IwaUserRow>(
+        `SELECT id, email, status, onboarding_status, onboarding_step, created_at, updated_at
+           FROM users WHERE id = $1 FOR UPDATE`,
+        [userId],
+      );
+      const setup = await client.query<IwaWalletSetupRow>(
+        `SELECT user_id, wallet_id, setup_status, created_at, updated_at
+           FROM iwa_wallet_setups WHERE user_id = $1 FOR UPDATE`,
+        [userId],
+      );
+      if (user.rowCount === 0 || setup.rowCount === 0 || setup.rows[0]?.wallet_id !== walletId) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      const currentUser = toIwaUser(user.rows[0]!);
+      const currentSetup = toIwaWalletSetup(setup.rows[0]!);
+      if (
+        currentUser.onboardingStatus === "incomplete" &&
+        currentUser.onboardingStep === "walletProvisioning" &&
+        currentSetup.status === "vaultProvisioned"
+      ) {
+        await client.query("COMMIT");
+        return { user: currentUser, wallet: currentSetup };
+      }
+      if (
+        currentUser.onboardingStatus !== "incomplete" ||
+        currentUser.onboardingStep !== "passwordPin" ||
+        currentSetup.status !== "reserved"
+      ) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      const updatedSetup = await client.query<IwaWalletSetupRow>(
+        `UPDATE iwa_wallet_setups SET setup_status = 'vaultProvisioned', updated_at = now()
+          WHERE user_id = $1
+          RETURNING user_id, wallet_id, setup_status, created_at, updated_at`,
+        [userId],
+      );
+      const updatedUser = await client.query<IwaUserRow>(
+        `UPDATE users SET onboarding_step = 'walletProvisioning', updated_at = now()
+          WHERE id = $1
+          RETURNING id, email, status, onboarding_status, onboarding_step, created_at, updated_at`,
+        [userId],
+      );
+      await client.query("COMMIT");
+      return { user: toIwaUser(updatedUser.rows[0]!), wallet: toIwaWalletSetup(updatedSetup.rows[0]!) };
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
   }
 
   async createAccountSession(

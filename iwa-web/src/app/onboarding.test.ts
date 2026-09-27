@@ -10,6 +10,8 @@ describe("onboarding route guard", () => {
   it("restores an incomplete user to the server-persisted stage after a refresh", () => {
     expect(onboardingStepFor("incomplete", "profile")).toBe("profile");
     expect(onboardingStepFor("incomplete", "passwordPin")).toBe("passwordPin");
+    expect(onboardingStepFor("incomplete", "walletProvisioning")).toBe("walletProvisioning");
+    expect(onboardingStepFor("incomplete", "recovery")).toBe("recovery");
     expect(onboardingRedirect("explore", "incomplete")).toBe("onboarding");
   });
 

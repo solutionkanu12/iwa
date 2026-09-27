@@ -840,8 +840,9 @@ export function createApp(options: AppOptions): Express {
   // --- Account onboarding ---
   //
   // This is deliberately separate from wallet and chain authorization. It
-  // records only that the authenticated Iwa user has begun account setup;
-  // upcoming password/PIN and wallet stages cannot be advanced by this route.
+  // records account progress only. The password/PIN stage cannot be passed by
+  // this route, and recovery requires the separately verified local-vault
+  // report below. Neither route receives wallet authority.
   app.post("/api/onboarding/transition", async (req, res, next) => {
     if (!mutate(req, res)) return;
     try {
@@ -881,15 +882,25 @@ export function createApp(options: AppOptions): Express {
         });
       }
 
+      if (kind === "advance" && transition.to === "recovery") {
+        const wallet = await store.getIwaWalletSetup(loaded.user.id);
+        if (wallet === null || wallet.status !== "vaultProvisioned") {
+          return res.status(409).json({
+            error: "invalid_onboarding_transition",
+            message: "That onboarding step is not available yet.",
+          });
+        }
+      }
+
       const user =
         kind === "start"
           ? await store.setIwaUserOnboardingState(loaded.user.id, { status: "incomplete", step: "profile" })
           : kind === "advance"
             ? await store.setIwaUserOnboardingState(loaded.user.id, {
                 status: "incomplete",
-                step: "passwordPin",
+                step: transition.to,
               })
-          : loaded.user;
+            : loaded.user;
       if (user === null) {
         return res.status(401).json({
           error: "session_invalid",
@@ -897,6 +908,103 @@ export function createApp(options: AppOptions): Express {
         });
       }
       res.json({ onboarding: onboardingProgress(user.onboardingStatus, user.onboardingStep) });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  /**
+   * The backend reserves one opaque identifier for the user's local vault. It
+   * deliberately receives neither passkey material nor password, PIN, root
+   * secret, recovery data, or any future chain authority.
+   */
+  app.post("/api/onboarding/wallet/reserve", async (req, res, next) => {
+    if (!mutate(req, res)) return;
+    try {
+      if (!requireOrigin(req, res)) return;
+      const loaded = await loadAccountSession(req);
+      if (!loaded.ok) {
+        return res.status(401).json({ error: "session_invalid", message: "Please sign in to Iwa again." });
+      }
+      if (!requireCsrf(req, res)) return;
+      if (loaded.user.status === "suspended") {
+        return res.status(403).json({
+          error: "account_suspended",
+          message: "This Iwa account is suspended. Your on-chain funds are untouched.",
+        });
+      }
+      if (req.body === null || typeof req.body !== "object" || Array.isArray(req.body) || Object.keys(req.body).length !== 0) {
+        return res.status(400).json({ error: "invalid_request", message: "That wallet setup request could not be verified." });
+      }
+      const wallet = await store.reserveIwaWalletSetup(loaded.user.id);
+      if (wallet === null) {
+        return res.status(409).json({ error: "invalid_onboarding_transition", message: "That onboarding step is not available yet." });
+      }
+      res.json({ wallet: { walletId: wallet.walletId, status: wallet.status } });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  /**
+   * The browser reports only that it created the encrypted container for its
+   * already-reserved opaque id. The local cryptographic record stays in
+   * IndexedDB; this endpoint has no shape capable of receiving it.
+   */
+  app.post("/api/onboarding/wallet/provisioned", async (req, res, next) => {
+    if (!mutate(req, res)) return;
+    try {
+      if (!requireOrigin(req, res)) return;
+      const loaded = await loadAccountSession(req);
+      if (!loaded.ok) {
+        return res.status(401).json({ error: "session_invalid", message: "Please sign in to Iwa again." });
+      }
+      if (!requireCsrf(req, res)) return;
+      if (loaded.user.status === "suspended") {
+        return res.status(403).json({
+          error: "account_suspended",
+          message: "This Iwa account is suspended. Your on-chain funds are untouched.",
+        });
+      }
+      const body = req.body;
+      if (
+        body === null ||
+        typeof body !== "object" ||
+        Array.isArray(body) ||
+        Object.keys(body).length !== 1 ||
+        typeof (body as { walletId?: unknown }).walletId !== "string" ||
+        !isUuid((body as { walletId: string }).walletId)
+      ) {
+        return res.status(400).json({ error: "invalid_request", message: "That wallet setup request could not be verified." });
+      }
+      const result = await store.completeIwaWalletProvisioning(loaded.user.id, (body as { walletId: string }).walletId);
+      if (result === null) {
+        return res.status(409).json({ error: "invalid_onboarding_transition", message: "That onboarding step is not available yet." });
+      }
+      res.json({
+        onboarding: onboardingProgress(result.user.onboardingStatus, result.user.onboardingStep),
+        wallet: { walletId: result.wallet.walletId, status: result.wallet.status },
+      });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  /** Read-only non-secret state so a returning device can detect absence and route to recovery. */
+  app.get("/api/onboarding/wallet", async (req, res, next) => {
+    try {
+      const loaded = await loadAccountSession(req);
+      if (!loaded.ok) {
+        return res.status(401).json({ error: "session_invalid", message: "Please sign in to Iwa again." });
+      }
+      if (loaded.user.status === "suspended") {
+        return res.status(403).json({
+          error: "account_suspended",
+          message: "This Iwa account is suspended. Your on-chain funds are untouched.",
+        });
+      }
+      const wallet = await store.getIwaWalletSetup(loaded.user.id);
+      res.json({ wallet: wallet === null ? null : { walletId: wallet.walletId, status: wallet.status } });
     } catch (e) {
       next(e);
     }

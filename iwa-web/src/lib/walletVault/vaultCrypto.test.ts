@@ -108,7 +108,16 @@ describe("Iwa Wallet vault cryptography", () => {
     });
 
     expect(() => validateRootWrap({ ...record, version: 99 })).toThrow(VaultError);
-    expect(() => validateRootWrap({ ...record, passwordKdf: { ...record.passwordKdf, iterations: 1 } })).toThrow(VaultError);
+    for (const passwordKdf of [
+      { ...record.passwordKdf, iterations: 1 },
+      { ...record.passwordKdf, iterations: 599_999 },
+      { ...record.passwordKdf, iterations: 600_001 },
+      { ...record.passwordKdf, iterations: Number.MAX_SAFE_INTEGER },
+      { ...record.passwordKdf, profile: "production", algorithm: "PBKDF2-HMAC-SHA-1" },
+    ]) {
+      expect(() => validateRootWrap({ ...record, passwordKdf })).toThrow(VaultError);
+    }
+    await expect(openRootWrap({ ...record, updatedAt: new Date(Date.now() + 1_000).toISOString() }, binding(), password, passkeyPrf)).rejects.toBeInstanceOf(VaultError);
     expect(() => validateRootWrap({ ...record, cipher: { ...record.cipher, ciphertext: "!bad!" } })).toThrow(VaultError);
     await expect(
       openRootWrap({ ...record, cipher: { ...record.cipher, ciphertext: record.cipher.ciphertext.slice(1) } }, binding(), password, passkeyPrf),

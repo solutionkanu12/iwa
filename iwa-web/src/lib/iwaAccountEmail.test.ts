@@ -64,4 +64,34 @@ describe("Iwa email sign-in initiation", () => {
     expect(String(request.body)).not.toContain("wallet-password");
     expect(String(request.body)).not.toContain("123456");
   });
+
+  it("uses dedicated non-secret wallet setup endpoints without serializing local credentials", async () => {
+    vi.stubGlobal("document", { cookie: "iwa_csrf=test-csrf" });
+    const fetch = vi.fn(async (url: string, _init?: RequestInit) => ({
+      ok: true,
+      status: 200,
+      json: async () =>
+        url.endsWith("/reserve")
+          ? { wallet: { walletId: "00000000-0000-4000-8000-000000000111", status: "reserved" } }
+          : url.endsWith("/provisioned")
+            ? {
+                onboarding: { status: "incomplete", step: "walletProvisioning" },
+                wallet: { walletId: "00000000-0000-4000-8000-000000000111", status: "vaultProvisioned" },
+              }
+            : { wallet: { walletId: "00000000-0000-4000-8000-000000000111", status: "vaultProvisioned" } },
+    }));
+    vi.stubGlobal("fetch", fetch);
+
+    const reservation = await iwaAccount.reserveWalletSetup();
+    await iwaAccount.markWalletProvisioned(reservation.wallet.walletId);
+    await iwaAccount.walletSetup();
+
+    const requests = fetch.mock.calls.map((call) => call[1] as RequestInit | undefined);
+    expect(requests[0]?.body).toBe("{}");
+    expect(requests[1]?.body).toBe(JSON.stringify({ walletId: reservation.wallet.walletId }));
+    expect(requests[2]?.body).toBeUndefined();
+    for (const request of requests) {
+      expect(String(request?.body ?? "")).not.toMatch(/password|123456|prf|secret|private/i);
+    }
+  });
 });

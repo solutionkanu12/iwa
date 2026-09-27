@@ -63,12 +63,29 @@ function publicKeyCredential(value: Credential | null): PublicKeyCredential {
   return candidate as PublicKeyCredential;
 }
 
-function extensionPrf(credential: PublicKeyCredential): Uint8Array {
+function prfResultBytes(value: unknown): Uint8Array {
+  if (value instanceof ArrayBuffer) return new Uint8Array(value.slice(0));
+  if (ArrayBuffer.isView(value) && value.buffer instanceof ArrayBuffer) {
+    return new Uint8Array(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength));
+  }
+  fail();
+}
+
+/** Authentication PRF output has `results`; `enabled` is registration-only. */
+function assertionPrf(credential: PublicKeyCredential): Uint8Array {
   const extension = credential.getClientExtensionResults().prf as PrfExtensionResult | undefined;
-  if (extension?.enabled !== true || !(extension.results?.first instanceof ArrayBuffer)) fail();
-  const result = new Uint8Array(extension.results.first);
-  if (result.length !== PRF_BYTES) fail();
+  const result = prfResultBytes(extension?.results?.first);
+  if (result.length !== PRF_BYTES) {
+    result.fill(0);
+    fail();
+  }
   return result;
+}
+
+/** Registration returns whether PRF is usable for the newly created credential. */
+function assertRegistrationPrfEnabled(credential: PublicKeyCredential): void {
+  const extension = credential.getClientExtensionResults().prf as PrfExtensionResult | undefined;
+  if (extension?.enabled !== true) fail();
 }
 
 function random(browser: WalletPasskeyBrowser): Uint8Array {
@@ -86,11 +103,14 @@ export class BrowserWalletPasskey {
   async enroll(rpId: string): Promise<WalletPasskeyMetadata> {
     assertRpId(rpId);
     const capabilities = await this.browser.clientCapabilities?.();
-    if (capabilities !== undefined && capabilities.prf !== true) fail();
+    // WebAuthn Level 3 prefixes extension capability keys with `extension:`.
+    // An unknown capability is verified by the mandatory ceremony below.
+    if (capabilities?.["extension:prf"] === false) fail();
 
     const challenge = random(this.browser);
     const userId = random(this.browser);
     const prfInput = random(this.browser);
+    let enrolled = false;
     try {
       const created = publicKeyCredential(
         await this.browser.credentials.create({
@@ -108,14 +128,17 @@ export class BrowserWalletPasskey {
           },
         }),
       );
+      assertRegistrationPrfEnabled(created);
       const credentialId = bytesToBase64Url(new Uint8Array(created.rawId));
       const binding: WalletPasskeyMetadata = { credentialId, rpId, prfInput };
       const verifiedOutput = await this.assertPrf(binding);
       verifiedOutput.fill(0);
+      enrolled = true;
       return binding;
     } finally {
       challenge.fill(0);
       userId.fill(0);
+      if (!enrolled) prfInput.fill(0);
     }
   }
 
@@ -138,7 +161,7 @@ export class BrowserWalletPasskey {
       );
       const returnedId = new Uint8Array(assertion.rawId);
       if (!sameBytes(expectedId, returnedId)) fail();
-      return extensionPrf(assertion);
+      return assertionPrf(assertion);
     } finally {
       expectedId.fill(0);
       challenge.fill(0);

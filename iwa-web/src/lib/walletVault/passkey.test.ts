@@ -8,7 +8,7 @@ const prfResult = Uint8Array.from({ length: 32 }, (_, index) => (index * 31 + 5)
 
 function credential(
   id = credentialId,
-  extensions: unknown = { prf: { enabled: true, results: { first: prfResult.buffer } } },
+  extensions: unknown = { prf: { results: { first: prfResult.buffer } } },
 ): PublicKeyCredential {
   return {
     type: "public-key",
@@ -20,10 +20,10 @@ function credential(
 function browser(overrides: Partial<WalletPasskeyBrowser> = {}): WalletPasskeyBrowser {
   return {
     credentials: {
-      create: vi.fn().mockResolvedValue(credential()),
+      create: vi.fn().mockResolvedValue(credential(credentialId, { prf: { enabled: true } })),
       get: vi.fn().mockResolvedValue(credential()),
     },
-    clientCapabilities: vi.fn().mockResolvedValue({ prf: true }),
+    clientCapabilities: vi.fn().mockResolvedValue({ "extension:prf": true }),
     randomValues: (array) => crypto.getRandomValues(array),
     ...overrides,
   };
@@ -72,17 +72,17 @@ describe("dedicated Iwa Wallet passkey", () => {
   });
 
   it("fails closed when WebAuthn PRF support, user verification, credential identity, or output length is missing", async () => {
-    await expect(new BrowserWalletPasskey(browser({ clientCapabilities: vi.fn().mockResolvedValue({ prf: false }) })).enroll("wallet.example.test"))
+    await expect(new BrowserWalletPasskey(browser({ clientCapabilities: vi.fn().mockResolvedValue({ "extension:prf": false }) })).enroll("wallet.example.test"))
       .rejects.toBeInstanceOf(VaultError);
 
     const missingPrf = browser({
-      credentials: { create: vi.fn().mockResolvedValue(credential()), get: vi.fn().mockResolvedValue(credential(credentialId, {})) },
+      credentials: { create: vi.fn().mockResolvedValue(credential(credentialId, {})), get: vi.fn().mockResolvedValue(credential(credentialId, {})) },
     });
     await expect(new BrowserWalletPasskey(missingPrf).enroll("wallet.example.test")).rejects.toBeInstanceOf(VaultError);
 
     const wrongCredential = browser({
       credentials: {
-        create: vi.fn().mockResolvedValue(credential()),
+        create: vi.fn().mockResolvedValue(credential(credentialId, { prf: { enabled: true } })),
         get: vi.fn().mockResolvedValue(credential(Uint8Array.from({ length: 32 }, () => 9))),
       },
     });
@@ -90,8 +90,8 @@ describe("dedicated Iwa Wallet passkey", () => {
 
     const shortPrf = browser({
       credentials: {
-        create: vi.fn().mockResolvedValue(credential()),
-        get: vi.fn().mockResolvedValue(credential(credentialId, { prf: { enabled: true, results: { first: new Uint8Array(31).buffer } } })),
+        create: vi.fn().mockResolvedValue(credential(credentialId, { prf: { enabled: true } })),
+        get: vi.fn().mockResolvedValue(credential(credentialId, { prf: { results: { first: new Uint8Array(31).buffer } } })),
       },
     });
     await expect(new BrowserWalletPasskey(shortPrf).enroll("wallet.example.test")).rejects.toBeInstanceOf(VaultError);

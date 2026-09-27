@@ -17,6 +17,7 @@ import {
   type AuthIdentity,
   type AuthProvider,
   type IwaUser,
+  type IwaWalletSetup,
   type IwaUserStatus,
   type OnboardingStep,
   type OnboardingStatus,
@@ -184,6 +185,17 @@ export interface Store {
     id: string,
     state: { status: OnboardingStatus; step: OnboardingStep },
   ): Promise<IwaUser | null>;
+  /** Creates one opaque wallet identifier for a user at password/PIN setup. */
+  reserveIwaWalletSetup(userId: string): Promise<IwaWalletSetup | null>;
+  getIwaWalletSetup(userId: string): Promise<IwaWalletSetup | null>;
+  /**
+   * Atomically records only that the local encrypted vault was created and
+   * moves the server-owned onboarding stage. No vault data is accepted here.
+   */
+  completeIwaWalletProvisioning(
+    userId: string,
+    walletId: string,
+  ): Promise<{ user: IwaUser; wallet: IwaWalletSetup } | null>;
   createAccountSession(
     userId: string,
     tokenHash: string,
@@ -248,6 +260,7 @@ export class MemoryStore implements Store {
   private events: CircleEvent[] = [];
   private cursors = new Map<string, { chainId: string; block: number }>();
   private users = new Map<string, IwaUser>();
+  private walletSetups = new Map<string, IwaWalletSetup>();
   private identities = new Map<string, AuthIdentity>();
   private emailToUser = new Map<string, string>();
   private accountSessions = new Map<string, AccountSessionRecord>();
@@ -522,6 +535,53 @@ export class MemoryStore implements Store {
     user.onboardingStep = state.step;
     user.updatedAt = new Date().toISOString();
     return structuredClone(user);
+  }
+
+  async reserveIwaWalletSetup(userId: string): Promise<IwaWalletSetup | null> {
+    const user = this.users.get(userId);
+    if (user === undefined || user.onboardingStatus !== "incomplete" || user.onboardingStep !== "passwordPin") return null;
+    const existing = this.walletSetups.get(userId);
+    if (existing !== undefined) return structuredClone(existing);
+    const now = new Date().toISOString();
+    const setup: IwaWalletSetup = {
+      userId,
+      walletId: randomUUID(),
+      status: "reserved",
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.walletSetups.set(userId, setup);
+    return structuredClone(setup);
+  }
+
+  async getIwaWalletSetup(userId: string): Promise<IwaWalletSetup | null> {
+    const setup = this.walletSetups.get(userId);
+    return setup === undefined ? null : structuredClone(setup);
+  }
+
+  async completeIwaWalletProvisioning(
+    userId: string,
+    walletId: string,
+  ): Promise<{ user: IwaUser; wallet: IwaWalletSetup } | null> {
+    const user = this.users.get(userId);
+    const setup = this.walletSetups.get(userId);
+    if (user === undefined || setup === undefined || setup.walletId !== walletId) return null;
+
+    if (
+      user.onboardingStatus === "incomplete" &&
+      user.onboardingStep === "walletProvisioning" &&
+      setup.status === "vaultProvisioned"
+    ) {
+      return { user: structuredClone(user), wallet: structuredClone(setup) };
+    }
+    if (user.onboardingStatus !== "incomplete" || user.onboardingStep !== "passwordPin" || setup.status !== "reserved") return null;
+
+    const now = new Date().toISOString();
+    setup.status = "vaultProvisioned";
+    setup.updatedAt = now;
+    user.onboardingStep = "walletProvisioning";
+    user.updatedAt = now;
+    return { user: structuredClone(user), wallet: structuredClone(setup) };
   }
 
   async createAccountSession(

@@ -94,6 +94,17 @@ export interface OnboardingProgress {
   step: OnboardingStep;
 }
 
+/** Public coordination descriptor only. It cannot unlock or recreate a vault. */
+export interface WalletSetupView {
+  walletId: string;
+  status: "reserved" | "vaultProvisioned";
+}
+
+export interface WalletProvisioningView {
+  onboarding: OnboardingProgress;
+  wallet: WalletSetupView;
+}
+
 /**
  * A login response only proves that the backend accepted the provider token.
  * Navigation into Iwa additionally requires the new HttpOnly session cookie to
@@ -398,6 +409,21 @@ export const iwaAccount = {
 
   async startOnboarding(): Promise<OnboardingProgress> {
     return this.transitionOnboarding("new", "profile");
+  },
+
+  async reserveWalletSetup(): Promise<{ wallet: WalletSetupView }> {
+    return call("/api/onboarding/wallet/reserve", { method: "POST", body: "{}" });
+  },
+
+  async markWalletProvisioned(walletId: string): Promise<WalletProvisioningView> {
+    return call("/api/onboarding/wallet/provisioned", {
+      method: "POST",
+      body: JSON.stringify({ walletId }),
+    });
+  },
+
+  async walletSetup(): Promise<{ wallet: WalletSetupView | null }> {
+    return call("/api/onboarding/wallet");
   },
 };
 

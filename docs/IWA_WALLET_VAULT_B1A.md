@@ -32,6 +32,8 @@ namespace:    "root"
 createdAt / updatedAt
 passwordKdf:  PBKDF2-HMAC-SHA-256, 600000 iterations, random 32-byte salt
 passkey:      credential ID, RP ID, random 32-byte PRF input
+authorityManifest: namespace-sorted SHA-256 digests of every authority envelope
+recoveryGeneration: positive integer, initially 1 and rotated on recovery
 cipher:       AES-256-GCM, fresh random 96-bit IV, 128-bit tag
 ciphertext:   base64url encrypted 32-byte vault root secret
 ```
@@ -39,16 +41,28 @@ ciphertext:   base64url encrypted 32-byte vault root secret
 The ciphertext is authenticated with canonical UTF-8 associated data:
 
 ```text
-IWA-WALLET-AAD-V1 | walletId | root-wrap | root | 1
+IWA-WALLET-AAD-V1 | walletId | root-wrap | root | 1 |
+created/updated timestamps | recovery generation | canonical authority manifest
 ```
 
 Every future encrypted chain record uses the same immutable binding but with
 its own `recordType` and namespace, for example `authority / starknet/mainnet`.
+The root record authenticates the complete child-record set: each manifest entry
+contains its namespace, record generation and SHA-256 digest of the canonical
+encrypted envelope. Missing, extra, substituted, and namespace-modified child
+records fail closed. The root AES-GCM ciphertext is exactly 48 bytes (a
+32-byte VRS plus 16-byte tag), and other lengths are rejected before crypto.
 The root record cannot decrypt if moved to another wallet, record type,
 namespace, or version. Unknown versions, formats, fields, encodings, cipher
 parameters, or record types fail closed; version migration must read an old
 record, authenticate/decrypt it, write an independently authenticated new
 record, then delete the old record in one IndexedDB transaction.
+
+B1-A records produced before this local-only remediation do not contain the
+manifest and are intentionally rejected rather than heuristically upgraded;
+they contain only synthetic test material and were never released. Any future
+released schema change must use a new on-disk version and an explicit migration
+transaction; it must never silently reinterpret a prior envelope.
 
 ## Cryptographic construction
 
@@ -90,10 +104,13 @@ discoverable WebAuthn credential scoped to Iwa's RP ID, requiring
 an assertion: the passkey PRF output is a local key contribution, and no
 WebAuthn assertion, PRF output, or authenticator private material reaches Iwa.
 
-At enrollment and every cold unlock, the browser must return a 32-byte result
-for the WebAuthn `prf` extension on an assertion constrained to the enrolled
-credential. The implementation checks both the returned credential ID and PRF
-result length. A browser/authenticator with no usable PRF result is unsupported
+At enrollment, registration must report `prf.enabled: true`. At cold unlock,
+the authentication output must carry the standards-defined 32-byte
+`prf.results.first` value; authentication assertions do not carry `enabled`.
+`getClientCapabilities()` is advisory: an explicit `"extension:prf": false`
+is rejected, and an unknown result must still pass the actual ceremony. The
+implementation checks the returned credential ID and PRF result length. A
+browser/authenticator with no usable PRF result is unsupported
 for Iwa Wallet creation, unlock, import, export, or signing. There is no
 email-, Google-, session-, or password-only fallback.
 
@@ -123,9 +140,14 @@ fresh wallet passkey assertion.
 ## Local state and lifetime
 
 The cold state holds only validated encrypted records and public passkey
-metadata. A warm session holds a `Uint8Array` VRS and synthetic payload only in
-module-private memory, with an absolute and idle timeout. `lock()`, timeout,
-logout hook, page hide, and failed PIN-attempt limit clear every held byte with
+metadata. The public warm-session value is an opaque frozen capability with a
+wallet ID only; VRS, authority plaintext, root envelope and PIN verifier remain
+in module-private state and cannot be retrieved, enumerated, spread, or
+JSON-serialized from that capability. Every unlock captures an operation epoch;
+lock/logout advance it and invalidate stale asynchronous work before it may
+publish a warm state. B1-A implements an idle timeout and explicit `lock()`;
+the B1-B UI integration must call `lock()` on logout and page lifecycle events.
+Timeout, explicit lock, and failed PIN-attempt limit clear every held byte with
 `fill(0)` before references are dropped. JavaScript garbage collection cannot
 guarantee physical zeroization; the design minimizes lifetime and forbids
 plaintext persistence rather than claiming perfect memory erasure.
@@ -149,7 +171,10 @@ for transport separately from the package. Iwa never stores the recovery key,
 plaintext package, or a reconstructable secret. Import validates all envelope
 and plaintext bindings, decrypts only in memory, makes the user enroll a new
 PRF-capable wallet passkey and choose a new vault password, then rewraps the
-same VRS locally. A recovery package plus its recovery key is intentionally a
+same VRS locally. A successful import increments `recoveryGeneration` and
+returns a replacement package with a distinct package ID; product UX must have
+the user retain it and treat the old package as stale. A recovery package plus
+its recovery key is intentionally a
 portable bearer recovery credential and must be protected accordingly.
 
 An entirely offline new device cannot cryptographically distinguish an old but

@@ -4,8 +4,8 @@ What works today, what does not, and where the line between them sits. Written
 against verified behaviour: contract reads, deployed code and passing tests, not
 intent.
 
-Last reviewed against the working tree on 2026-09-23 during the Iwa Account
-onboarding foundation pass.
+Last reviewed against the working tree on 2026-09-27 during the local Iwa
+Wallet B1-B onboarding lifecycle pass.
 
 ## Iwa Account auth and durable sessions (production verified)
 
@@ -101,9 +101,70 @@ production configuration, backend API, or wallet UI.
   a recovery package is replaced after recovery.
 
 This is local-only work. It has not been pushed, deployed, or used with real
-wallet keys or funds. The next proposed boundary is B1-B wallet-passkey UX and
-standalone recovery portability review, followed later by chain-specific
-provisioning approval.
+wallet keys or funds.
+
+### B1-A-R1 remediation (local-only)
+
+The seven confirmed B1-S1 findings have been remediated in the isolated vault
+worktree and the original PoCs remain permanent regressions. The warm API is an
+opaque capability backed by module-private secret state; no normal session API
+exposes VRS or authority plaintext. Lock/logout advance an operation epoch so
+stale unlocks cannot publish after storage, passkey, KDF/decrypt, or
+authority-load waits. Root wrappers authenticate an exact authority-record
+manifest, persistence is insert-only, and root ciphertext has an exact parser
+bound. Recovery import rotates generation and returns a replacement package.
+No chain key, account, production configuration, network call, commit, or push
+has been added. The post-remediation vault suite is 15 files / 52 tests plus
+the parser/property corpus and TypeScript typecheck. The full internal audit
+campaign is intentionally deferred until the complete wallet path exists.
+
+## Task 1.3C-B1-B: wallet onboarding lifecycle integration (local-only)
+
+B1-B connects the encrypted empty vault container to the existing,
+server-persisted onboarding state machine. It adds no blockchain key, chain
+account, STRK20 viewing key, settlement authority, signing operation, deployed
+contract, production configuration, or network action beyond the local
+development account-progress API.
+
+- Migration `008_add_iwa_wallet_setups.sql` is an unapplied, non-custodial
+  schema addition. It stores one server-generated opaque UUID per Iwa user and
+  one setup status (`reserved` or `vaultProvisioned`). It has no field for a
+  password, PIN, passkey assertion or PRF output, ciphertext, recovery data,
+  key, seed, or chain address.
+- The server reserves the opaque ID only at `passwordPin`, reports a matching
+  local-vault creation only for that ID, and atomically moves the persisted
+  step to `walletProvisioning`. Direct client transition from `passwordPin` is
+  still rejected. Only `walletProvisioning -> recovery` is newly accepted, and
+  only after the server sees the matching non-secret provisioned status.
+- The browser enrolls a separate, PRF-capable, user-verified Iwa Wallet
+  passkey, creates an **empty** encrypted B1-A vault under that opaque ID, and
+  keeps the password and PIN in page memory only. Password and PIN are cleared
+  before the provisioned progress request, whose payload contains only the
+  opaque wallet ID.
+- The public React state contains only opaque wallet ID, encrypted-container
+  presence, and cold/warm status. A module-private capability is used only to
+  set the warm PIN; it is not exposed to React, JSON, storage, or a network
+  request. The local lifecycle owns a separate operation epoch, so logout or
+  session loss cannot publish a stale warm vault during setup.
+- Iwa Account logout, logout-all, a failed session refresh, an account switch,
+  suspension, pagehide, idle timeout, and provider teardown request a local
+  vault lock. Short tab visibility changes do not lock immediately; the
+  bounded vault idle timeout remains in effect. Reload/restart starts cold.
+- A returning device can detect that the authenticated user has an existing
+  opaque wallet ID but no local encrypted record. It does not create another
+  wallet and states that recovery is required. B1-C will implement recovery;
+  this B1-B screen does not claim recovery is available.
+
+Verified locally: frontend full suite 72 files / 775 tests; vault suite 15
+files / 52 tests; focused B1-B frontend tests 5 files / 16 tests; focused
+backend Iwa Account/onboarding suite 51 tests; frontend and backend TypeScript
+typechecks. The standard frontend production build completed with the existing
+dependency warnings only. No browser-device WebAuthn ceremony, migration
+application, deployment, or production configuration change has been made.
+
+Next boundary: B1-C recovery UX and portable recovery handling, after explicit
+approval. The full internal security/audit campaign remains a later complete-
+wallet gate.
 
 ## Zama Prize Savings bounty (active work)
 

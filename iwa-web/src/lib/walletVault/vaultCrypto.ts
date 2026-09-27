@@ -3,6 +3,8 @@ const ROOT_RECORD_TYPE = "root-wrap";
 const ROOT_NAMESPACE = "root";
 const VAULT_VERSION = 1;
 const ROOT_SECRET_BYTES = 32;
+const GCM_TAG_BYTES = 16;
+const ROOT_CIPHERTEXT_BYTES = ROOT_SECRET_BYTES + GCM_TAG_BYTES;
 const SALT_BYTES = 32;
 const GCM_IV_BYTES = 12;
 const PRODUCTION_PBKDF2_ITERATIONS = 600_000;
@@ -60,6 +62,10 @@ export interface RootWrapRecordV1 {
   updatedAt: string;
   passwordKdf: PersistedPasswordKdf;
   passkey: PersistedWalletPasskeyMetadata;
+  /** Authenticated by the root AES-GCM associated data. */
+  authorityManifest: AuthorityManifestEntryV1[];
+  /** Incremented when a recovery package is successfully imported. */
+  recoveryGeneration: number;
   authorityRecords: AuthorityRecordV1[];
   cipher: {
     algorithm: "AES-256-GCM";
@@ -76,6 +82,8 @@ export interface CreateRootWrapInput {
   rootSecret: Uint8Array;
   passwordKdf?: PasswordKdfPolicy;
   passkey: WalletPasskeyMetadata;
+  authorityRecords?: readonly AuthorityRecordV1[];
+  recoveryGeneration?: number;
 }
 
 export interface AuthorityRecordV1 {
@@ -84,12 +92,21 @@ export interface AuthorityRecordV1 {
   walletId: string;
   recordType: "authority";
   namespace: string;
+  generation: 1;
   cipher: {
     algorithm: "AES-256-GCM";
     iv: string;
     hkdfSalt: string;
     ciphertext: string;
   };
+}
+
+export interface AuthorityManifestEntryV1 {
+  recordType: "authority";
+  namespace: string;
+  version: 1;
+  generation: 1;
+  digest: string;
 }
 
 export interface CreateAuthorityRecordInput {
@@ -124,7 +141,7 @@ function assertExactKeys(value: Record<string, unknown>, expected: readonly stri
 }
 
 function assertSafeBindingPart(value: string): void {
-  if (value.length === 0 || value.length > 256 || value.includes("|")) fail("invalid_input");
+  if (value.length === 0 || value.length > 256 || /[|\r\n]/.test(value)) fail("invalid_input");
 }
 
 function assertBinding(binding: VaultBinding): void {
@@ -138,6 +155,35 @@ function associatedData(binding: VaultBinding): Uint8Array {
   assertBinding(binding);
   return new TextEncoder().encode(
     `IWA-WALLET-AAD-V1|${binding.walletId}|${binding.recordType}|${binding.namespace}|${binding.version}`,
+  );
+}
+
+function assertRecoveryGeneration(value: unknown): asserts value is number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) fail();
+}
+
+function canonicalManifest(entries: readonly AuthorityManifestEntryV1[]): string {
+  return entries
+    .map((entry) => `${entry.recordType}|${entry.namespace}|${entry.version}|${entry.generation}|${entry.digest}`)
+    .join("\n");
+}
+
+function assertTimestamp(value: unknown): asserts value is string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 64 || /[|\r\n]/.test(value) || Number.isNaN(Date.parse(value))) fail();
+}
+
+function rootAssociatedData(
+  binding: VaultBinding,
+  authorityManifest: readonly AuthorityManifestEntryV1[],
+  recoveryGeneration: number,
+  createdAt: string,
+  updatedAt: string,
+): Uint8Array {
+  assertRecoveryGeneration(recoveryGeneration);
+  assertTimestamp(createdAt);
+  assertTimestamp(updatedAt);
+  return new TextEncoder().encode(
+    `${new TextDecoder().decode(associatedData(binding))}|created-at|${createdAt}|updated-at|${updatedAt}|recovery-generation|${recoveryGeneration}|authority-manifest|${canonicalManifest(authorityManifest)}`,
   );
 }
 
@@ -170,8 +216,10 @@ function base64UrlEncode(bytes: Uint8Array): string {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-function base64UrlDecode(value: unknown, expectedLength?: number): Uint8Array {
+function base64UrlDecode(value: unknown, expectedLength?: number, maximumLength?: number): Uint8Array {
   if (typeof value !== "string" || value.length === 0 || !/^[A-Za-z0-9_-]+$/.test(value)) fail();
+  if (expectedLength !== undefined && value.length !== base64UrlEncodedLength(expectedLength)) fail();
+  if (maximumLength !== undefined && value.length > base64UrlEncodedLength(maximumLength)) fail();
   try {
     const padded = value.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (value.length % 4)) % 4);
     const binary = atob(padded);
@@ -182,6 +230,12 @@ function base64UrlDecode(value: unknown, expectedLength?: number): Uint8Array {
     if (error instanceof VaultError) throw error;
     fail();
   }
+}
+
+function base64UrlEncodedLength(bytes: number): number {
+  const fullGroups = Math.floor(bytes / 3);
+  const remainder = bytes % 3;
+  return fullGroups * 4 + (remainder === 0 ? 0 : remainder + 1);
 }
 
 function assertPassword(password: string): void {
@@ -239,7 +293,7 @@ function validatePersistedPasskey(value: unknown): PersistedWalletPasskeyMetadat
   return { credentialId: value.credentialId, rpId: value.rpId, prfInput: value.prfInput };
 }
 
-function validateCipher(value: unknown): RootWrapRecordV1["cipher"] {
+function validateCipher(value: unknown, expectedCiphertextBytes?: number): RootWrapRecordV1["cipher"] {
   if (!isPlainObject(value)) fail();
   assertExactKeys(value, ["algorithm", "iv", "hkdfSalt", "ciphertext"]);
   if (
@@ -252,9 +306,52 @@ function validateCipher(value: unknown): RootWrapRecordV1["cipher"] {
   }
   base64UrlDecode(value.iv, GCM_IV_BYTES);
   base64UrlDecode(value.hkdfSalt, SALT_BYTES);
-  const ciphertext = base64UrlDecode(value.ciphertext);
-  if (ciphertext.length <= ROOT_SECRET_BYTES) fail();
+  if (expectedCiphertextBytes !== undefined && value.ciphertext.length !== base64UrlEncodedLength(expectedCiphertextBytes)) fail();
+  const ciphertext = base64UrlDecode(value.ciphertext, expectedCiphertextBytes, expectedCiphertextBytes ?? 65_536 + GCM_TAG_BYTES);
+  if (expectedCiphertextBytes === undefined && (ciphertext.length <= GCM_TAG_BYTES || ciphertext.length > 65_536 + GCM_TAG_BYTES)) fail();
+  wipe(ciphertext);
   return { algorithm: value.algorithm, iv: value.iv, hkdfSalt: value.hkdfSalt, ciphertext: value.ciphertext };
+}
+
+function validateManifestEntry(value: unknown): AuthorityManifestEntryV1 {
+  if (!isPlainObject(value)) fail();
+  assertExactKeys(value, ["recordType", "namespace", "version", "generation", "digest"]);
+  if (
+    value.recordType !== "authority" ||
+    typeof value.namespace !== "string" ||
+    value.version !== VAULT_VERSION ||
+    value.generation !== 1 ||
+    typeof value.digest !== "string"
+  ) {
+    fail();
+  }
+  assertSafeBindingPart(value.namespace);
+  base64UrlDecode(value.digest, 32).fill(0);
+  return { recordType: value.recordType, namespace: value.namespace, version: value.version, generation: value.generation, digest: value.digest };
+}
+
+/**
+ * Canonical UTF-8 byte ordering. Never use locale collation in authenticated
+ * data: a vault may be created and recovered under different browser locales.
+ */
+function compareCanonicalNamespaces(first: string, second: string): number {
+  const firstBytes = new TextEncoder().encode(first);
+  const secondBytes = new TextEncoder().encode(second);
+  try {
+    const sharedLength = Math.min(firstBytes.length, secondBytes.length);
+    for (let index = 0; index < sharedLength; index += 1) {
+      const difference = firstBytes[index]! - secondBytes[index]!;
+      if (difference !== 0) return difference;
+    }
+    return firstBytes.length - secondBytes.length;
+  } finally {
+    wipe(firstBytes);
+    wipe(secondBytes);
+  }
+}
+
+function sortManifest(entries: readonly AuthorityManifestEntryV1[]): AuthorityManifestEntryV1[] {
+  return [...entries].sort((first, second) => compareCanonicalNamespaces(first.namespace, second.namespace));
 }
 
 export function validateRootWrap(value: unknown): RootWrapRecordV1 {
@@ -269,6 +366,8 @@ export function validateRootWrap(value: unknown): RootWrapRecordV1 {
     "updatedAt",
     "passwordKdf",
     "passkey",
+    "authorityManifest",
+    "recoveryGeneration",
     "authorityRecords",
     "cipher",
   ]);
@@ -280,16 +379,21 @@ export function validateRootWrap(value: unknown): RootWrapRecordV1 {
     value.namespace !== ROOT_NAMESPACE ||
     typeof value.createdAt !== "string" ||
     typeof value.updatedAt !== "string" ||
-    !Array.isArray(value.authorityRecords)
+    !Array.isArray(value.authorityRecords) ||
+    !Array.isArray(value.authorityManifest)
   ) {
     fail();
   }
   assertBinding({ walletId: value.walletId, recordType: value.recordType, namespace: value.namespace, version: value.version });
-  if (Number.isNaN(Date.parse(value.createdAt)) || Number.isNaN(Date.parse(value.updatedAt))) fail();
+  assertTimestamp(value.createdAt);
+  assertTimestamp(value.updatedAt);
   const authorityRecords = value.authorityRecords.map(validateAuthorityRecord);
+  const authorityManifest = sortManifest(value.authorityManifest.map(validateManifestEntry));
+  assertRecoveryGeneration(value.recoveryGeneration);
   if (
     authorityRecords.some((record) => record.walletId !== value.walletId) ||
-    new Set(authorityRecords.map((record) => record.namespace)).size !== authorityRecords.length
+    new Set(authorityRecords.map((record) => record.namespace)).size !== authorityRecords.length ||
+    new Set(authorityManifest.map((entry) => entry.namespace)).size !== authorityManifest.length
   ) {
     fail();
   }
@@ -303,8 +407,10 @@ export function validateRootWrap(value: unknown): RootWrapRecordV1 {
     updatedAt: value.updatedAt,
     passwordKdf: validatePersistedKdf(value.passwordKdf),
     passkey: validatePersistedPasskey(value.passkey),
+    authorityManifest,
+    recoveryGeneration: value.recoveryGeneration,
     authorityRecords,
-    cipher: validateCipher(value.cipher),
+    cipher: validateCipher(value.cipher, ROOT_CIPHERTEXT_BYTES),
   };
 }
 
@@ -403,6 +509,11 @@ export async function createRootWrap(input: CreateRootWrapInput): Promise<RootWr
     fail("invalid_input");
   }
   if (input.passkey.prfInput.length !== SALT_BYTES) fail("invalid_input");
+  const authorityRecords = (input.authorityRecords ?? []).map(validateAuthorityRecord);
+  if (authorityRecords.some((record) => record.walletId !== binding.walletId)) fail("invalid_input");
+  const authorityManifest = await manifestForAuthorityRecords(authorityRecords);
+  const recoveryGeneration = input.recoveryGeneration ?? 1;
+  assertRecoveryGeneration(recoveryGeneration);
   const policy = input.passwordKdf ?? productionPasswordKdfPolicy();
   const passwordContribution = await derivePasswordContribution(input.password, policy);
   const hkdfSalt = randomBytes(SALT_BYTES);
@@ -411,7 +522,7 @@ export async function createRootWrap(input: CreateRootWrapInput): Promise<RootWr
   try {
     const key = await wrappingKey(passwordContribution, input.passkeyPrf, hkdfSalt, binding);
     const ciphertext = await cryptoApi().subtle.encrypt(
-      { name: "AES-GCM", iv: cryptoBytes(iv), additionalData: cryptoBytes(associatedData(binding)), tagLength: 128 },
+      { name: "AES-GCM", iv: cryptoBytes(iv), additionalData: cryptoBytes(rootAssociatedData(binding, authorityManifest, recoveryGeneration, now, now)), tagLength: 128 },
       key,
       cryptoBytes(input.rootSecret),
     );
@@ -434,7 +545,9 @@ export async function createRootWrap(input: CreateRootWrapInput): Promise<RootWr
         rpId: input.passkey.rpId,
         prfInput: base64UrlEncode(input.passkey.prfInput),
       },
-      authorityRecords: [],
+      authorityManifest,
+      recoveryGeneration,
+      authorityRecords,
       cipher: {
         algorithm: "AES-256-GCM",
         iv: base64UrlEncode(iv),
@@ -450,10 +563,6 @@ export async function createRootWrap(input: CreateRootWrapInput): Promise<RootWr
     wipe(hkdfSalt);
     wipe(iv);
   }
-}
-
-export function withAuthorityRecords(record: RootWrapRecordV1, authorityRecords: readonly AuthorityRecordV1[]): RootWrapRecordV1 {
-  return validateRootWrap({ ...record, authorityRecords: [...authorityRecords], updatedAt: new Date().toISOString() });
 }
 
 export function rootPasskeyMetadata(record: RootWrapRecordV1): WalletPasskeyMetadata {
@@ -488,12 +597,20 @@ export async function openRootWrap(
   try {
     const key = await wrappingKey(passwordContribution, passkeyPrf, hkdfSalt, binding);
     const plaintext = await cryptoApi().subtle.decrypt(
-      { name: "AES-GCM", iv: cryptoBytes(iv), additionalData: cryptoBytes(associatedData(binding)), tagLength: 128 },
+      {
+        name: "AES-GCM",
+        iv: cryptoBytes(iv),
+        additionalData: cryptoBytes(rootAssociatedData(binding, record.authorityManifest, record.recoveryGeneration, record.createdAt, record.updatedAt)),
+        tagLength: 128,
+      },
       key,
       cryptoBytes(ciphertext),
     );
     const rootSecret = new Uint8Array(plaintext);
-    assert32ByteSecret(rootSecret);
+    if (rootSecret.length !== ROOT_SECRET_BYTES) {
+      wipe(rootSecret);
+      fail();
+    }
     return rootSecret;
   } catch (error) {
     if (error instanceof VaultError) throw error;
@@ -521,13 +638,14 @@ function validateAuthorityCipher(value: unknown): AuthorityRecordV1["cipher"] {
 
 export function validateAuthorityRecord(value: unknown): AuthorityRecordV1 {
   if (!isPlainObject(value)) fail();
-  assertExactKeys(value, ["format", "version", "walletId", "recordType", "namespace", "cipher"]);
+  assertExactKeys(value, ["format", "version", "walletId", "recordType", "namespace", "generation", "cipher"]);
   if (
     value.format !== "iwa-wallet-vault-record" ||
     value.version !== VAULT_VERSION ||
     typeof value.walletId !== "string" ||
     value.recordType !== "authority" ||
-    typeof value.namespace !== "string"
+    typeof value.namespace !== "string" ||
+    value.generation !== 1
   ) {
     fail();
   }
@@ -538,8 +656,52 @@ export function validateAuthorityRecord(value: unknown): AuthorityRecordV1 {
     walletId: value.walletId,
     recordType: value.recordType,
     namespace: value.namespace,
+    generation: value.generation,
     cipher: validateAuthorityCipher(value.cipher),
   };
+}
+
+function canonicalAuthorityRecord(record: AuthorityRecordV1): Uint8Array {
+  return new TextEncoder().encode(
+    `${record.format}|${record.version}|${record.walletId}|${record.recordType}|${record.namespace}|${record.generation}|${record.cipher.algorithm}|${record.cipher.iv}|${record.cipher.hkdfSalt}|${record.cipher.ciphertext}`,
+  );
+}
+
+async function authorityManifestEntry(record: AuthorityRecordV1): Promise<AuthorityManifestEntryV1> {
+  const canonical = canonicalAuthorityRecord(record);
+  try {
+    const digest = new Uint8Array(await cryptoApi().subtle.digest("SHA-256", cryptoBytes(canonical)));
+    try {
+      return {
+        recordType: "authority",
+        namespace: record.namespace,
+        version: VAULT_VERSION,
+        generation: record.generation,
+        digest: base64UrlEncode(digest),
+      };
+    } finally {
+      wipe(digest);
+    }
+  } catch (error) {
+    if (error instanceof VaultError) throw error;
+    throw new VaultError("unavailable");
+  } finally {
+    wipe(canonical);
+  }
+}
+
+export async function manifestForAuthorityRecords(records: readonly AuthorityRecordV1[]): Promise<AuthorityManifestEntryV1[]> {
+  const entries: AuthorityManifestEntryV1[] = [];
+  for (const candidate of records) entries.push(await authorityManifestEntry(validateAuthorityRecord(candidate)));
+  const manifest = sortManifest(entries);
+  if (new Set(manifest.map((entry) => entry.namespace)).size !== manifest.length) fail();
+  return manifest;
+}
+
+export async function authorityRecordsMatchManifest(record: RootWrapRecordV1): Promise<boolean> {
+  const valid = validateRootWrap(record);
+  const actual = await manifestForAuthorityRecords(valid.authorityRecords);
+  return canonicalManifest(actual) === canonicalManifest(valid.authorityManifest);
 }
 
 async function authorityKey(rootSecret: Uint8Array, hkdfSalt: Uint8Array, binding: VaultBinding): Promise<CryptoKey> {
@@ -581,6 +743,7 @@ export async function createAuthorityRecord(input: CreateAuthorityRecordInput): 
       walletId: binding.walletId,
       recordType: "authority",
       namespace: binding.namespace,
+      generation: 1,
       cipher: {
         algorithm: "AES-256-GCM",
         iv: base64UrlEncode(iv),

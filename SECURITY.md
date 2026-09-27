@@ -816,6 +816,50 @@ is decrypted. B1-A limits the exposure window but does not claim to eliminate
 this web-origin trust boundary; production signing additionally requires the
 separate CSP/dependency/intent-review gate.
 
+### B1-A-R1 remediation boundary (local-only, 2026-09-26)
+
+The root envelope now authenticates a canonical manifest of the complete
+authority-record set, including namespace, generation and SHA-256 digest. A
+copied, deleted, extra, or substituted child fails closed. Root ciphertext has
+an exact fixed-length parser bound. Vault creation and recovery import use
+insert-only IndexedDB writes (`add`), rather than replace-capable writes.
+
+The public warm value is an opaque capability, not an authority-bearing object.
+Secret state is module-private and every capability becomes unusable at lock.
+Unlock/import operations use a monotonically increasing epoch, so lock/logout
+invalidates in-flight storage, WebAuthn, KDF/decryption and child-load work
+before it can publish authority. Recovery export requires that live capability
+and a fresh wallet-passkey ceremony. Successful recovery advances the local
+generation and produces a replacement package. This does not solve offline
+global rollback detection: an old authentic bearer package cannot be identified
+without an online freshness authority or future chain-authority rotation.
+
+### B1-B onboarding and session boundary (local-only, 2026-09-27)
+
+The B1-B backend record is deliberately non-custodial: it contains one opaque
+server-generated wallet UUID, its owning Iwa user ID, timestamps, and a
+two-value setup status only. Passwords, PINs, WebAuthn credential assertions,
+PRF values, encrypted vault payloads, recovery artifacts, root secrets, and
+chain authority are rejected by endpoint shape and have no database column.
+The only post-local-creation report is the reserved UUID; it advances account
+progress to `walletProvisioning` but cannot finish onboarding, unlock a vault,
+recover a wallet, or sign.
+
+Iwa Account lifecycle is one-way into the vault: logout, logout-all, failed
+session refresh, account switch, suspension, pagehide, and provider teardown
+invalidate the local vault epoch and warm state. The vault lifecycle separately
+checks its own epoch after storage access, passkey enrollment, local creation,
+unlock, and PIN setup, so a stale setup cannot become warm after a lock. A
+partially created encrypted container may be retried on that same device only;
+the insert-only store prevents replacement or a second container.
+
+React receives only opaque local status. It never receives password, PIN, PRF
+output, root secret, decrypted authority, or normal warm capability. Refresh
+and browser restart begin cold. A new device with an existing server wallet ID
+but no local record is recovery-required, not a trigger to create a new wallet.
+Recovery is not yet implemented in B1-B and no production wallet should be
+claimed from this state.
+
 ## Backend security
 
 Backend stores only public/non-sensitive information unless a future feature receives a new explicit security design.

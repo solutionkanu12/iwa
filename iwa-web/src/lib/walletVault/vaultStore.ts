@@ -6,7 +6,10 @@ const VAULT_STORE = "vaults";
 
 export interface WalletVaultStore {
   load(walletId: string): Promise<RootWrapRecordV1 | null>;
-  save(record: RootWrapRecordV1): Promise<void>;
+  /** Inserts once. Replacement is reserved for an explicit future migration flow. */
+  create(record: RootWrapRecordV1): Promise<void>;
+  /** Removes only the exact record supplied; used to safely cancel a stale import. */
+  removeIfUnchanged(record: RootWrapRecordV1): Promise<boolean>;
   remove(walletId: string): Promise<void>;
 }
 
@@ -34,6 +37,10 @@ function recordForWallet(walletId: string, value: unknown): RootWrapRecordV1 {
   return record;
 }
 
+function sameRecord(first: RootWrapRecordV1, second: RootWrapRecordV1): boolean {
+  return JSON.stringify(first) === JSON.stringify(second);
+}
+
 /** Memory-only store used by unit tests; it is never selected by browser code. */
 export class InMemoryVaultStore implements WalletVaultStore {
   readonly unsafeRecords = new Map<string, unknown>();
@@ -43,9 +50,18 @@ export class InMemoryVaultStore implements WalletVaultStore {
     return value === undefined ? null : recordForWallet(walletId, value);
   }
 
-  async save(record: RootWrapRecordV1): Promise<void> {
+  async create(record: RootWrapRecordV1): Promise<void> {
     const valid = recordForWallet(record.walletId, record);
+    if (this.unsafeRecords.has(valid.walletId)) fail("authentication_failed");
     this.unsafeRecords.set(valid.walletId, cloneRecord(valid));
+  }
+
+  async removeIfUnchanged(record: RootWrapRecordV1): Promise<boolean> {
+    const valid = recordForWallet(record.walletId, record);
+    const current = this.unsafeRecords.get(valid.walletId);
+    if (current === undefined || !sameRecord(recordForWallet(valid.walletId, current), valid)) return false;
+    this.unsafeRecords.delete(valid.walletId);
+    return true;
   }
 
   async remove(walletId: string): Promise<void> {
@@ -100,12 +116,41 @@ export class IndexedDbVaultStore implements WalletVaultStore {
     }
   }
 
-  async save(record: RootWrapRecordV1): Promise<void> {
+  async create(record: RootWrapRecordV1): Promise<void> {
     const valid = recordForWallet(record.walletId, record);
     try {
       const transaction = this.database.transaction(VAULT_STORE, "readwrite");
-      transaction.objectStore(VAULT_STORE).put(cloneRecord(valid), valid.walletId);
+      transaction.objectStore(VAULT_STORE).add(cloneRecord(valid), valid.walletId);
       await transactionComplete(transaction);
+    } catch (error) {
+      if (error instanceof VaultError) throw error;
+      throw new VaultError("unavailable");
+    }
+  }
+
+  async removeIfUnchanged(record: RootWrapRecordV1): Promise<boolean> {
+    const valid = recordForWallet(record.walletId, record);
+    try {
+      return await new Promise<boolean>((resolve, reject) => {
+        const transaction = this.database.transaction(VAULT_STORE, "readwrite");
+        const store = transaction.objectStore(VAULT_STORE);
+        let removed = false;
+        const request = store.get(valid.walletId);
+        request.onsuccess = () => {
+          try {
+            if (request.result !== undefined && sameRecord(recordForWallet(valid.walletId, request.result), valid)) {
+              store.delete(valid.walletId);
+              removed = true;
+            }
+          } catch {
+            transaction.abort();
+          }
+        };
+        request.onerror = () => transaction.abort();
+        transaction.oncomplete = () => resolve(removed);
+        transaction.onerror = () => reject(new VaultError("unavailable"));
+        transaction.onabort = () => reject(new VaultError("unavailable"));
+      });
     } catch (error) {
       if (error instanceof VaultError) throw error;
       throw new VaultError("unavailable");

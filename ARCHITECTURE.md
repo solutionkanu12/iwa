@@ -602,6 +602,36 @@ PIN is process-memory-only warm-session confirmation and cannot cold unlock,
 recover, export, enroll, or sign. B1-A contains synthetic test authorities
 only; it does not provision any chain account or transaction signer.
 
+### Onboarding lifecycle integration (B1-B)
+
+The existing Iwa Account onboarding state machine remains the sole product
+progress model: `profile -> passwordPin -> walletProvisioning -> recovery ->
+finish`. B1-B adds one narrowly scoped non-secret coordination record per Iwa
+user. The backend generates and owns the opaque wallet UUID plus a setup status
+only; it never receives the browser vault record, password, PIN, credential
+assertion, PRF result, recovery material, or any chain authority.
+
+At `passwordPin`, the browser reserves that UUID, locally enrolls the dedicated
+wallet passkey, and creates an empty encrypted B1-A container for the same ID.
+Only after that local operation does the client report the opaque UUID to
+advance the server to `walletProvisioning`. This report is product-progress
+metadata, not proof of spending authority. It cannot complete onboarding or
+authorize a transaction.
+
+`IwaWalletVaultProvider` is inside the Iwa Account provider only for one-way
+lock notifications. The account provider has no vault reference and knows no
+wallet secret. The vault provider exposes to React only `{ walletId,
+localVault, state }`; its actual vault and opaque warm capability remain in
+module-private state. Account logout, session invalidation, account switching,
+suspension, pagehide, and provider teardown lock the local vault. Refresh and
+restart are cold by process-memory design. A device without the local record
+is represented as recovery-required and is never allowed to silently create a
+second wallet.
+
+B1-B stores no chain-specific authority and adds no chain adapter behaviour.
+Recovery remains B1-C, and all future signing must stay behind the vault's
+bounded authority API rather than Iwa Account session state.
+
 ## Starknet frontend adapter
 
 Responsible for:

@@ -42,6 +42,22 @@ export type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
 export type OnboardingTransition = { from: "new" | OnboardingStep; to: OnboardingStep };
 export type OnboardingTransitionKind = "start" | "advance" | "retry";
 
+/**
+ * Non-secret coordination state for the one user-facing Iwa Wallet. This is
+ * deliberately not a wallet credential, account address, passkey assertion,
+ * vault record, or recovery material. It lets the account state machine refer
+ * to a local vault without giving the backend anything that can unlock it.
+ */
+export type IwaWalletSetupStatus = "reserved" | "vaultProvisioned";
+
+export interface IwaWalletSetup {
+  userId: string;
+  walletId: string;
+  status: IwaWalletSetupStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface OnboardingProgress {
   status: OnboardingStatus;
   step: OnboardingStep;
@@ -84,6 +100,25 @@ export function onboardingTransitionKind(
     step === "passwordPin" &&
     transition.to === "passwordPin" &&
     (transition.from === "profile" || transition.from === "passwordPin")
+  ) {
+    return "retry";
+  }
+  // The client cannot use this general progress endpoint to pass the wallet
+  // stage. It may only enter recovery after the separate local-vault report
+  // has been checked against the server-owned opaque wallet reservation.
+  if (
+    status === "incomplete" &&
+    step === "walletProvisioning" &&
+    transition.from === "walletProvisioning" &&
+    transition.to === "recovery"
+  ) {
+    return "advance";
+  }
+  if (
+    status === "incomplete" &&
+    step === "recovery" &&
+    transition.to === "recovery" &&
+    (transition.from === "walletProvisioning" || transition.from === "recovery")
   ) {
     return "retry";
   }

@@ -7,6 +7,8 @@ const RECOVERY_PAYLOAD_FORMAT = "iwa-wallet-recovery-payload";
 const RECOVERY_VERSION = 1;
 const SECRET_BYTES = 32;
 const GCM_IV_BYTES = 12;
+const GCM_TAG_BYTES = 16;
+const MAX_RECOVERY_CIPHERTEXT_BYTES = 256 * 1024;
 
 export interface SyntheticVaultAuthority {
   id: string;
@@ -91,8 +93,10 @@ function base64UrlEncode(bytes: Uint8Array): string {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-function base64UrlDecode(value: unknown, length?: number): Uint8Array {
+function base64UrlDecode(value: unknown, length?: number, maximumLength?: number): Uint8Array {
   if (typeof value !== "string" || value.length === 0 || !/^[A-Za-z0-9_-]+$/.test(value)) fail();
+  if (length !== undefined && value.length !== base64UrlEncodedLength(length)) fail();
+  if (maximumLength !== undefined && value.length > base64UrlEncodedLength(maximumLength)) fail();
   try {
     const padded = value.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (value.length % 4)) % 4);
     const bytes = Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
@@ -102,6 +106,12 @@ function base64UrlDecode(value: unknown, length?: number): Uint8Array {
     if (error instanceof VaultError) throw error;
     fail();
   }
+}
+
+function base64UrlEncodedLength(bytes: number): number {
+  const fullGroups = Math.floor(bytes / 3);
+  const remainder = bytes % 3;
+  return fullGroups * 4 + (remainder === 0 ? 0 : remainder + 1);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -122,11 +132,16 @@ function assertGeneration(value: unknown): asserts value is number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) fail("invalid_input");
 }
 
-function recoveryAad(walletId: string, packageId: string, generation: number): Uint8Array {
+function assertTimestamp(value: unknown): asserts value is string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 64 || /[|\r\n]/.test(value) || Number.isNaN(Date.parse(value))) fail("invalid_input");
+}
+
+function recoveryAad(walletId: string, packageId: string, generation: number, createdAt: string): Uint8Array {
   assertIdentifier(walletId);
   assertIdentifier(packageId);
   assertGeneration(generation);
-  return new TextEncoder().encode(`IWA-WALLET-RECOVERY-AAD-V1|${walletId}|${packageId}|${generation}|${RECOVERY_VERSION}`);
+  assertTimestamp(createdAt);
+  return new TextEncoder().encode(`IWA-WALLET-RECOVERY-AAD-V1|${walletId}|${packageId}|${generation}|${RECOVERY_VERSION}|${createdAt}`);
 }
 
 function assertSecret(value: Uint8Array): void {
@@ -155,24 +170,33 @@ function validatePayload(value: unknown, header: RecoveryPackageV1): RecoveredVa
   ) {
     fail();
   }
-  const rootSecret = base64UrlDecode(value.rootSecret, SECRET_BYTES);
-  const authorities = value.authorities.map((authority) => {
-    if (!isPlainObject(authority)) fail();
-    assertExactKeys(authority, ["id", "material"]);
-    assertIdentifier(authority.id);
-    return { id: authority.id, material: base64UrlDecode(authority.material, SECRET_BYTES) };
-  });
-  const uniqueAuthorityIds = new Set(authorities.map((authority) => authority.id));
-  if (uniqueAuthorityIds.size !== authorities.length) fail();
-  const publicDescriptors = value.publicDescriptors.map(validateDescriptor);
-  return {
-    walletId: header.walletId,
-    packageId: header.packageId,
-    generation: header.generation,
-    rootSecret,
-    authorities,
-    publicDescriptors,
-  };
+  let rootSecret: Uint8Array | undefined;
+  const authorities: SyntheticVaultAuthority[] = [];
+  try {
+    rootSecret = base64UrlDecode(value.rootSecret, SECRET_BYTES);
+    for (const authority of value.authorities) {
+      if (!isPlainObject(authority)) fail();
+      assertExactKeys(authority, ["id", "material"]);
+      assertIdentifier(authority.id);
+      authorities.push({ id: authority.id, material: base64UrlDecode(authority.material, SECRET_BYTES) });
+    }
+    const uniqueAuthorityIds = new Set(authorities.map((authority) => authority.id));
+    if (uniqueAuthorityIds.size !== authorities.length) fail();
+    const publicDescriptors = value.publicDescriptors.map(validateDescriptor);
+    const recoveredRoot = rootSecret;
+    rootSecret = undefined;
+    return {
+      walletId: header.walletId,
+      packageId: header.packageId,
+      generation: header.generation,
+      rootSecret: recoveredRoot,
+      authorities: [...authorities],
+      publicDescriptors,
+    };
+  } finally {
+    wipe(rootSecret);
+    if (rootSecret !== undefined) for (const authority of authorities) wipe(authority.material);
+  }
 }
 
 export function validateRecoveryPackage(value: unknown): RecoveryPackageV1 {
@@ -182,7 +206,6 @@ export function validateRecoveryPackage(value: unknown): RecoveryPackageV1 {
     value.format !== RECOVERY_FORMAT ||
     value.version !== RECOVERY_VERSION ||
     typeof value.createdAt !== "string" ||
-    Number.isNaN(Date.parse(value.createdAt)) ||
     !isPlainObject(value.cipher)
   ) {
     fail();
@@ -191,11 +214,14 @@ export function validateRecoveryPackage(value: unknown): RecoveryPackageV1 {
   assertIdentifier(value.walletId);
   assertIdentifier(value.packageId);
   assertGeneration(value.generation);
+  assertTimestamp(value.createdAt);
   assertExactKeys(value.cipher, ["algorithm", "iv", "ciphertext"]);
-  if (value.cipher.algorithm !== "AES-256-GCM") fail();
+  if (value.cipher.algorithm !== "AES-256-GCM" || typeof value.cipher.iv !== "string" || typeof value.cipher.ciphertext !== "string") fail();
   const iv = base64UrlDecode(value.cipher.iv, GCM_IV_BYTES);
-  const ciphertext = base64UrlDecode(value.cipher.ciphertext);
-  if (ciphertext.length <= SECRET_BYTES) fail();
+  const ciphertextText = value.cipher.ciphertext;
+  if (ciphertextText.length > base64UrlEncodedLength(MAX_RECOVERY_CIPHERTEXT_BYTES)) fail();
+  const ciphertext = base64UrlDecode(ciphertextText, undefined, MAX_RECOVERY_CIPHERTEXT_BYTES);
+  if (ciphertext.length <= GCM_TAG_BYTES || ciphertext.length > MAX_RECOVERY_CIPHERTEXT_BYTES) fail();
   wipe(iv);
   wipe(ciphertext);
   return {
@@ -246,10 +272,11 @@ export async function createRecoveryPackage(input: CreateRecoveryPackageInput): 
   const payload = payloadFrom(input);
   const iv = randomBytes(GCM_IV_BYTES);
   const plaintext = new TextEncoder().encode(JSON.stringify(payload));
+  const createdAt = new Date().toISOString();
   try {
     const key = await recoveryCipherKey(input.recoveryKey);
     const ciphertext = await cryptoApi().subtle.encrypt(
-      { name: "AES-GCM", iv: cryptoBytes(iv), additionalData: cryptoBytes(recoveryAad(input.walletId, input.packageId, input.generation)), tagLength: 128 },
+      { name: "AES-GCM", iv: cryptoBytes(iv), additionalData: cryptoBytes(recoveryAad(input.walletId, input.packageId, input.generation, createdAt)), tagLength: 128 },
       key,
       cryptoBytes(plaintext),
     );
@@ -259,7 +286,7 @@ export async function createRecoveryPackage(input: CreateRecoveryPackageInput): 
       walletId: input.walletId,
       packageId: input.packageId,
       generation: input.generation,
-      createdAt: new Date().toISOString(),
+      createdAt,
       cipher: { algorithm: "AES-256-GCM", iv: base64UrlEncode(iv), ciphertext: base64UrlEncode(new Uint8Array(ciphertext)) },
     });
   } catch (error) {
@@ -285,7 +312,7 @@ export async function openRecoveryPackage(
   try {
     const key = await recoveryCipherKey(recoveryKey);
     const plaintext = await cryptoApi().subtle.decrypt(
-      { name: "AES-GCM", iv: cryptoBytes(iv), additionalData: cryptoBytes(recoveryAad(recovery.walletId, recovery.packageId, recovery.generation)), tagLength: 128 },
+      { name: "AES-GCM", iv: cryptoBytes(iv), additionalData: cryptoBytes(recoveryAad(recovery.walletId, recovery.packageId, recovery.generation, recovery.createdAt)), tagLength: 128 },
       key,
       cryptoBytes(ciphertext),
     );

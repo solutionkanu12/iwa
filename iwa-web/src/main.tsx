@@ -9,6 +9,7 @@ import { AcceptInviteView } from "./screens/AcceptInviteView.tsx";
 import { WalletProvider } from "./app/WalletProvider.tsx";
 import { SessionProvider } from "./app/SessionProvider.tsx";
 import { IwaAuthProvider, useIwaAuth } from "./app/IwaAuthProvider.tsx";
+import { IwaWalletVaultProvider } from "./app/IwaWalletVaultProvider.tsx";
 import { AuthLoading, AuthScreen, AuthSuspended } from "./app/AuthScreen.tsx";
 import { AuthCallbackView } from "./screens/AuthCallbackView.tsx";
 import { AuthConfirmView } from "./screens/AuthConfirmView.tsx";
@@ -90,7 +91,9 @@ createRoot(rootEl).render(
     <WalletProvider>
       <SessionProvider>
         <IwaAuthProvider>
-          <AppRoot />
+          <IwaWalletVaultProvider>
+            <AppRoot />
+          </IwaWalletVaultProvider>
         </IwaAuthProvider>
       </SessionProvider>
     </WalletProvider>

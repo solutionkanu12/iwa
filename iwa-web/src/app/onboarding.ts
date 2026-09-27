@@ -16,15 +16,24 @@ export const ONBOARDING_STEPS = [
 export type OnboardingDestination = "home" | "onboarding";
 
 /**
- * Only server-persisted stages that this milestone implements can render.
- * Any absent or future stage fails closed to the account-profile entry point.
+ * Only known server-persisted stages can render. Any absent, completed, or
+ * future value fails closed to the account-profile entry point rather than
+ * inventing a client-side onboarding path.
  */
 export function onboardingStepFor(
   status: OnboardingStatus | undefined,
   persistedStep: OnboardingStep | undefined,
 ): OnboardingStep {
   if (status === "completed") return "finish";
-  if (status === "incomplete" && persistedStep === "passwordPin") return "passwordPin";
+  if (
+    status === "incomplete" &&
+    (persistedStep === "profile" ||
+      persistedStep === "passwordPin" ||
+      persistedStep === "walletProvisioning" ||
+      persistedStep === "recovery")
+  ) {
+    return persistedStep;
+  }
   return "profile";
 }
 
