@@ -94,4 +94,35 @@ describe("Iwa email sign-in initiation", () => {
       expect(String(request?.body ?? "")).not.toMatch(/password|123456|prf|secret|private/i);
     }
   });
+
+  it("reports only recovery generation metadata and never a package or recovery key", async () => {
+    vi.stubGlobal("document", { cookie: "iwa_csrf=test-csrf" });
+    const fetch = vi.fn(async (_url: string, _init?: RequestInit) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        onboarding: { status: "incomplete", step: "recovery" },
+        wallet: {
+          walletId: "00000000-0000-4000-8000-000000000111",
+          status: "vaultProvisioned",
+          recoveryStatus: "verified",
+          recoveryGeneration: 2,
+        },
+      }),
+    }));
+    vi.stubGlobal("fetch", fetch);
+
+    await iwaAccount.markWalletRecoveryVerified("00000000-0000-4000-8000-000000000111", 2);
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringMatching(/\/api\/onboarding\/wallet\/recovery\/verified$/),
+      expect.objectContaining({
+        credentials: "include",
+        method: "POST",
+        body: JSON.stringify({ walletId: "00000000-0000-4000-8000-000000000111", generation: 2 }),
+      }),
+    );
+    const request = fetch.mock.calls[0]?.[1] as RequestInit;
+    expect(String(request.body)).not.toMatch(/recovery[-_]?key|password|pin|ciphertext|secret|prf/i);
+  });
 });

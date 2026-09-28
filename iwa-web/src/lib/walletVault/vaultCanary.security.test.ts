@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createRecoveryPackage, openRecoveryPackage } from "./recoveryPackage";
 import { createRootWrap, forTestOnlyPasswordKdfPolicy } from "./vaultCrypto";
+import { formatRecoveryKey } from "./recoveryKey";
 
 const canaryText = "B1S1-CANARY-NOT-LOGGED-000000000";
 const canary = new TextEncoder().encode(canaryText);
@@ -42,11 +43,13 @@ describe("wallet-vault secret canary boundary", () => {
         errorText = String(error);
       }
       const canaryBase64 = btoa(String.fromCharCode(...canary)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+      const recoveryCode = formatRecoveryKey(recoveryKey);
       const escapedCanary = JSON.stringify(canaryText);
       const persisted = JSON.stringify({ root, recovery });
       const reachedForbiddenBoundary =
         persisted.includes(canaryText) ||
         persisted.includes(canaryBase64) ||
+        persisted.includes(recoveryCode) ||
         errorText.includes(canaryText) ||
         errorText.includes(canaryBase64) ||
         consoleSpies.some((spy) => JSON.stringify(spy.mock.calls).includes(canaryText)) ||

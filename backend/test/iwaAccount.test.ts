@@ -198,6 +198,15 @@ function markWalletProvisioned(cookie: string, token: string, walletId: string) 
     .send({ walletId });
 }
 
+function markWalletRecoveryVerified(cookie: string, token: string, walletId: string, generation: number) {
+  return request(app)
+    .post("/api/onboarding/wallet/recovery/verified")
+    .set("Origin", ORIGIN)
+    .set("Cookie", cookie)
+    .set(IWA_CSRF_HEADER, token)
+    .send({ walletId, generation });
+}
+
 function signEs256Jwt(
   payload: Record<string, unknown>,
   privateKey: KeyObject,
@@ -820,7 +829,12 @@ describe("onboarding foundation", () => {
 
     const provisioned = await markWalletProvisioned(cookie, token, walletId).expect(200);
     expect(provisioned.body.onboarding).toEqual({ status: "incomplete", step: "walletProvisioning" });
-    expect(provisioned.body.wallet).toEqual({ walletId, status: "vaultProvisioned" });
+    expect(provisioned.body.wallet).toEqual({
+      walletId,
+      status: "vaultProvisioned",
+      recoveryStatus: "notConfigured",
+      recoveryGeneration: null,
+    });
     await markWalletProvisioned(cookie, token, walletId).expect(200);
 
     const returned = await login("google-alice-again").expect(200);
@@ -831,10 +845,38 @@ describe("onboarding foundation", () => {
       .set("Origin", ORIGIN)
       .set("Cookie", cookie)
       .expect(200);
-    expect(restored.body.wallet).toEqual({ walletId, status: "vaultProvisioned" });
+    expect(restored.body.wallet).toEqual({
+      walletId,
+      status: "vaultProvisioned",
+      recoveryStatus: "notConfigured",
+      recoveryGeneration: null,
+    });
 
     await transitionOnboarding(cookie, token, { from: "walletProvisioning", to: "recovery" }).expect(200);
     expect((await me(cookie)).body.user).toMatchObject({ onboardingStatus: "incomplete", onboardingStep: "recovery" });
+
+    await request(app)
+      .post("/api/onboarding/wallet/recovery/verified")
+      .set("Origin", ORIGIN)
+      .set("Cookie", cookie)
+      .set(IWA_CSRF_HEADER, token)
+      .send({ walletId, generation: 1, recoveryKey: "never-send-a-recovery-key" })
+      .expect(400);
+
+    const initialRecovery = await markWalletRecoveryVerified(cookie, token, walletId, 1).expect(200);
+    expect(initialRecovery.body.wallet).toEqual({
+      walletId,
+      status: "vaultProvisioned",
+      recoveryStatus: "verified",
+      recoveryGeneration: 1,
+    });
+    expect(initialRecovery.body.onboarding).toEqual({ status: "incomplete", step: "recovery" });
+    expect(JSON.stringify(initialRecovery.body)).not.toMatch(/password|pin|prf|secret|key|ciphertext/i);
+
+    await markWalletRecoveryVerified(cookie, token, walletId, 1).expect(200);
+    await markWalletRecoveryVerified(cookie, token, walletId, 3).expect(409);
+    const rotatedRecovery = await markWalletRecoveryVerified(cookie, token, walletId, 2).expect(200);
+    expect(rotatedRecovery.body.wallet).toMatchObject({ recoveryStatus: "verified", recoveryGeneration: 2 });
   });
 });
 
@@ -944,6 +986,29 @@ describe("schema", () => {
       expect(sql).toContain(`'${step}'`);
     }
     for (const banned of ["password_hash", "password_digest", "pin_hash", "pin_secret", "private_key", "seed", "mnemonic", "recovery_secret"]) {
+      expect(sql).not.toContain(banned);
+    }
+  });
+
+  it("stores only non-secret recovery freshness metadata in migration 009", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const sql = readFileSync(resolve(here, "../migrations/009_add_iwa_wallet_recovery_state.sql"), "utf8")
+      .replace(/--.*$/gm, "")
+      .toLowerCase();
+    expect(sql).toContain("recovery_status");
+    expect(sql).toContain("recovery_generation");
+    for (const banned of [
+      "password",
+      "pin",
+      "private_key",
+      "seed",
+      "mnemonic",
+      "recovery_key",
+      "recovery_secret",
+      "ciphertext",
+      "vault_root",
+      "viewing_key",
+    ]) {
       expect(sql).not.toContain(banned);
     }
   });

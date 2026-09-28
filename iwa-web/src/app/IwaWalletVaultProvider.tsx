@@ -13,10 +13,14 @@ import { currentBrowserWalletPasskey } from "../lib/walletVault/passkey";
 import { IndexedDbVaultStore } from "../lib/walletVault/vaultStore";
 import {
   IwaWalletVaultLifecycle,
+  type ExportRecoveryPackageInput,
   type ProvisionLocalVaultInput,
   type PublicWalletVaultState,
+  type RecoverLocalVaultInput,
   type UnlockLocalVaultInput,
+  type VerifyRecoveryPackageInput,
 } from "./iwaWalletVaultLifecycle";
+import type { RecoveryPackageV1, RecoveryPackageVerification } from "../lib/walletVault/recoveryPackage";
 import { useIwaAuth } from "./IwaAuthProvider";
 
 export interface IwaWalletVaultState {
@@ -24,6 +28,9 @@ export interface IwaWalletVaultState {
   inspect(walletId: string): Promise<PublicWalletVaultState>;
   provision(input: ProvisionLocalVaultInput): Promise<void>;
   unlock(input: UnlockLocalVaultInput): Promise<void>;
+  exportRecovery(input: ExportRecoveryPackageInput): Promise<RecoveryPackageV1>;
+  verifyRecovery(input: VerifyRecoveryPackageInput): Promise<RecoveryPackageVerification>;
+  recover(input: RecoverLocalVaultInput): Promise<RecoveryPackageV1>;
   lock(): void;
 }
 
@@ -78,6 +85,24 @@ export function IwaWalletVaultProvider({ children }: { children: ReactNode }) {
     }
   }, [lifecycle]);
 
+  const exportRecovery = useCallback(
+    (input: ExportRecoveryPackageInput) => lifecycle.exportRecovery(input),
+    [lifecycle],
+  );
+
+  const verifyRecovery = useCallback(
+    (input: VerifyRecoveryPackageInput) => lifecycle.verifyRecovery(input),
+    [lifecycle],
+  );
+
+  const recover = useCallback(async (input: RecoverLocalVaultInput) => {
+    try {
+      return await lifecycle.recover(input);
+    } finally {
+      setView(lifecycle.view());
+    }
+  }, [lifecycle]);
+
   useEffect(() => auth.registerWalletLock(lock), [auth, lock]);
 
   useEffect(() => {
@@ -98,8 +123,8 @@ export function IwaWalletVaultProvider({ children }: { children: ReactNode }) {
   }, [auth.phase, lock]);
 
   const value = useMemo<IwaWalletVaultState>(
-    () => ({ view, inspect, provision, unlock, lock }),
-    [view, inspect, provision, unlock, lock],
+    () => ({ view, inspect, provision, unlock, exportRecovery, verifyRecovery, recover, lock }),
+    [view, inspect, provision, unlock, exportRecovery, verifyRecovery, recover, lock],
   );
   return <IwaWalletVaultContext.Provider value={value}>{children}</IwaWalletVaultContext.Provider>;
 }

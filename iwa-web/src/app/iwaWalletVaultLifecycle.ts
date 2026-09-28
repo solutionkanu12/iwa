@@ -5,6 +5,11 @@ import {
 } from "../lib/walletVault/vaultCrypto";
 import type { WalletVaultStore } from "../lib/walletVault/vaultStore";
 import {
+  verifyRecoveryPackage,
+  type RecoveryPackageV1,
+  type RecoveryPackageVerification,
+} from "../lib/walletVault/recoveryPackage";
+import {
   WalletVault,
   type VaultTimeout,
   type WalletPasskeyAuthority,
@@ -16,7 +21,7 @@ export interface WalletPasskeyEnrollmentAuthority extends WalletPasskeyAuthority
   enroll(rpId: string): Promise<WalletPasskeyMetadata>;
 }
 
-export type LocalVaultPresence = "unknown" | "absent" | "present";
+export type LocalVaultPresence = "unknown" | "absent" | "present" | "corrupt" | "conflict";
 
 /**
  * The only state that this lifecycle layer may hand to React. A warm session,
@@ -49,6 +54,29 @@ export interface UnlockLocalVaultInput {
   password: string;
 }
 
+export interface ExportRecoveryPackageInput {
+  walletId: string;
+  recoveryKey: Uint8Array;
+  packageId: string;
+}
+
+export interface VerifyRecoveryPackageInput {
+  recovery: RecoveryPackageV1;
+  recoveryKey: Uint8Array;
+  walletId: string;
+  generation: number;
+}
+
+export interface RecoverLocalVaultInput {
+  recovery: RecoveryPackageV1;
+  recoveryKey: Uint8Array;
+  walletId: string;
+  expectedGeneration: number;
+  password: string;
+  pin: string;
+  replacementPackageId: string;
+}
+
 function fail(code: VaultError["code"] = "authentication_failed"): never {
   throw new VaultError(code);
 }
@@ -69,6 +97,8 @@ const warmSessionForLifecycle = new WeakMap<IwaWalletVaultLifecycle, WalletVault
  */
 export class IwaWalletVaultLifecycle {
   private vault: WalletVault | null = null;
+  /** A transitional vault is lockable before it is allowed to publish warm state. */
+  private inFlightVault: WalletVault | null = null;
   private walletId: string | null = null;
   private localVault: LocalVaultPresence = "unknown";
   private operationEpoch = 0;
@@ -88,10 +118,10 @@ export class IwaWalletVaultLifecycle {
     this.lock();
     const epoch = this.operationEpoch;
     const store = await this.dependencies.openStore();
-    const existing = await store.load(walletId);
+    const presence = await this.storedPresence(store, walletId);
     this.assertCurrent(epoch);
     this.walletId = walletId;
-    this.localVault = existing === null ? "absent" : "present";
+    this.localVault = presence;
     return this.view();
   }
 
@@ -170,6 +200,101 @@ export class IwaWalletVaultLifecycle {
     }
   }
 
+  /** Exports only an encrypted package. The user-held recovery key stays outside this object. */
+  async exportRecovery(input: ExportRecoveryPackageInput): Promise<RecoveryPackageV1> {
+    const session = warmSessionForLifecycle.get(this);
+    if (this.vault === null || session === undefined || this.walletId !== input.walletId) fail();
+    const key = new Uint8Array(input.recoveryKey);
+    try {
+      return await this.vault.exportRecovery(session, input.walletId, key, input.packageId);
+    } finally {
+      wipe(key);
+    }
+  }
+
+  /**
+   * Validates a user-selected backup against the live local generation without
+   * giving root or authority plaintext to the caller.
+   */
+  async verifyRecovery(input: VerifyRecoveryPackageInput): Promise<RecoveryPackageVerification> {
+    const session = warmSessionForLifecycle.get(this);
+    if (this.vault === null || session === undefined || this.walletId !== input.walletId) fail();
+    const localGeneration = this.vault.recoveryGeneration(session, input.walletId);
+    if (input.generation !== localGeneration) fail();
+    return verifyRecoveryPackage(input.recovery, input.recoveryKey, {
+      walletId: input.walletId,
+      generation: localGeneration,
+    });
+  }
+
+  /**
+   * Rewraps a verified portable package on a device that holds no existing
+   * container. Recovery is an explicit replacement flow: a healthy local
+   * vault is never overwritten, and the imported root is immediately wrapped
+   * with a newly enrolled wallet passkey, password, and device-local PIN.
+   */
+  async recover(input: RecoverLocalVaultInput): Promise<RecoveryPackageV1> {
+    this.lock();
+    const epoch = this.operationEpoch;
+    const store = await this.dependencies.openStore();
+    this.assertCurrent(epoch);
+    const localPresence = await this.storedPresence(store, input.walletId);
+    if (localPresence === "present" || localPresence === "conflict") fail("authentication_failed");
+    this.assertCurrent(epoch);
+
+    const key = new Uint8Array(input.recoveryKey);
+    let verification: RecoveryPackageVerification | undefined;
+    let metadata: WalletPasskeyMetadata | undefined;
+    let vault: WalletVault | undefined;
+    let published = false;
+    try {
+      verification = await verifyRecoveryPackage(input.recovery, key, {
+        walletId: input.walletId,
+        generation: input.expectedGeneration,
+      });
+      this.assertCurrent(epoch);
+      // A caller reaches this path only after explicitly selecting recovery.
+      // A malformed same-wallet record cannot be unlocked and would block the
+      // insert-only import, so remove it only after package possession has
+      // already been proven. Healthy and different-wallet records were
+      // rejected above and never reach this deletion.
+      if (localPresence === "corrupt") {
+        await store.remove(input.walletId);
+        this.assertCurrent(epoch);
+      }
+
+      const passkey = this.dependencies.createPasskey();
+      metadata = await passkey.enroll(this.dependencies.rpId());
+      this.assertCurrent(epoch);
+      vault = this.newVault(store, passkey);
+      this.inFlightVault = vault;
+      const replacement = await vault.importRecovery({
+        recovery: input.recovery,
+        recoveryKey: key,
+        password: input.password,
+        passkey: metadata,
+        replacementPackageId: input.replacementPackageId,
+      });
+      this.assertCurrent(epoch);
+      const session = await vault.unlock({ walletId: input.walletId, password: input.password });
+      this.assertCurrent(epoch);
+      await vault.setPin(session, input.pin);
+      this.assertCurrent(epoch);
+      this.vault = vault;
+      this.inFlightVault = null;
+      warmSessionForLifecycle.set(this, session);
+      this.walletId = verification.walletId;
+      this.localVault = "present";
+      published = true;
+      return replacement;
+    } finally {
+      wipe(key);
+      wipe(metadata?.prfInput);
+      if (this.inFlightVault === vault) this.inFlightVault = null;
+      if (!published) vault?.lock();
+    }
+  }
+
   private async setWarmPin(pin: string): Promise<void> {
     const session = warmSessionForLifecycle.get(this);
     if (this.vault === null || session === undefined) fail();
@@ -179,6 +304,8 @@ export class IwaWalletVaultLifecycle {
   /** Invalidates the underlying vault epoch and drops every local capability reference. */
   lock(): void {
     this.operationEpoch += 1;
+    this.inFlightVault?.lock();
+    this.inFlightVault = null;
     this.vault?.lock();
     this.vault = null;
     warmSessionForLifecycle.delete(this);
@@ -192,6 +319,18 @@ export class IwaWalletVaultLifecycle {
       ...(this.dependencies.timeout === undefined ? {} : { timeout: this.dependencies.timeout }),
       ...(this.dependencies.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: this.dependencies.idleTimeoutMs }),
     });
+  }
+
+  private async storedPresence(store: WalletVaultStore, walletId: string): Promise<Exclude<LocalVaultPresence, "unknown">> {
+    if (await store.hasOtherWallet(walletId)) return "conflict";
+    try {
+      return (await store.load(walletId)) === null ? "absent" : "present";
+    } catch (error) {
+      if (error instanceof VaultError && (error.code === "invalid_record" || error.code === "authentication_failed")) {
+        return "corrupt";
+      }
+      throw error;
+    }
   }
 
   private assertCurrent(epoch: number): void {

@@ -98,6 +98,14 @@ export interface OnboardingProgress {
 export interface WalletSetupView {
   walletId: string;
   status: "reserved" | "vaultProvisioned";
+  recoveryStatus: "notConfigured" | "verified";
+  recoveryGeneration: number | null;
+}
+
+/** Reservation happens before any recovery package exists. */
+export interface WalletReservationView {
+  walletId: string;
+  status: "reserved";
 }
 
 export interface WalletProvisioningView {
@@ -411,7 +419,7 @@ export const iwaAccount = {
     return this.transitionOnboarding("new", "profile");
   },
 
-  async reserveWalletSetup(): Promise<{ wallet: WalletSetupView }> {
+  async reserveWalletSetup(): Promise<{ wallet: WalletReservationView }> {
     return call("/api/onboarding/wallet/reserve", { method: "POST", body: "{}" });
   },
 
@@ -419,6 +427,13 @@ export const iwaAccount = {
     return call("/api/onboarding/wallet/provisioned", {
       method: "POST",
       body: JSON.stringify({ walletId }),
+    });
+  },
+
+  async markWalletRecoveryVerified(walletId: string, generation: number): Promise<WalletProvisioningView> {
+    return call("/api/onboarding/wallet/recovery/verified", {
+      method: "POST",
+      body: JSON.stringify({ walletId, generation }),
     });
   },
 

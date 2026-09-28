@@ -5,7 +5,7 @@ against verified behaviour: contract reads, deployed code and passing tests, not
 intent.
 
 Last reviewed against the working tree on 2026-09-27 during the local Iwa
-Wallet B1-B onboarding lifecycle pass.
+Wallet B1-C portable recovery pass.
 
 ## Iwa Account auth and durable sessions (production verified)
 
@@ -162,7 +162,50 @@ typechecks. The standard frontend production build completed with the existing
 dependency warnings only. No browser-device WebAuthn ceremony, migration
 application, deployment, or production configuration change has been made.
 
-Next boundary: B1-C recovery UX and portable recovery handling, after explicit
+### B1-C portable recovery and new-device recovery (local-only)
+
+B1-C completes portable local-vault recovery before any chain authority is
+created. It adds no Starknet, EVM, Solana, STRK20, viewing, settlement,
+signing, deployment, mainnet, or production configuration action.
+
+- An original warm vault can require a fresh dedicated wallet-passkey assertion
+  to export a versioned authenticated encrypted `.iwa` package. The browser
+  separately generates and explicitly reveals a 256-bit recovery code. The
+  code is not in the file, filename, URL, IndexedDB, Iwa backend request,
+  password/PIN record, or automatic clipboard write.
+- The user must select the saved package and enter the code again. Only
+  in-memory decrypt/validation can mark recovery verified; a download by itself
+  is insufficient. UI receives only safe verification metadata, never root or
+  authority plaintext.
+- A returning device with the opaque server wallet ID but no local container
+  cannot create another wallet. It enters recovery only with verified recovery
+  metadata, validates package plus code, enrolls a new local wallet passkey,
+  chooses a new password and a new six-digit device-only PIN, and restores the
+  same wallet ID. The old passkey private credential and old PIN are not
+  recovered. A replacement package at generation N+1 is downloaded.
+- New migration `009_add_iwa_wallet_recovery_state.sql` is **unapplied**. It
+  stores only `recovery_status` and `recovery_generation`; no package, code,
+  ciphertext, root secret, password, PIN, passkey output, viewing key, seed,
+  private key, or chain authority reaches the server. The endpoint accepts
+  only `{ walletId, generation }`, keeps onboarding at `recovery`, and rejects
+  stale or skipped online generations.
+- The exact portable V1 schema, AES-GCM AAD, bounds, validation order, error
+  rules, and standalone-tool requirements are in
+  `docs/IWA_WALLET_RECOVERY_FORMAT_V1.md`. Offline package plus code recovery
+  remains possible if Iwa disappears, but an offline valid package cannot prove
+  it is the newest package. This is documented explicitly rather than treated
+  as rollback prevention.
+
+Verified locally: complete frontend suite **75 files / 789 tests**; wallet
+vault suite **18 files / 60 tests**; focused parser/property, state, cleanup,
+canary, canonical-manifest, and disappearance corpus **7 files / 26 tests**;
+backend Iwa Account/onboarding suite **52 tests**; frontend and backend
+TypeScript checks; production frontend build. The build retains only existing
+third-party externalization, annotation, `eval`, and chunk-size warnings. No
+real browser WebAuthn/IndexedDB/file-dialog ceremony has run, no migration was
+applied, and no production or blockchain authority exists.
+
+Next boundary: B2 real chain-authority provisioning only after explicit
 approval. The full internal security/audit campaign remains a later complete-
 wallet gate.
 

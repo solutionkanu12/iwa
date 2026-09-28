@@ -6,6 +6,8 @@ const VAULT_STORE = "vaults";
 
 export interface WalletVaultStore {
   load(walletId: string): Promise<RootWrapRecordV1 | null>;
+  /** True when a browser profile contains any container other than this wallet. */
+  hasOtherWallet(walletId: string): Promise<boolean>;
   /** Inserts once. Replacement is reserved for an explicit future migration flow. */
   create(record: RootWrapRecordV1): Promise<void>;
   /** Removes only the exact record supplied; used to safely cancel a stale import. */
@@ -48,6 +50,11 @@ export class InMemoryVaultStore implements WalletVaultStore {
   async load(walletId: string): Promise<RootWrapRecordV1 | null> {
     const value = this.unsafeRecords.get(walletId);
     return value === undefined ? null : recordForWallet(walletId, value);
+  }
+
+  async hasOtherWallet(walletId: string): Promise<boolean> {
+    assertWalletId(walletId);
+    return [...this.unsafeRecords.keys()].some((key) => key !== walletId);
   }
 
   async create(record: RootWrapRecordV1): Promise<void> {
@@ -110,6 +117,21 @@ export class IndexedDbVaultStore implements WalletVaultStore {
       const value = await requestResult(transaction.objectStore(VAULT_STORE).get(walletId));
       await transactionComplete(transaction);
       return value === undefined ? null : recordForWallet(walletId, value);
+    } catch (error) {
+      if (error instanceof VaultError) throw error;
+      throw new VaultError("unavailable");
+    }
+  }
+
+  async hasOtherWallet(walletId: string): Promise<boolean> {
+    assertWalletId(walletId);
+    try {
+      const transaction = this.database.transaction(VAULT_STORE, "readonly");
+      const keys = await requestResult(transaction.objectStore(VAULT_STORE).getAllKeys());
+      await transactionComplete(transaction);
+      // A malformed non-string key is a conflict too. Recovery must never
+      // guess which browser-profile record is safe to replace.
+      return keys.some((key) => typeof key !== "string" || key !== walletId);
     } catch (error) {
       if (error instanceof VaultError) throw error;
       throw new VaultError("unavailable");

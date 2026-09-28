@@ -632,6 +632,40 @@ B1-B stores no chain-specific authority and adds no chain adapter behaviour.
 Recovery remains B1-C, and all future signing must stay behind the vault's
 bounded authority API rather than Iwa Account session state.
 
+### Portable recovery and new-device recovery (B1-C)
+
+B1-C makes the same logical Iwa Wallet portable before any chain authority is
+created. The package is a versioned AES-256-GCM envelope with a 96-bit random
+IV, authenticated outer identity and generation metadata, and a separately
+held random 256-bit recovery code. The code is not a password, PIN, seed
+phrase, email credential, or account-session substitute. It is generated and
+revealed only locally, never added to the package, IndexedDB, an Iwa request,
+URL, log, analytics payload, or background clipboard operation.
+
+An original device must have a warm vault and complete a fresh dedicated
+wallet-passkey assertion to export. It then re-selects the downloaded package
+and re-enters the separate code; only successful in-memory validation can
+record recovery verification. A new device with the matching authenticated
+package and code does not need the old passkey. It enrols a fresh dedicated
+passkey, chooses a fresh local vault password and device-only PIN, rebuilds the
+same encrypted wallet container under the unchanged opaque wallet ID, and
+emits a replacement package at generation N+1. The old PIN is not portable.
+
+The server learns only `recoveryStatus` and `recoveryGeneration` alongside the
+existing opaque wallet ID. That metadata enables online stale-package checks
+and cannot decrypt, recover, or sign. It accepts generation one, an idempotent
+current generation, or exactly the next generation while onboarding stays at
+`recovery`. Package contents, recovery code, root secret, ciphertext, password,
+PIN, passkey output, and authority records remain outside the backend.
+
+An offline recovery remains possible from package plus code alone, including if
+Iwa disappears. It cannot cryptographically determine whether a valid bearer
+package is the newest one without an online freshness authority; this is stated
+explicitly rather than hidden by a fake rollback guarantee. The exact
+standalone-compatible V1 format is documented in
+`docs/IWA_WALLET_RECOVERY_FORMAT_V1.md`. B1-C uses synthetic authority proof
+only and adds no chain adapter, account deployment, or signer.
+
 ## Starknet frontend adapter
 
 Responsible for:

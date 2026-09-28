@@ -373,6 +373,11 @@ export class WalletVault {
     fail();
   }
 
+  /** Non-secret local freshness metadata, available only to a live capability. */
+  recoveryGeneration(session: WalletVaultSession, walletId: string): number {
+    return this.requireWarm(session, walletId).record.recoveryGeneration;
+  }
+
   async exportRecovery(
     session: WalletVaultSession,
     walletId: string,

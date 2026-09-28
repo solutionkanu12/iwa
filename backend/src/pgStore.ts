@@ -14,6 +14,7 @@ import {
   type AccountSessionRecord,
   type IwaUser,
   type IwaWalletSetup,
+  type IwaWalletRecoveryStatus,
   type IwaUserStatus,
   type OnboardingStep,
   type OnboardingStatus,
@@ -48,6 +49,8 @@ interface IwaWalletSetupRow {
   user_id: string;
   wallet_id: string;
   setup_status: IwaWalletSetup["status"];
+  recovery_status: IwaWalletRecoveryStatus;
+  recovery_generation: number | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -112,6 +115,8 @@ function toIwaWalletSetup(row: IwaWalletSetupRow): IwaWalletSetup {
     userId: row.user_id,
     walletId: row.wallet_id,
     status: row.setup_status,
+    recoveryStatus: row.recovery_status,
+    recoveryGeneration: row.recovery_generation,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };
@@ -753,7 +758,7 @@ export class PgStore implements Store {
         `INSERT INTO iwa_wallet_setups (user_id, wallet_id, setup_status)
          VALUES ($1, $2, 'reserved')
          ON CONFLICT (user_id) DO UPDATE SET user_id = EXCLUDED.user_id
-         RETURNING user_id, wallet_id, setup_status, created_at, updated_at`,
+         RETURNING user_id, wallet_id, setup_status, recovery_status, recovery_generation, created_at, updated_at`,
         [userId, randomUUID()],
       );
       await client.query("COMMIT");
@@ -768,7 +773,7 @@ export class PgStore implements Store {
 
   async getIwaWalletSetup(userId: string): Promise<IwaWalletSetup | null> {
     const result = await this.pool.query<IwaWalletSetupRow>(
-      `SELECT user_id, wallet_id, setup_status, created_at, updated_at
+      `SELECT user_id, wallet_id, setup_status, recovery_status, recovery_generation, created_at, updated_at
          FROM iwa_wallet_setups WHERE user_id = $1`,
       [userId],
     );
@@ -788,7 +793,7 @@ export class PgStore implements Store {
         [userId],
       );
       const setup = await client.query<IwaWalletSetupRow>(
-        `SELECT user_id, wallet_id, setup_status, created_at, updated_at
+        `SELECT user_id, wallet_id, setup_status, recovery_status, recovery_generation, created_at, updated_at
            FROM iwa_wallet_setups WHERE user_id = $1 FOR UPDATE`,
         [userId],
       );
@@ -817,7 +822,7 @@ export class PgStore implements Store {
       const updatedSetup = await client.query<IwaWalletSetupRow>(
         `UPDATE iwa_wallet_setups SET setup_status = 'vaultProvisioned', updated_at = now()
           WHERE user_id = $1
-          RETURNING user_id, wallet_id, setup_status, created_at, updated_at`,
+          RETURNING user_id, wallet_id, setup_status, recovery_status, recovery_generation, created_at, updated_at`,
         [userId],
       );
       const updatedUser = await client.query<IwaUserRow>(
@@ -828,6 +833,60 @@ export class PgStore implements Store {
       );
       await client.query("COMMIT");
       return { user: toIwaUser(updatedUser.rows[0]!), wallet: toIwaWalletSetup(updatedSetup.rows[0]!) };
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  async recordIwaWalletRecoveryVerification(
+    userId: string,
+    walletId: string,
+    generation: number,
+  ): Promise<IwaWalletSetup | null> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const user = await client.query<{ onboarding_status: OnboardingStatus; onboarding_step: OnboardingStep }>(
+        "SELECT onboarding_status, onboarding_step FROM users WHERE id = $1 FOR UPDATE",
+        [userId],
+      );
+      const setup = await client.query<IwaWalletSetupRow>(
+        `SELECT user_id, wallet_id, setup_status, recovery_status, recovery_generation, created_at, updated_at
+           FROM iwa_wallet_setups WHERE user_id = $1 FOR UPDATE`,
+        [userId],
+      );
+      const current = setup.rowCount === 0 ? null : toIwaWalletSetup(setup.rows[0]!);
+      if (
+        user.rowCount === 0 ||
+        user.rows[0]?.onboarding_status !== "incomplete" ||
+        user.rows[0]?.onboarding_step !== "recovery" ||
+        current === null ||
+        current.walletId !== walletId ||
+        current.status !== "vaultProvisioned" ||
+        !Number.isSafeInteger(generation) ||
+        generation < 1 ||
+        (current.recoveryStatus === "notConfigured" && generation !== 1) ||
+        (current.recoveryStatus === "verified" && generation !== current.recoveryGeneration && generation !== (current.recoveryGeneration ?? 0) + 1)
+      ) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      if (current.recoveryStatus === "verified" && generation === current.recoveryGeneration) {
+        await client.query("COMMIT");
+        return current;
+      }
+      const updated = await client.query<IwaWalletSetupRow>(
+        `UPDATE iwa_wallet_setups
+            SET recovery_status = 'verified', recovery_generation = $2, updated_at = now()
+          WHERE user_id = $1
+          RETURNING user_id, wallet_id, setup_status, recovery_status, recovery_generation, created_at, updated_at`,
+        [userId, generation],
+      );
+      await client.query("COMMIT");
+      return toIwaWalletSetup(updated.rows[0]!);
     } catch (e) {
       await client.query("ROLLBACK");
       throw e;

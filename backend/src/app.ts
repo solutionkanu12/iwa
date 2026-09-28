@@ -983,7 +983,12 @@ export function createApp(options: AppOptions): Express {
       }
       res.json({
         onboarding: onboardingProgress(result.user.onboardingStatus, result.user.onboardingStep),
-        wallet: { walletId: result.wallet.walletId, status: result.wallet.status },
+        wallet: {
+          walletId: result.wallet.walletId,
+          status: result.wallet.status,
+          recoveryStatus: result.wallet.recoveryStatus,
+          recoveryGeneration: result.wallet.recoveryGeneration,
+        },
       });
     } catch (e) {
       next(e);
@@ -1004,7 +1009,74 @@ export function createApp(options: AppOptions): Express {
         });
       }
       const wallet = await store.getIwaWalletSetup(loaded.user.id);
-      res.json({ wallet: wallet === null ? null : { walletId: wallet.walletId, status: wallet.status } });
+      res.json({
+        wallet:
+          wallet === null
+            ? null
+            : {
+                walletId: wallet.walletId,
+                status: wallet.status,
+                recoveryStatus: wallet.recoveryStatus,
+                recoveryGeneration: wallet.recoveryGeneration,
+              },
+      });
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  /**
+   * Records only a non-secret, locally verified recovery generation. It is an
+   * online stale-package hint, not proof that the account session can recover
+   * or authorize the wallet. The route deliberately cannot receive a package,
+   * recovery code, vault record, password, PIN, or passkey result.
+   */
+  app.post("/api/onboarding/wallet/recovery/verified", async (req, res, next) => {
+    if (!mutate(req, res)) return;
+    try {
+      if (!requireOrigin(req, res)) return;
+      const loaded = await loadAccountSession(req);
+      if (!loaded.ok) {
+        return res.status(401).json({ error: "session_invalid", message: "Please sign in to Iwa again." });
+      }
+      if (!requireCsrf(req, res)) return;
+      if (loaded.user.status === "suspended") {
+        return res.status(403).json({
+          error: "account_suspended",
+          message: "This Iwa account is suspended. Your on-chain funds are untouched.",
+        });
+      }
+      const body = req.body;
+      if (
+        body === null ||
+        typeof body !== "object" ||
+        Array.isArray(body) ||
+        Object.keys(body).length !== 2 ||
+        typeof (body as { walletId?: unknown }).walletId !== "string" ||
+        !isUuid((body as { walletId: string }).walletId) ||
+        !Number.isSafeInteger((body as { generation?: unknown }).generation) ||
+        (body as { generation: number }).generation < 1 ||
+        (body as { generation: number }).generation > 2_147_483_647
+      ) {
+        return res.status(400).json({ error: "invalid_request", message: "That recovery verification could not be verified." });
+      }
+      const wallet = await store.recordIwaWalletRecoveryVerification(
+        loaded.user.id,
+        (body as { walletId: string }).walletId,
+        (body as { generation: number }).generation,
+      );
+      if (wallet === null) {
+        return res.status(409).json({ error: "recovery_generation_conflict", message: "That recovery package is not current for this Iwa Wallet." });
+      }
+      res.json({
+        onboarding: onboardingProgress(loaded.user.onboardingStatus, loaded.user.onboardingStep),
+        wallet: {
+          walletId: wallet.walletId,
+          status: wallet.status,
+          recoveryStatus: wallet.recoveryStatus,
+          recoveryGeneration: wallet.recoveryGeneration,
+        },
+      });
     } catch (e) {
       next(e);
     }

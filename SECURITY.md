@@ -860,6 +860,36 @@ but no local record is recovery-required, not a trigger to create a new wallet.
 Recovery is not yet implemented in B1-B and no production wallet should be
 claimed from this state.
 
+### B1-C portable recovery boundary (local-only, 2026-09-27)
+
+The B1-C package is an authenticated encrypted bearer artifact, but its 256-bit
+random recovery code is intentionally separate. Both are required. The code is
+not stored in the package, local vault, IndexedDB, Iwa Account backend, URL,
+cookie, localStorage, sessionStorage, analytics, telemetry, or automatic
+clipboard. The only UI display is an explicit short-lived user reveal; a copy
+operation needs an explicit click. Packages contain no wallet password, PIN,
+passkey PRF output, or Iwa session material.
+
+Export requires the existing warm opaque vault capability and a fresh wallet
+passkey assertion. Verification opens the encrypted package only in memory and
+returns UI-safe non-secret evidence. New-device recovery first validates the
+package and code, checks online generation when available, then creates a
+fresh dedicated passkey, local password wrapper, and device-only PIN. It never
+imports passkey private material or restores the old PIN. The normal path
+refuses a healthy local vault and a browser profile holding a different wallet.
+A malformed matching record is distinct from absence and is removed only by an
+explicit package-validated recovery action.
+
+Migration 009 has no custody data. It can retain only a recovery status and
+positive generation for an opaque wallet ID, with CSRF, origin, session, user,
+and ordering checks. It accepts no endpoint shape that could receive package
+bytes, recovery code, ciphertext, root secret, password, PIN, PRF output,
+viewing key, seed, private key, or future authority. Generation metadata is an
+online freshness hint, not proof that an Iwa session possesses wallet
+authority. Offline recovery remains portable but cannot distinguish an old
+valid bearer package from the newest package; a later chain-authority rotation
+may be needed to invalidate a stolen older package.
+
 ## Backend security
 
 Backend stores only public/non-sensitive information unless a future feature receives a new explicit security design.

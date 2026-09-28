@@ -53,6 +53,15 @@ export interface RecoveredVaultPayload {
   publicDescriptors: RecoveryPublicDescriptor[];
 }
 
+/** Non-secret evidence returned after an in-memory recovery-package check. */
+export interface RecoveryPackageVerification {
+  walletId: string;
+  packageId: string;
+  generation: number;
+  authorityCount: number;
+  publicDescriptorCount: number;
+}
+
 interface RecoveryPayloadV1 {
   format: typeof RECOVERY_PAYLOAD_FORMAT;
   version: typeof RECOVERY_VERSION;
@@ -327,5 +336,37 @@ export async function openRecoveryPackage(
   } finally {
     wipe(iv);
     wipe(ciphertext);
+  }
+}
+
+/**
+ * Validates package possession without handing a root secret or authority
+ * bytes to a UI caller. All recovered bytes are wiped before this resolves.
+ */
+export async function verifyRecoveryPackage(
+  value: unknown,
+  recoveryKey: Uint8Array,
+  expected: { walletId: string; generation: number },
+): Promise<RecoveryPackageVerification> {
+  assertIdentifier(expected.walletId);
+  assertGeneration(expected.generation);
+  const key = new Uint8Array(recoveryKey);
+  let payload: RecoveredVaultPayload | undefined;
+  try {
+    payload = await openRecoveryPackage(value, key, expected.walletId);
+    if (payload.generation !== expected.generation) fail("authentication_failed");
+    return {
+      walletId: payload.walletId,
+      packageId: payload.packageId,
+      generation: payload.generation,
+      authorityCount: payload.authorities.length,
+      publicDescriptorCount: payload.publicDescriptors.length,
+    };
+  } finally {
+    wipe(key);
+    if (payload !== undefined) {
+      wipe(payload.rootSecret);
+      for (const authority of payload.authorities) wipe(authority.material);
+    }
   }
 }

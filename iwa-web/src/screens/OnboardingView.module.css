@@ -122,6 +122,19 @@
   color: var(--mut);
 }
 
+.recoveryKey {
+  display: block;
+  overflow-wrap: anywhere;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--brd);
+  border-radius: var(--radius-control);
+  background: var(--mist);
+  color: var(--ink);
+  font-family: var(--font-data);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
 .credentials {
   display: grid;
   gap: 1.15rem;

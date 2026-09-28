@@ -49,11 +49,15 @@ export type OnboardingTransitionKind = "start" | "advance" | "retry";
  * to a local vault without giving the backend anything that can unlock it.
  */
 export type IwaWalletSetupStatus = "reserved" | "vaultProvisioned";
+export type IwaWalletRecoveryStatus = "notConfigured" | "verified";
 
 export interface IwaWalletSetup {
   userId: string;
   walletId: string;
   status: IwaWalletSetupStatus;
+  /** Non-secret online freshness hint. It never proves recovery authority. */
+  recoveryStatus: IwaWalletRecoveryStatus;
+  recoveryGeneration: number | null;
   createdAt: string;
   updatedAt: string;
 }

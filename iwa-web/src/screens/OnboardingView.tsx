@@ -15,6 +15,8 @@ import {
 import { Button } from "../components/Button";
 import { Island } from "../components/Island";
 import { iwaAccount, IwaAccountError, type WalletSetupView } from "../lib/iwaAccount";
+import { IWA_WALLET_RECOVERY_FILE_LIMIT_BYTES, downloadRecoveryPackage, parseRecoveryPackageJson } from "../lib/walletVault/recoveryFile";
+import { createRecoveryKey, formatRecoveryKey, parseRecoveryKey } from "../lib/walletVault/recoveryKey";
 import styles from "./OnboardingView.module.css";
 
 const STEP_COPY: Record<OnboardingStep, { label: string; detail: string }> = {
@@ -25,9 +27,23 @@ const STEP_COPY: Record<OnboardingStep, { label: string; detail: string }> = {
   finish: { label: "Ready for Iwa", detail: "Your account and wallet setup are complete." },
 };
 
+function newRecoveryPackageId(): string {
+  if (typeof globalThis.crypto === "undefined" || typeof globalThis.crypto.randomUUID !== "function") {
+    throw new Error("recovery package ids are unavailable");
+  }
+  return `iwa-recovery-${globalThis.crypto.randomUUID()}`;
+}
+
+async function selectedRecoveryPackage(file: File): Promise<ReturnType<typeof parseRecoveryPackageJson>> {
+  if (file.size <= 0 || file.size > IWA_WALLET_RECOVERY_FILE_LIMIT_BYTES) {
+    throw new Error("invalid recovery file");
+  }
+  return parseRecoveryPackageJson(await file.text());
+}
+
 export function OnboardingView() {
   const auth = useIwaAuth();
-  const { view: vaultView, inspect, provision, unlock } = useIwaWalletVault();
+  const { view: vaultView, inspect, provision, unlock, exportRecovery, verifyRecovery, recover } = useIwaWalletVault();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [credentials, setCredentials] = useState<WalletCredentialInputs>(emptyWalletCredentialInputs);
@@ -36,6 +52,11 @@ export function OnboardingView() {
   const [showPin, setShowPin] = useState(false);
   const [walletSetup, setWalletSetup] = useState<WalletSetupView | null | undefined>(undefined);
   const [unlockPassword, setUnlockPassword] = useState("");
+  const [recoveryKeyReveal, setRecoveryKeyReveal] = useState<string | null>(null);
+  const [recoveryFile, setRecoveryFile] = useState<File | null>(null);
+  const [recoveryKeyInput, setRecoveryKeyInput] = useState("");
+  const [recoveryCredentials, setRecoveryCredentials] = useState<WalletCredentialInputs>(emptyWalletCredentialInputs);
+  const [recoveryCredentialErrors, setRecoveryCredentialErrors] = useState<WalletCredentialValidation>({});
   const status = auth.user?.onboardingStatus ?? "new";
   const currentStep = onboardingStepFor(status, auth.user?.onboardingStep);
 
@@ -49,10 +70,26 @@ export function OnboardingView() {
       setCredentialErrors({});
       setUnlockPassword("");
     }
+    if (currentStep !== "recovery") {
+      setRecoveryKeyReveal(null);
+      setRecoveryFile(null);
+      setRecoveryKeyInput("");
+      setRecoveryCredentials(emptyWalletCredentialInputs());
+      setRecoveryCredentialErrors({});
+    }
   }, [currentStep]);
 
   useEffect(() => {
-    if (currentStep !== "walletProvisioning") {
+    if (recoveryKeyReveal === null) return;
+    // This user-visible recovery code is the one narrow UI exception to the
+    // normal no-secret-state rule. Limit its display lifetime and clear it on
+    // verification or route exit; it is never persisted or transmitted.
+    const timeout = window.setTimeout(() => setRecoveryKeyReveal(null), 5 * 60_000);
+    return () => window.clearTimeout(timeout);
+  }, [recoveryKeyReveal]);
+
+  useEffect(() => {
+    if (currentStep !== "walletProvisioning" && currentStep !== "recovery") {
       setWalletSetup(undefined);
       return;
     }
@@ -187,6 +224,14 @@ export function OnboardingView() {
     }
   };
 
+  const updateRecoveryCredential = (field: keyof WalletCredentialInputs, value: string) => {
+    setRecoveryCredentialErrors({});
+    setRecoveryCredentials((current) => ({
+      ...current,
+      [field]: field === "pin" || field === "confirmPin" ? pinDigits(value) : value,
+    }));
+  };
+
   const unlockLocalVault = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (busy || walletSetup === null || walletSetup === undefined || Array.from(unlockPassword).length < 12 || Array.from(unlockPassword).length > 128) {
@@ -207,7 +252,10 @@ export function OnboardingView() {
 
   const advanceToRecovery = async () => {
     const userId = auth.user?.id;
-    if (userId === undefined || busy || walletSetup?.status !== "vaultProvisioned" || vaultView.state !== "warm") return;
+    const canEnterRecovery =
+      vaultView.state === "warm" ||
+      (vaultView.localVault === "absent" && walletSetup?.recoveryStatus === "verified");
+    if (userId === undefined || busy || walletSetup?.status !== "vaultProvisioned" || !canEnterRecovery) return;
     setBusy(true);
     setError(null);
     try {
@@ -228,6 +276,133 @@ export function OnboardingView() {
     } catch (cause) {
       setError(cause instanceof IwaAccountError ? cause.message : "Iwa could not continue to recovery setup.");
     } finally {
+      setBusy(false);
+    }
+  };
+
+  const revealRecoveryPackage = async () => {
+    if (
+      busy ||
+      walletSetup?.status !== "vaultProvisioned" ||
+      walletSetup.recoveryStatus !== "notConfigured" ||
+      vaultView.state !== "warm"
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    let recoveryKey: Uint8Array | undefined;
+    try {
+      recoveryKey = createRecoveryKey();
+      const recovery = await exportRecovery({
+        walletId: walletSetup.walletId,
+        recoveryKey,
+        packageId: newRecoveryPackageId(),
+      });
+      downloadRecoveryPackage(recovery);
+      // This is an explicit, short-lived user reveal. It is not a vault
+      // plaintext and is cleared after package verification or route exit.
+      setRecoveryKeyReveal(formatRecoveryKey(recoveryKey));
+    } catch {
+      setError("Iwa Wallet could not create the encrypted recovery package. No recovery key was sent to Iwa.");
+    } finally {
+      recoveryKey?.fill(0);
+      setBusy(false);
+    }
+  };
+
+  const copyRecoveryKey = async () => {
+    if (recoveryKeyReveal === null || busy) return;
+    try {
+      if (typeof navigator === "undefined" || navigator.clipboard === undefined) throw new Error("clipboard unavailable");
+      await navigator.clipboard.writeText(recoveryKeyReveal);
+    } catch {
+      setError("Iwa could not copy the recovery key. Select it and copy it yourself.");
+    }
+  };
+
+  const verifySavedRecovery = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (busy || walletSetup === null || walletSetup === undefined || recoveryFile === null || vaultView.state !== "warm") {
+      setError("Choose your saved recovery package and enter its recovery key to verify it.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    let recoveryKey: Uint8Array | undefined;
+    try {
+      const recovery = await selectedRecoveryPackage(recoveryFile);
+      recoveryKey = parseRecoveryKey(recoveryKeyInput);
+      const verified = await verifyRecovery({
+        recovery,
+        recoveryKey,
+        walletId: walletSetup.walletId,
+        generation: walletSetup.recoveryGeneration ?? 1,
+      });
+      const recorded = await iwaAccount.markWalletRecoveryVerified(verified.walletId, verified.generation);
+      setWalletSetup(recorded.wallet);
+      setRecoveryKeyReveal(null);
+      setRecoveryFile(null);
+      setRecoveryKeyInput("");
+    } catch (cause) {
+      setError(
+        cause instanceof IwaAccountError && cause.code === "recovery_generation_conflict"
+          ? "That recovery package is not the current package for this Iwa Wallet."
+          : "Iwa Wallet could not verify that recovery package and recovery key.",
+      );
+    } finally {
+      recoveryKey?.fill(0);
+      setBusy(false);
+    }
+  };
+
+  const recoverOnNewDevice = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const validation = validateWalletCredentialInputs(recoveryCredentials);
+    setRecoveryCredentialErrors(validation);
+    if (
+      busy ||
+      walletSetup === null ||
+      walletSetup === undefined ||
+      walletSetup.recoveryStatus !== "verified" ||
+      walletSetup.recoveryGeneration === null ||
+      recoveryFile === null ||
+      validation.passwordError !== undefined ||
+      validation.pinError !== undefined
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    let recoveryKey: Uint8Array | undefined;
+    try {
+      const recovery = await selectedRecoveryPackage(recoveryFile);
+      recoveryKey = parseRecoveryKey(recoveryKeyInput);
+      const replacement = await recover({
+        recovery,
+        recoveryKey,
+        walletId: walletSetup.walletId,
+        expectedGeneration: walletSetup.recoveryGeneration,
+        password: recoveryCredentials.password,
+        pin: recoveryCredentials.pin,
+        replacementPackageId: newRecoveryPackageId(),
+      });
+      // Clear all page credentials before the non-secret coordination report.
+      setRecoveryCredentials(emptyWalletCredentialInputs());
+      setRecoveryCredentialErrors({});
+      setRecoveryFile(null);
+      setRecoveryKeyInput("");
+      downloadRecoveryPackage(replacement);
+      const recorded = await iwaAccount.markWalletRecoveryVerified(replacement.walletId, replacement.generation);
+      setWalletSetup(recorded.wallet);
+    } catch (cause) {
+      setError(
+        cause instanceof IwaAccountError && cause.code === "recovery_generation_conflict"
+          ? "Recovery completed locally, but Iwa reports that another recovery package is now current. Keep the replacement package and resolve this safely before continuing."
+          : "Iwa Wallet could not recover this device. Check the saved package, recovery key, and new local credentials.",
+      );
+    } finally {
+      recoveryKey?.fill(0);
       setBusy(false);
     }
   };
@@ -387,7 +562,21 @@ export function OnboardingView() {
           ) : vaultView.localVault === "unknown" ? (
             <p className={styles.notice}>Checking the local Iwa Wallet on this device...</p>
           ) : vaultView.localVault === "absent" ? (
-            <p className={styles.notice}>This Iwa Wallet is not available on this device. Do not create another wallet. Recovery setup is required before it can be used here.</p>
+            walletSetup.recoveryStatus === "verified" ? (
+              <section className={styles.credentials} aria-labelledby="wallet-recovery-required-title">
+                <div className={styles.credentialsHeading}>
+                  <h2 id="wallet-recovery-required-title">Recover Iwa Wallet</h2>
+                  <p>This Iwa Wallet exists, but its local encrypted vault is not on this device. Do not create a second wallet.</p>
+                </div>
+                <Button onClick={() => void advanceToRecovery()} disabled={busy}>{busy ? "Continuing..." : "Recover Iwa Wallet"}</Button>
+              </section>
+            ) : (
+              <p className={styles.notice}>This Iwa Wallet is not available on this device. Recovery has not been verified yet, so Iwa cannot safely create another local wallet here.</p>
+            )
+          ) : vaultView.localVault === "conflict" ? (
+            <p className={styles.notice}>This browser already contains a different local Iwa Wallet. Do not replace it. Use a separate browser profile or the approved recovery flow.</p>
+          ) : vaultView.localVault === "corrupt" ? (
+            <p className={styles.notice}>This local Iwa Wallet record is corrupted. Do not create another wallet. Use the explicit recovery flow after recovery has been configured.</p>
           ) : vaultView.state === "warm" ? (
             <section className={styles.credentials} aria-labelledby="wallet-secured-title">
               <div className={styles.credentialsHeading}>
@@ -417,12 +606,168 @@ export function OnboardingView() {
             </form>
           )
         ) : currentStep === "recovery" ? (
-          <section className={styles.credentials} aria-labelledby="recovery-next-title">
-            <div className={styles.credentialsHeading}>
-              <h2 id="recovery-next-title">Recovery setup is next</h2>
-              <p>Recovery and portability will be added in the next protected wallet phase. Iwa has not created a blockchain account or wallet key.</p>
-            </div>
-          </section>
+          walletSetup === undefined ? (
+            <p className={styles.notice}>Checking recovery setup for this Iwa Wallet...</p>
+          ) : walletSetup === null || walletSetup.status !== "vaultProvisioned" ? (
+            <p className={styles.notice}>Iwa could not verify recovery setup for this wallet.</p>
+          ) : vaultView.localVault === "unknown" ? (
+            <p className={styles.notice}>Checking the local Iwa Wallet on this device...</p>
+          ) : vaultView.localVault === "conflict" ? (
+            <p className={styles.notice}>This browser already contains a different local Iwa Wallet. Do not replace it. Use a separate browser profile before recovery.</p>
+          ) : vaultView.localVault === "present" && vaultView.state === "cold" ? (
+            <form className={styles.credentials} onSubmit={unlockLocalVault} noValidate>
+              <div className={styles.credentialsHeading}>
+                <h2>Unlock Iwa Wallet</h2>
+                <p>Use your wallet password and wallet passkey before creating or checking recovery.</p>
+              </div>
+              <label className={styles.label} htmlFor="iwa-wallet-recovery-unlock-password">Wallet password</label>
+              <input
+                id="iwa-wallet-recovery-unlock-password"
+                className={styles.input}
+                type="password"
+                autoComplete="off"
+                minLength={12}
+                maxLength={128}
+                value={unlockPassword}
+                onChange={(event) => setUnlockPassword(event.target.value)}
+              />
+              <Button type="submit" disabled={busy}>{busy ? "Unlocking Iwa Wallet..." : "Unlock Iwa Wallet"}</Button>
+            </form>
+          ) : vaultView.localVault === "present" && vaultView.state === "warm" && walletSetup.recoveryStatus === "notConfigured" ? (
+            recoveryKeyReveal === null ? (
+              <section className={styles.credentials} aria-labelledby="create-recovery-title">
+                <div className={styles.credentialsHeading}>
+                  <h2 id="create-recovery-title">Create recovery package</h2>
+                  <p>Create an encrypted recovery package and save its separate recovery key. Iwa does not keep the recovery key or a copy of the package.</p>
+                </div>
+                <p className={styles.notice}>You need both the saved package and recovery key. Losing both can mean permanent loss of wallet access once real funds exist.</p>
+                <Button onClick={() => void revealRecoveryPackage()} disabled={busy}>{busy ? "Creating recovery package..." : "Create recovery package"}</Button>
+              </section>
+            ) : (
+              <section className={styles.credentials} aria-labelledby="save-recovery-title">
+                <div className={styles.credentialsHeading}>
+                  <h2 id="save-recovery-title">Save your recovery key</h2>
+                  <p>Your encrypted recovery package has been downloaded. Save this separate recovery key somewhere safe. Iwa cannot recover it for you.</p>
+                </div>
+                <output className={styles.recoveryKey} aria-label="Iwa Wallet recovery key">{recoveryKeyReveal}</output>
+                <Button onClick={() => void copyRecoveryKey()} disabled={busy}>Copy recovery key</Button>
+                <form className={styles.credentials} onSubmit={verifySavedRecovery} noValidate>
+                  <div className={styles.credentialsHeading}>
+                    <h2>Verify recovery</h2>
+                    <p>Select the saved package and enter its recovery key. Downloading a file alone is not enough.</p>
+                  </div>
+                  <label className={styles.label} htmlFor="iwa-recovery-file">Saved recovery package</label>
+                  <input
+                    id="iwa-recovery-file"
+                    className={styles.input}
+                    type="file"
+                    accept=".iwa,application/vnd.iwa.wallet-recovery+json,application/json"
+                    onChange={(event) => setRecoveryFile(event.target.files?.[0] ?? null)}
+                  />
+                  <label className={styles.label} htmlFor="iwa-recovery-key-verify">Recovery key</label>
+                  <input
+                    id="iwa-recovery-key-verify"
+                    className={styles.input}
+                    type="password"
+                    autoComplete="off"
+                    value={recoveryKeyInput}
+                    onChange={(event) => setRecoveryKeyInput(event.target.value)}
+                  />
+                  <Button type="submit" disabled={busy}>{busy ? "Verifying recovery..." : "Verify recovery"}</Button>
+                </form>
+              </section>
+            )
+          ) : vaultView.localVault === "present" && vaultView.state === "warm" ? (
+            <section className={styles.credentials} aria-labelledby="recovery-verified-title">
+              <div className={styles.credentialsHeading}>
+                <h2 id="recovery-verified-title">Recovery verified</h2>
+                <p>Your portable recovery package is verified. Iwa has not created a blockchain account or wallet key.</p>
+              </div>
+              <p className={styles.notice}>Keep the current recovery package and its separate recovery key together only when you need to recover. A later wallet phase will add chain authority.</p>
+            </section>
+          ) : walletSetup.recoveryStatus !== "verified" || walletSetup.recoveryGeneration === null ? (
+            <section className={styles.credentials} aria-labelledby="recovery-unavailable-title">
+              <div className={styles.credentialsHeading}>
+                <h2 id="recovery-unavailable-title">Recovery is not configured</h2>
+                <p>This device does not have the local Iwa Wallet, and Iwa has no verified recovery package for it. Return to the device where this wallet was secured.</p>
+              </div>
+            </section>
+          ) : (
+            <form className={styles.credentials} onSubmit={recoverOnNewDevice} noValidate>
+              <div className={styles.credentialsHeading}>
+                <h2>{vaultView.localVault === "corrupt" ? "Recover corrupted local wallet" : "Recover Iwa Wallet"}</h2>
+                <p>{vaultView.localVault === "corrupt" ? "The local encrypted record cannot be opened. Use the saved recovery package and its separate recovery key to replace it explicitly." : "Use the saved recovery package and its separate recovery key. Then create new local protection for this device."}</p>
+              </div>
+              <label className={styles.label} htmlFor="iwa-recovery-import-file">Recovery package</label>
+              <input
+                id="iwa-recovery-import-file"
+                className={styles.input}
+                type="file"
+                accept=".iwa,application/vnd.iwa.wallet-recovery+json,application/json"
+                onChange={(event) => setRecoveryFile(event.target.files?.[0] ?? null)}
+              />
+              <label className={styles.label} htmlFor="iwa-recovery-import-key">Recovery key</label>
+              <input
+                id="iwa-recovery-import-key"
+                className={styles.input}
+                type="password"
+                autoComplete="off"
+                value={recoveryKeyInput}
+                onChange={(event) => setRecoveryKeyInput(event.target.value)}
+              />
+              <fieldset className={styles.fieldset}>
+                <legend>New local protection</legend>
+                <label className={styles.label} htmlFor="iwa-recovery-password">New wallet password</label>
+                <input
+                  id="iwa-recovery-password"
+                  className={styles.input}
+                  type="password"
+                  autoComplete="off"
+                  minLength={12}
+                  maxLength={128}
+                  value={recoveryCredentials.password}
+                  onChange={(event) => updateRecoveryCredential("password", event.target.value)}
+                />
+                <label className={styles.label} htmlFor="iwa-recovery-password-confirm">Confirm new wallet password</label>
+                <input
+                  id="iwa-recovery-password-confirm"
+                  className={styles.input}
+                  type="password"
+                  autoComplete="off"
+                  minLength={12}
+                  maxLength={128}
+                  value={recoveryCredentials.confirmPassword}
+                  onChange={(event) => updateRecoveryCredential("confirmPassword", event.target.value)}
+                />
+                {recoveryCredentialErrors.passwordError !== undefined ? <p className={styles.error} role="alert">{recoveryCredentialErrors.passwordError}</p> : null}
+                <label className={styles.label} htmlFor="iwa-recovery-pin">New six-digit PIN</label>
+                <input
+                  id="iwa-recovery-pin"
+                  className={styles.input}
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  maxLength={6}
+                  value={recoveryCredentials.pin}
+                  onChange={(event) => updateRecoveryCredential("pin", event.target.value)}
+                />
+                <label className={styles.label} htmlFor="iwa-recovery-pin-confirm">Confirm new PIN</label>
+                <input
+                  id="iwa-recovery-pin-confirm"
+                  className={styles.input}
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  maxLength={6}
+                  value={recoveryCredentials.confirmPin}
+                  onChange={(event) => updateRecoveryCredential("confirmPin", event.target.value)}
+                />
+                {recoveryCredentialErrors.pinError !== undefined ? <p className={styles.error} role="alert">{recoveryCredentialErrors.pinError}</p> : null}
+              </fieldset>
+              <p className={styles.notice}>Your old wallet passkey and PIN are not copied to this device. A replacement encrypted package will be downloaded after recovery.</p>
+              <Button type="submit" disabled={busy}>{busy ? "Recovering Iwa Wallet..." : "Recover Iwa Wallet"}</Button>
+            </form>
+          )
         ) : (
           <p className={styles.notice}>This account setup stage is not available yet.</p>
         )}

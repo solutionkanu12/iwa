@@ -76,8 +76,9 @@ briefly switches tabs; the B1-A idle timer remains active. Refresh/restart
 always starts cold.
 
 On a device with no matching IndexedDB record, B1-B displays recovery-required
-and does not create a second wallet. B1-C owns actual recovery import and
-portable package UX.
+and does not create a second wallet. B1-C now owns actual recovery import and
+portable package UX; its exact format is documented separately in
+`IWA_WALLET_RECOVERY_FORMAT_V1.md`.
 
 ## Residual limitations
 
@@ -85,6 +86,7 @@ portable package UX.
   custodian, so the provisioned report is setup progress only.
 - B1-B does not perform a real-device WebAuthn ceremony in CI; browser/device
   coverage is a later release gate.
-- The B1-A recovery format remains synthetic-authority-only until B1-C and
-  later chain-specific authority work are approved.
+- B1-C verifies portable recovery with synthetic authorities only. Later
+  chain-specific authority work remains separately approved and is not implied
+  by this lifecycle integration.
 - No production migration has been applied, and no production wallet exists.

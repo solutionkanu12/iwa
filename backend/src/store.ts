@@ -196,6 +196,12 @@ export interface Store {
     userId: string,
     walletId: string,
   ): Promise<{ user: IwaUser; wallet: IwaWalletSetup } | null>;
+  /** Records only verified recovery generation metadata, never recovery material. */
+  recordIwaWalletRecoveryVerification(
+    userId: string,
+    walletId: string,
+    generation: number,
+  ): Promise<IwaWalletSetup | null>;
   createAccountSession(
     userId: string,
     tokenHash: string,
@@ -547,6 +553,8 @@ export class MemoryStore implements Store {
       userId,
       walletId: randomUUID(),
       status: "reserved",
+      recoveryStatus: "notConfigured",
+      recoveryGeneration: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -582,6 +590,40 @@ export class MemoryStore implements Store {
     user.onboardingStep = "walletProvisioning";
     user.updatedAt = now;
     return { user: structuredClone(user), wallet: structuredClone(setup) };
+  }
+
+  async recordIwaWalletRecoveryVerification(
+    userId: string,
+    walletId: string,
+    generation: number,
+  ): Promise<IwaWalletSetup | null> {
+    const user = this.users.get(userId);
+    const setup = this.walletSetups.get(userId);
+    if (
+      user === undefined ||
+      setup === undefined ||
+      user.onboardingStatus !== "incomplete" ||
+      user.onboardingStep !== "recovery" ||
+      setup.walletId !== walletId ||
+      setup.status !== "vaultProvisioned" ||
+      !Number.isSafeInteger(generation) ||
+      generation < 1
+    ) {
+      return null;
+    }
+    const expected = setup.recoveryGeneration;
+    if (
+      (setup.recoveryStatus === "notConfigured" && generation !== 1) ||
+      (setup.recoveryStatus === "verified" && generation !== expected && generation !== (expected ?? 0) + 1)
+    ) {
+      return null;
+    }
+    if (setup.recoveryStatus === "notConfigured" || generation === (expected ?? 0) + 1) {
+      setup.recoveryStatus = "verified";
+      setup.recoveryGeneration = generation;
+      setup.updatedAt = new Date().toISOString();
+    }
+    return structuredClone(setup);
   }
 
   async createAccountSession(

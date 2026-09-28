@@ -4,6 +4,7 @@ import {
   VaultError,
   createRecoveryPackage,
   openRecoveryPackage,
+  verifyRecoveryPackage,
   validateRecoveryPackage,
   type SyntheticVaultAuthority,
 } from "./recoveryPackage";
@@ -57,5 +58,30 @@ describe("portable encrypted recovery package", () => {
       openRecoveryPackage({ ...recovery, cipher: { ...recovery.cipher, ciphertext: recovery.cipher.ciphertext.slice(1) } }, recoveryKey, "wallet-recovery-a"),
     ).rejects.toBeInstanceOf(VaultError);
     expect(() => validateRecoveryPackage({ format: "iwa-wallet-recovery", version: 1 })).toThrow(VaultError);
+  });
+
+  it("verifies possession of a package and code without returning recovered authority material", async () => {
+    const recovery = await createRecoveryPackage({
+      walletId: "wallet-recovery-a",
+      packageId: "recovery-package-a",
+      generation: 1,
+      recoveryKey,
+      rootSecret,
+      authorities,
+      publicDescriptors: [{ namespace: "synthetic/test", publicId: "public-test-authority" }],
+    });
+
+    await expect(
+      verifyRecoveryPackage(recovery, recoveryKey, { walletId: "wallet-recovery-a", generation: 1 }),
+    ).resolves.toEqual({
+      walletId: "wallet-recovery-a",
+      packageId: "recovery-package-a",
+      generation: 1,
+      authorityCount: 1,
+      publicDescriptorCount: 1,
+    });
+    await expect(
+      verifyRecoveryPackage(recovery, recoveryKey, { walletId: "wallet-recovery-a", generation: 2 }),
+    ).rejects.toBeInstanceOf(VaultError);
   });
 });
