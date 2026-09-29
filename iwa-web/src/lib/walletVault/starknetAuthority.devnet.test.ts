@@ -11,6 +11,7 @@ const DEVNET_URL = process.env.IWA_B2A_DEVNET_URL;
 const describeDevnet = DEVNET_URL === undefined ? describe.skip : describe;
 const walletId = "00000000-0000-4000-8000-000000000222";
 const password = "Iwa isolated devnet Starknet wallet password";
+const DEVNET_DEPLOYMENT_FUNDING_FRI = 1_000_000_000_000_000;
 const passkey: WalletPasskeyMetadata = {
   credentialId: "iwa-b2a-devnet-wallet-passkey",
   rpId: "wallet.example.test",
@@ -43,7 +44,7 @@ async function mintTestFunding(address: string): Promise<void> {
   const response = await fetch(`${DEVNET_URL!}/mint`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ address, amount: "1000000000000000000000", unit: "FRI" }),
+    body: JSON.stringify({ address, amount: DEVNET_DEPLOYMENT_FUNDING_FRI, unit: "FRI" }),
   });
   if (!response.ok) throw new Error("isolated devnet test funding failed");
 }
@@ -124,6 +125,27 @@ describe("B2-A devnet account ABI gate", () => {
         inputs: [{ name: "public_key", type: "core::felt252" }],
       },
     ])).not.toThrow();
+  });
+});
+
+describe("B2-A devnet funding request", () => {
+  it("sends a JavaScript-safe numeric FRI amount to the local faucet", async () => {
+    const originalFetch = globalThis.fetch;
+    let request: unknown;
+    globalThis.fetch = (async (_input, init) => {
+      request = JSON.parse(String(init?.body));
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    try {
+      await mintTestFunding("0x123");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(request).toEqual({
+      address: "0x123",
+      amount: DEVNET_DEPLOYMENT_FUNDING_FRI,
+      unit: "FRI",
+    });
   });
 });
 
