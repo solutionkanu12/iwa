@@ -40,8 +40,8 @@ async function devnetRpc<T>(method: string, params: unknown[] = []): Promise<T> 
   return payload.result;
 }
 
-async function mintTestFunding(address: string): Promise<void> {
-  const response = await fetch(`${DEVNET_URL!}/mint`, {
+async function mintTestFunding(address: string, rpcUrl = DEVNET_URL!): Promise<void> {
+  const response = await fetch(new URL("/mint", rpcUrl), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ address, amount: DEVNET_DEPLOYMENT_FUNDING_FRI, unit: "FRI" }),
@@ -131,16 +131,19 @@ describe("B2-A devnet account ABI gate", () => {
 describe("B2-A devnet funding request", () => {
   it("sends a JavaScript-safe numeric FRI amount to the local faucet", async () => {
     const originalFetch = globalThis.fetch;
+    let requestUrl: string | undefined;
     let request: unknown;
-    globalThis.fetch = (async (_input, init) => {
+    globalThis.fetch = (async (input, init) => {
+      requestUrl = String(input);
       request = JSON.parse(String(init?.body));
       return new Response("{}", { status: 200 });
     }) as typeof fetch;
     try {
-      await mintTestFunding("0x123");
+      await mintTestFunding("0x123", "http://127.0.0.1:5050/rpc");
     } finally {
       globalThis.fetch = originalFetch;
     }
+    expect(requestUrl).toBe("http://127.0.0.1:5050/mint");
     expect(request).toEqual({
       address: "0x123",
       amount: DEVNET_DEPLOYMENT_FUNDING_FRI,
