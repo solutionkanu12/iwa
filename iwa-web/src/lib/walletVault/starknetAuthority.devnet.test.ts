@@ -60,9 +60,19 @@ function accountAbi(value: unknown): Array<Record<string, unknown>> {
 function assertDeployablePublicKeyAccountAbi(value: unknown): void {
   const abi = accountAbi(value);
   const functions = new Set(
-    abi
-      .filter((entry) => entry.type === "function" && typeof entry.name === "string")
-      .map((entry) => entry.name as string),
+    abi.flatMap((entry) => {
+      if (entry.type === "function" && typeof entry.name === "string") return [entry.name];
+      if (entry.type !== "interface" || !Array.isArray(entry.items)) return [];
+      return entry.items.flatMap((item) => (
+        typeof item === "object" &&
+        item !== null &&
+        !Array.isArray(item) &&
+        (item as { type?: unknown }).type === "function" &&
+        typeof (item as { name?: unknown }).name === "string"
+          ? [(item as { name: string }).name]
+          : []
+      ));
+    }),
   );
   expect(functions.has("get_public_key")).toBe(true);
   expect(functions.has("is_valid_signature")).toBe(true);
@@ -84,6 +94,38 @@ function assertDeployablePublicKeyAccountAbi(value: unknown): void {
     throw new Error("devnet account constructor is not a one-felt public-key constructor");
   }
 }
+
+describe("B2-A devnet account ABI gate", () => {
+  it("accepts Cairo 1 account functions nested in ABI interface items", () => {
+    expect(() => assertDeployablePublicKeyAccountAbi([
+      {
+        type: "interface",
+        name: "openzeppelin::account::interface::ISRC6",
+        items: [
+          { type: "function", name: "is_valid_signature" },
+        ],
+      },
+      {
+        type: "interface",
+        name: "openzeppelin::account::interface::IPublicKey",
+        items: [
+          { type: "function", name: "get_public_key" },
+        ],
+      },
+      {
+        type: "interface",
+        name: "openzeppelin::account::interface::IDeployable",
+        items: [
+          { type: "function", name: "__validate_deploy__" },
+        ],
+      },
+      {
+        type: "constructor",
+        inputs: [{ name: "public_key", type: "core::felt252" }],
+      },
+    ])).not.toThrow();
+  });
+});
 
 function newVault(store = new InMemoryVaultStore()) {
   return new WalletVault({
