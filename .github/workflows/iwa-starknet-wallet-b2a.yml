@@ -2,9 +2,12 @@ name: B2-A isolated Starknet wallet deployment
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - ci/iwa-starknet-b2a
 
-# This harness is manually triggered from a temporary branch only. It has no
-# deployment permissions, environments, caches, artifacts, or credentials.
+# This harness runs only from its disposable branch. It has no deployment
+# permissions, environments, caches, artifacts, or credentials.
 permissions:
   contents: read
 
