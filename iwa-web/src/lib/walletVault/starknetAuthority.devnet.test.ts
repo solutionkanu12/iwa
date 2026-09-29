@@ -41,12 +41,20 @@ async function devnetRpc<T>(method: string, params: unknown[] = []): Promise<T> 
 }
 
 async function mintTestFunding(address: string, rpcUrl = DEVNET_URL!): Promise<void> {
-  const response = await fetch(new URL("/mint", rpcUrl), {
+  const response = await fetch(rpcUrl, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ address, amount: DEVNET_DEPLOYMENT_FUNDING_FRI, unit: "FRI" }),
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "devnet_mint",
+      params: { address, amount: DEVNET_DEPLOYMENT_FUNDING_FRI, unit: "FRI" },
+    }),
   });
-  if (!response.ok) throw new Error("isolated devnet test funding failed");
+  const payload = (await response.json()) as { result?: unknown; error?: unknown };
+  if (!response.ok || payload.error !== undefined || payload.result === undefined) {
+    throw new Error("isolated devnet test funding failed");
+  }
 }
 
 function accountAbi(value: unknown): Array<Record<string, unknown>> {
@@ -129,25 +137,30 @@ describe("B2-A devnet account ABI gate", () => {
 });
 
 describe("B2-A devnet funding request", () => {
-  it("sends a JavaScript-safe numeric FRI amount to the local faucet", async () => {
+  it("sends a JavaScript-safe numeric FRI devnet_mint JSON-RPC request", async () => {
     const originalFetch = globalThis.fetch;
     let requestUrl: string | undefined;
     let request: unknown;
     globalThis.fetch = (async (input, init) => {
       requestUrl = String(input);
       request = JSON.parse(String(init?.body));
-      return new Response("{}", { status: 200 });
+      return new Response('{"jsonrpc":"2.0","id":1,"result":{}}', { status: 200 });
     }) as typeof fetch;
     try {
       await mintTestFunding("0x123", "http://127.0.0.1:5050/rpc");
     } finally {
       globalThis.fetch = originalFetch;
     }
-    expect(requestUrl).toBe("http://127.0.0.1:5050/mint");
+    expect(requestUrl).toBe("http://127.0.0.1:5050/rpc");
     expect(request).toEqual({
-      address: "0x123",
-      amount: DEVNET_DEPLOYMENT_FUNDING_FRI,
-      unit: "FRI",
+      jsonrpc: "2.0",
+      id: 1,
+      method: "devnet_mint",
+      params: {
+        address: "0x123",
+        amount: DEVNET_DEPLOYMENT_FUNDING_FRI,
+        unit: "FRI",
+      },
     });
   });
 });
