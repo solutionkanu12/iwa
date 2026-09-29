@@ -12,6 +12,7 @@ describe("onboarding route guard", () => {
     expect(onboardingStepFor("incomplete", "passwordPin")).toBe("passwordPin");
     expect(onboardingStepFor("incomplete", "walletProvisioning")).toBe("walletProvisioning");
     expect(onboardingStepFor("incomplete", "recovery")).toBe("recovery");
+    expect(onboardingStepFor("incomplete", "chainProvisioning")).toBe("chainProvisioning");
     expect(onboardingRedirect("explore", "incomplete")).toBe("onboarding");
   });
 

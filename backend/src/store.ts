@@ -18,6 +18,7 @@ import {
   type AuthProvider,
   type IwaUser,
   type IwaWalletSetup,
+  type IwaWalletStarknetDescriptor,
   type IwaUserStatus,
   type OnboardingStep,
   type OnboardingStatus,
@@ -202,6 +203,22 @@ export interface Store {
     walletId: string,
     generation: number,
   ): Promise<IwaWalletSetup | null>;
+  /** Enters generic chain provisioning only after local recovery has been verified. */
+  beginIwaWalletChainProvisioning(
+    userId: string,
+    walletId: string,
+  ): Promise<{ user: IwaUser; wallet: IwaWalletSetup } | null>;
+  /** Stores immutable public Starknet account facts after local authority creation. */
+  recordIwaWalletStarknetAuthority(
+    userId: string,
+    walletId: string,
+    descriptor: IwaWalletStarknetDescriptor,
+  ): Promise<IwaWalletSetup | null>;
+  /** Records only a resumable deployment attempt, never a verified on-chain result. */
+  recordIwaWalletStarknetDeploymentAttempt(
+    userId: string,
+    walletId: string,
+  ): Promise<IwaWalletSetup | null>;
   createAccountSession(
     userId: string,
     tokenHash: string,
@@ -259,6 +276,17 @@ export function byNewestFirst(a: CircleAssociation, b: CircleAssociation): numbe
 }
 
 // --- In-memory implementation, used by tests ---
+
+function sameStarknetDescriptor(first: IwaWalletStarknetDescriptor, second: IwaWalletStarknetDescriptor): boolean {
+  return (
+    first.networkId === second.networkId &&
+    first.accountAddress === second.accountAddress &&
+    first.publicKey === second.publicKey &&
+    first.accountClassId === second.accountClassId &&
+    first.accountClassHash === second.accountClassHash &&
+    first.descriptorVersion === second.descriptorVersion
+  );
+}
 
 export class MemoryStore implements Store {
   private drafts = new Map<string, CircleDraft>();
@@ -555,6 +583,8 @@ export class MemoryStore implements Store {
       status: "reserved",
       recoveryStatus: "notConfigured",
       recoveryGeneration: null,
+      chainProvisioningStage: "notStarted",
+      starknet: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -623,6 +653,81 @@ export class MemoryStore implements Store {
       setup.recoveryGeneration = generation;
       setup.updatedAt = new Date().toISOString();
     }
+    return structuredClone(setup);
+  }
+
+  async beginIwaWalletChainProvisioning(
+    userId: string,
+    walletId: string,
+  ): Promise<{ user: IwaUser; wallet: IwaWalletSetup } | null> {
+    const user = this.users.get(userId);
+    const setup = this.walletSetups.get(userId);
+    if (user === undefined || setup === undefined || setup.walletId !== walletId) return null;
+    if (
+      user.onboardingStatus !== "incomplete" ||
+      setup.status !== "vaultProvisioned" ||
+      setup.recoveryStatus !== "verified"
+    ) {
+      return null;
+    }
+    if (user.onboardingStep === "chainProvisioning") return { user: structuredClone(user), wallet: structuredClone(setup) };
+    if (user.onboardingStep !== "recovery") return null;
+    const now = new Date().toISOString();
+    user.onboardingStep = "chainProvisioning";
+    user.updatedAt = now;
+    setup.updatedAt = now;
+    return { user: structuredClone(user), wallet: structuredClone(setup) };
+  }
+
+  async recordIwaWalletStarknetAuthority(
+    userId: string,
+    walletId: string,
+    descriptor: IwaWalletStarknetDescriptor,
+  ): Promise<IwaWalletSetup | null> {
+    const user = this.users.get(userId);
+    const setup = this.walletSetups.get(userId);
+    if (
+      user === undefined ||
+      setup === undefined ||
+      user.onboardingStatus !== "incomplete" ||
+      user.onboardingStep !== "chainProvisioning" ||
+      setup.walletId !== walletId ||
+      setup.status !== "vaultProvisioned" ||
+      setup.recoveryStatus !== "verified"
+    ) {
+      return null;
+    }
+    if (setup.starknet !== null) {
+      if (!sameStarknetDescriptor(setup.starknet, descriptor)) return null;
+      return structuredClone(setup);
+    }
+    setup.starknet = structuredClone(descriptor);
+    setup.chainProvisioningStage = "starknetAuthority";
+    setup.updatedAt = new Date().toISOString();
+    return structuredClone(setup);
+  }
+
+  async recordIwaWalletStarknetDeploymentAttempt(
+    userId: string,
+    walletId: string,
+  ): Promise<IwaWalletSetup | null> {
+    const user = this.users.get(userId);
+    const setup = this.walletSetups.get(userId);
+    if (
+      user === undefined ||
+      setup === undefined ||
+      user.onboardingStatus !== "incomplete" ||
+      user.onboardingStep !== "chainProvisioning" ||
+      setup.walletId !== walletId ||
+      setup.status !== "vaultProvisioned" ||
+      setup.recoveryStatus !== "verified" ||
+      setup.chainProvisioningStage !== "starknetAuthority" ||
+      setup.starknet === null
+    ) {
+      return null;
+    }
+    setup.chainProvisioningStage = "starknetDeployment";
+    setup.updatedAt = new Date().toISOString();
     return structuredClone(setup);
   }
 

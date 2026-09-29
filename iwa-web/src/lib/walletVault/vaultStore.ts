@@ -10,6 +10,8 @@ export interface WalletVaultStore {
   hasOtherWallet(walletId: string): Promise<boolean>;
   /** Inserts once. Replacement is reserved for an explicit future migration flow. */
   create(record: RootWrapRecordV1): Promise<void>;
+  /** Atomically replaces exactly the record previously read by a live vault operation. */
+  replaceIfUnchanged(previous: RootWrapRecordV1, replacement: RootWrapRecordV1): Promise<boolean>;
   /** Removes only the exact record supplied; used to safely cancel a stale import. */
   removeIfUnchanged(record: RootWrapRecordV1): Promise<boolean>;
   remove(walletId: string): Promise<void>;
@@ -68,6 +70,16 @@ export class InMemoryVaultStore implements WalletVaultStore {
     const current = this.unsafeRecords.get(valid.walletId);
     if (current === undefined || !sameRecord(recordForWallet(valid.walletId, current), valid)) return false;
     this.unsafeRecords.delete(valid.walletId);
+    return true;
+  }
+
+  async replaceIfUnchanged(previous: RootWrapRecordV1, replacement: RootWrapRecordV1): Promise<boolean> {
+    const validPrevious = recordForWallet(previous.walletId, previous);
+    const validReplacement = recordForWallet(replacement.walletId, replacement);
+    if (validPrevious.walletId !== validReplacement.walletId) fail("authentication_failed");
+    const current = this.unsafeRecords.get(validPrevious.walletId);
+    if (current === undefined || !sameRecord(recordForWallet(validPrevious.walletId, current), validPrevious)) return false;
+    this.unsafeRecords.set(validPrevious.walletId, cloneRecord(validReplacement));
     return true;
   }
 
@@ -170,6 +182,37 @@ export class IndexedDbVaultStore implements WalletVaultStore {
         };
         request.onerror = () => transaction.abort();
         transaction.oncomplete = () => resolve(removed);
+        transaction.onerror = () => reject(new VaultError("unavailable"));
+        transaction.onabort = () => reject(new VaultError("unavailable"));
+      });
+    } catch (error) {
+      if (error instanceof VaultError) throw error;
+      throw new VaultError("unavailable");
+    }
+  }
+
+  async replaceIfUnchanged(previous: RootWrapRecordV1, replacement: RootWrapRecordV1): Promise<boolean> {
+    const validPrevious = recordForWallet(previous.walletId, previous);
+    const validReplacement = recordForWallet(replacement.walletId, replacement);
+    if (validPrevious.walletId !== validReplacement.walletId) fail("authentication_failed");
+    try {
+      return await new Promise<boolean>((resolve, reject) => {
+        const transaction = this.database.transaction(VAULT_STORE, "readwrite");
+        const store = transaction.objectStore(VAULT_STORE);
+        let replaced = false;
+        const request = store.get(validPrevious.walletId);
+        request.onsuccess = () => {
+          try {
+            if (request.result !== undefined && sameRecord(recordForWallet(validPrevious.walletId, request.result), validPrevious)) {
+              store.put(cloneRecord(validReplacement), validReplacement.walletId);
+              replaced = true;
+            }
+          } catch {
+            transaction.abort();
+          }
+        };
+        request.onerror = () => transaction.abort();
+        transaction.oncomplete = () => resolve(replaced);
         transaction.onerror = () => reject(new VaultError("unavailable"));
         transaction.onabort = () => reject(new VaultError("unavailable"));
       });

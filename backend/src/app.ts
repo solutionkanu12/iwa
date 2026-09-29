@@ -67,6 +67,8 @@ import {
   timingSafeEqualString,
   type EmailOtpSender,
   type IdentityVerifier,
+  type IwaWalletSetup,
+  type IwaWalletStarknetDescriptor,
 } from "./iwaAccount.js";
 
 /**
@@ -97,6 +99,51 @@ export const SESSION_HEADER = "authorization";
 
 /** Request headers the API accepts cross-origin. Nothing beyond what it reads. */
 const ALLOWED_HEADERS = ["content-type", SESSION_HEADER, IWA_CSRF_HEADER, ...AUTH_HEADERS].join(",");
+
+function publicWalletSetup(wallet: IwaWalletSetup) {
+  return {
+    walletId: wallet.walletId,
+    status: wallet.status,
+    recoveryStatus: wallet.recoveryStatus,
+    recoveryGeneration: wallet.recoveryGeneration,
+    chainProvisioningStage: wallet.chainProvisioningStage,
+    starknet: wallet.starknet,
+  };
+}
+
+/** Parses public coordination metadata only; every other request field fails closed. */
+function parsePublicStarknetDescriptor(value: unknown): IwaWalletStarknetDescriptor | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const expected = ["networkId", "accountAddress", "publicKey", "accountClassId", "accountClassHash", "descriptorVersion"];
+  if (Object.keys(record).length !== expected.length || expected.some((key) => !(key in record))) return null;
+  if (
+    typeof record.networkId !== "string" ||
+    !/^[A-Za-z0-9_:-]{1,64}$/.test(record.networkId) ||
+    typeof record.accountAddress !== "string" ||
+    typeof record.publicKey !== "string" ||
+    typeof record.accountClassId !== "string" ||
+    !/^[a-z0-9][a-z0-9-]{0,127}$/.test(record.accountClassId) ||
+    typeof record.accountClassHash !== "string" ||
+    record.descriptorVersion !== 1 ||
+    !isFelt(record.accountAddress) ||
+    !isFelt(record.publicKey) ||
+    !isFelt(record.accountClassHash) ||
+    BigInt(record.accountAddress) === 0n ||
+    BigInt(record.publicKey) === 0n ||
+    BigInt(record.accountClassHash) === 0n
+  ) {
+    return null;
+  }
+  return {
+    networkId: record.networkId,
+    accountAddress: normalizeFelt(record.accountAddress),
+    publicKey: normalizeFelt(record.publicKey),
+    accountClassId: record.accountClassId,
+    accountClassHash: normalizeFelt(record.accountClassHash),
+    descriptorVersion: 1,
+  };
+}
 
 export interface AppOptions {
   store: Store;
@@ -983,12 +1030,7 @@ export function createApp(options: AppOptions): Express {
       }
       res.json({
         onboarding: onboardingProgress(result.user.onboardingStatus, result.user.onboardingStep),
-        wallet: {
-          walletId: result.wallet.walletId,
-          status: result.wallet.status,
-          recoveryStatus: result.wallet.recoveryStatus,
-          recoveryGeneration: result.wallet.recoveryGeneration,
-        },
+        wallet: publicWalletSetup(result.wallet),
       });
     } catch (e) {
       next(e);
@@ -1013,12 +1055,7 @@ export function createApp(options: AppOptions): Express {
         wallet:
           wallet === null
             ? null
-            : {
-                walletId: wallet.walletId,
-                status: wallet.status,
-                recoveryStatus: wallet.recoveryStatus,
-                recoveryGeneration: wallet.recoveryGeneration,
-              },
+            : publicWalletSetup(wallet),
       });
     } catch (e) {
       next(e);
@@ -1070,15 +1107,105 @@ export function createApp(options: AppOptions): Express {
       }
       res.json({
         onboarding: onboardingProgress(loaded.user.onboardingStatus, loaded.user.onboardingStep),
-        wallet: {
-          walletId: wallet.walletId,
-          status: wallet.status,
-          recoveryStatus: wallet.recoveryStatus,
-          recoveryGeneration: wallet.recoveryGeneration,
-        },
+        wallet: publicWalletSetup(wallet),
       });
     } catch (e) {
       next(e);
+    }
+  });
+
+  /**
+   * Starts the generic future-chain phase only after locally verified portable
+   * recovery. It cannot mark onboarding complete or create an authority.
+   */
+  app.post("/api/onboarding/wallet/chain-provisioning", async (req, res, next) => {
+    if (!mutate(req, res)) return;
+    try {
+      if (!requireOrigin(req, res)) return;
+      const loaded = await loadAccountSession(req);
+      if (!loaded.ok) return res.status(401).json({ error: "session_invalid", message: "Please sign in to Iwa again." });
+      if (!requireCsrf(req, res)) return;
+      if (loaded.user.status === "suspended") {
+        return res.status(403).json({ error: "account_suspended", message: "This Iwa account is suspended. Your on-chain funds are untouched." });
+      }
+      const body = req.body;
+      if (
+        body === null ||
+        typeof body !== "object" ||
+        Array.isArray(body) ||
+        Object.keys(body).length !== 1 ||
+        typeof (body as { walletId?: unknown }).walletId !== "string" ||
+        !isUuid((body as { walletId: string }).walletId)
+      ) {
+        return res.status(400).json({ error: "invalid_request", message: "That chain setup request could not be verified." });
+      }
+      const result = await store.beginIwaWalletChainProvisioning(loaded.user.id, (body as { walletId: string }).walletId);
+      if (result === null) return res.status(409).json({ error: "invalid_onboarding_transition", message: "That onboarding step is not available yet." });
+      res.json({ onboarding: onboardingProgress(result.user.onboardingStatus, result.user.onboardingStep), wallet: publicWalletSetup(result.wallet) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  /**
+   * Saves only public descriptor facts after a local wallet authority has
+   * created them. This route has no field for a scalar, vault, password, PIN,
+   * recovery package, passkey output, or any STRK20 material.
+   */
+  app.post("/api/onboarding/wallet/starknet/authority", async (req, res, next) => {
+    if (!mutate(req, res)) return;
+    try {
+      if (!requireOrigin(req, res)) return;
+      const loaded = await loadAccountSession(req);
+      if (!loaded.ok) return res.status(401).json({ error: "session_invalid", message: "Please sign in to Iwa again." });
+      if (!requireCsrf(req, res)) return;
+      if (loaded.user.status === "suspended") {
+        return res.status(403).json({ error: "account_suspended", message: "This Iwa account is suspended. Your on-chain funds are untouched." });
+      }
+      const body = req.body;
+      if (body === null || typeof body !== "object" || Array.isArray(body) || Object.keys(body).length !== 2) {
+        return res.status(400).json({ error: "invalid_request", message: "That Starknet descriptor could not be verified." });
+      }
+      const record = body as { walletId?: unknown; descriptor?: unknown };
+      const descriptor = parsePublicStarknetDescriptor(record.descriptor);
+      if (typeof record.walletId !== "string" || !isUuid(record.walletId) || descriptor === null) {
+        return res.status(400).json({ error: "invalid_request", message: "That Starknet descriptor could not be verified." });
+      }
+      const wallet = await store.recordIwaWalletStarknetAuthority(loaded.user.id, record.walletId, descriptor);
+      if (wallet === null) return res.status(409).json({ error: "invalid_onboarding_transition", message: "That Starknet descriptor conflicts with this wallet." });
+      res.json({ onboarding: onboardingProgress(loaded.user.onboardingStatus, loaded.user.onboardingStep), wallet: publicWalletSetup(wallet) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  /** A resumable coordination marker only. Deployment verification remains a future chain/indexer responsibility. */
+  app.post("/api/onboarding/wallet/starknet/deployment-attempt", async (req, res, next) => {
+    if (!mutate(req, res)) return;
+    try {
+      if (!requireOrigin(req, res)) return;
+      const loaded = await loadAccountSession(req);
+      if (!loaded.ok) return res.status(401).json({ error: "session_invalid", message: "Please sign in to Iwa again." });
+      if (!requireCsrf(req, res)) return;
+      if (loaded.user.status === "suspended") {
+        return res.status(403).json({ error: "account_suspended", message: "This Iwa account is suspended. Your on-chain funds are untouched." });
+      }
+      const body = req.body;
+      if (
+        body === null ||
+        typeof body !== "object" ||
+        Array.isArray(body) ||
+        Object.keys(body).length !== 1 ||
+        typeof (body as { walletId?: unknown }).walletId !== "string" ||
+        !isUuid((body as { walletId: string }).walletId)
+      ) {
+        return res.status(400).json({ error: "invalid_request", message: "That Starknet deployment request could not be verified." });
+      }
+      const wallet = await store.recordIwaWalletStarknetDeploymentAttempt(loaded.user.id, (body as { walletId: string }).walletId);
+      if (wallet === null) return res.status(409).json({ error: "invalid_onboarding_transition", message: "That Starknet deployment is not available yet." });
+      res.json({ onboarding: onboardingProgress(loaded.user.onboardingStatus, loaded.user.onboardingStep), wallet: publicWalletSetup(wallet) });
+    } catch (error) {
+      next(error);
     }
   });
 

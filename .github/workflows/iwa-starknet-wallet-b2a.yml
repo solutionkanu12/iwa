@@ -1,0 +1,93 @@
+name: B2-A isolated Starknet wallet deployment
+
+on:
+  workflow_dispatch:
+
+# This harness is manually triggered from a temporary branch only. It has no
+# deployment permissions, environments, caches, artifacts, or credentials.
+permissions:
+  contents: read
+
+concurrency:
+  group: iwa-starknet-wallet-b2a-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  isolated-devnet-account:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    env:
+      NODE_VERSION: 20.20.2
+      DEVNET_VERSION: 0.8.0-rc.3
+      IWA_B2A_DEVNET_URL: http://127.0.0.1:5050/rpc
+    steps:
+      - name: Check out the explicit test branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install pinned Node runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20.20.2
+
+      - name: Install existing frontend dependencies only
+        run: npm ci --prefix iwa-web
+
+      - name: Install the upstream-pinned isolated Starknet devnet
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/starknet-devnet.tar.gz"
+          curl --fail --location --retry 3 --silent --show-error \
+          "https://github.com/0xSpaceShard/starknet-devnet/releases/download/v${DEVNET_VERSION}/starknet-devnet-x86_64-unknown-linux-gnu.tar.gz" \
+            --output "$archive"
+          tar --extract --gzip --file "$archive" --directory "$RUNNER_TEMP"
+          install -m 0755 "$RUNNER_TEMP/starknet-devnet" "$RUNNER_TEMP/iwa-starknet-devnet"
+          version_output="$("$RUNNER_TEMP/iwa-starknet-devnet" --version 2>&1)"
+          case "$version_output" in
+            *"$DEVNET_VERSION"*) ;;
+            *) echo "Pinned Starknet Devnet verification failed: expected $DEVNET_VERSION" >&2; exit 1 ;;
+          esac
+          rm -f "$archive"
+
+      - name: Deploy and recover a generated local Iwa Starknet account on isolated devnet
+        run: |
+          set -euo pipefail
+          devnet_log="$RUNNER_TEMP/iwa-b2a-devnet.log"
+          "$RUNNER_TEMP/iwa-starknet-devnet" --seed 42 >"$devnet_log" 2>&1 &
+          devnet_pid=$!
+          cleanup() {
+            kill "$devnet_pid" 2>/dev/null || true
+            wait "$devnet_pid" 2>/dev/null || true
+            rm -f "$devnet_log"
+          }
+          trap cleanup EXIT
+          for _ in $(seq 1 30); do
+            if curl --fail --silent --show-error \
+              --header 'content-type: application/json' \
+              --data '{"jsonrpc":"2.0","id":1,"method":"starknet_chainId","params":[]}' \
+              "$IWA_B2A_DEVNET_URL" >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl --fail --silent --show-error \
+            --header 'content-type: application/json' \
+            --data '{"jsonrpc":"2.0","id":1,"method":"starknet_chainId","params":[]}' \
+            "$IWA_B2A_DEVNET_URL" >/dev/null
+          cd iwa-web
+          npx vitest run src/lib/walletVault/starknetAuthority.devnet.test.ts --reporter=dot
+
+      - name: Record sanitized outcome
+        if: always()
+        run: |
+          {
+            echo "## IWA B2-A isolated devnet harness"
+            echo
+            echo "- Network: disposable local Starknet devnet only"
+            echo "- Devnet revision: `$DEVNET_VERSION`"
+            echo "- Node: `$NODE_VERSION`"
+            echo "- Artifacts and caches: none retained"
+            echo "- Credentials and real funds: none used"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -62,4 +62,16 @@ describe("wallet vault persistence", () => {
     await expect(store.removeIfUnchanged(stale)).resolves.toBe(false);
     await expect(store.load("wallet-cas")).resolves.toEqual(replacement);
   });
+
+  it("atomically replaces only the root record that was read", async () => {
+    const store = new InMemoryVaultStore();
+    const original = await record("wallet-replace");
+    const replacement = await record("wallet-replace");
+    await store.create(original);
+
+    await expect(store.replaceIfUnchanged(original, replacement)).resolves.toBe(true);
+    await expect(store.load("wallet-replace")).resolves.toEqual(replacement);
+    await expect(store.replaceIfUnchanged(original, original)).resolves.toBe(false);
+    await expect(store.load("wallet-replace")).resolves.toEqual(replacement);
+  });
 });

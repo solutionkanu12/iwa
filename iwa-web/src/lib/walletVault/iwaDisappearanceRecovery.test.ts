@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { forTestOnlyPasswordKdfPolicy, type WalletPasskeyMetadata } from "./vaultCrypto";
 import { formatRecoveryKey, parseRecoveryKey } from "./recoveryKey";
-import { openRecoveryPackage } from "./recoveryPackage";
+import { openRecoveryPackage, wipeVaultAuthorities } from "./recoveryPackage";
 import { InMemoryVaultStore } from "./vaultStore";
 import { WalletVault } from "./walletVault";
 
@@ -72,7 +72,7 @@ describe("portable recovery without Iwa infrastructure", () => {
     expect(replacementPayload.authorities).toEqual([{ id: "synthetic-portable-authority", material: syntheticAuthority }]);
     expect(replacementPayload.generation).toBe(2);
     replacementPayload.rootSecret.fill(0);
-    replacementPayload.authorities.forEach((authority) => authority.material.fill(0));
+    wipeVaultAuthorities(replacementPayload.authorities);
     recoveryKey.fill(0);
     syntheticAuthority.fill(0);
   });

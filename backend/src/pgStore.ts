@@ -14,7 +14,9 @@ import {
   type AccountSessionRecord,
   type IwaUser,
   type IwaWalletSetup,
+  type IwaWalletChainProvisioningStage,
   type IwaWalletRecoveryStatus,
+  type IwaWalletStarknetDescriptor,
   type IwaUserStatus,
   type OnboardingStep,
   type OnboardingStatus,
@@ -51,6 +53,13 @@ interface IwaWalletSetupRow {
   setup_status: IwaWalletSetup["status"];
   recovery_status: IwaWalletRecoveryStatus;
   recovery_generation: number | null;
+  chain_provisioning_stage: IwaWalletChainProvisioningStage;
+  starknet_network_id: string | null;
+  starknet_account_address: string | null;
+  starknet_public_key: string | null;
+  starknet_account_class_id: string | null;
+  starknet_account_class_hash: string | null;
+  starknet_descriptor_version: number | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -111,15 +120,44 @@ function toDraft(d: DraftRow, slots: SlotRow[]): CircleDraft {
 }
 
 function toIwaWalletSetup(row: IwaWalletSetupRow): IwaWalletSetup {
+  const starknet =
+    row.starknet_network_id === null ||
+    row.starknet_account_address === null ||
+    row.starknet_public_key === null ||
+    row.starknet_account_class_id === null ||
+    row.starknet_account_class_hash === null ||
+    row.starknet_descriptor_version === null
+      ? null
+      : {
+          networkId: row.starknet_network_id,
+          accountAddress: row.starknet_account_address,
+          publicKey: row.starknet_public_key,
+          accountClassId: row.starknet_account_class_id,
+          accountClassHash: row.starknet_account_class_hash,
+          descriptorVersion: row.starknet_descriptor_version,
+        };
   return {
     userId: row.user_id,
     walletId: row.wallet_id,
     status: row.setup_status,
     recoveryStatus: row.recovery_status,
     recoveryGeneration: row.recovery_generation,
+    chainProvisioningStage: row.chain_provisioning_stage,
+    starknet,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };
+}
+
+function sameStarknetDescriptor(first: IwaWalletStarknetDescriptor, second: IwaWalletStarknetDescriptor): boolean {
+  return (
+    first.networkId === second.networkId &&
+    first.accountAddress === second.accountAddress &&
+    first.publicKey === second.publicKey &&
+    first.accountClassId === second.accountClassId &&
+    first.accountClassHash === second.accountClassHash &&
+    first.descriptorVersion === second.descriptorVersion
+  );
 }
 
 export class PgStore implements Store {
@@ -758,7 +796,9 @@ export class PgStore implements Store {
         `INSERT INTO iwa_wallet_setups (user_id, wallet_id, setup_status)
          VALUES ($1, $2, 'reserved')
          ON CONFLICT (user_id) DO UPDATE SET user_id = EXCLUDED.user_id
-         RETURNING user_id, wallet_id, setup_status, recovery_status, recovery_generation, created_at, updated_at`,
+         RETURNING user_id, wallet_id, setup_status, recovery_status, recovery_generation, chain_provisioning_stage,
+                   starknet_network_id, starknet_account_address, starknet_public_key, starknet_account_class_id,
+                   starknet_account_class_hash, starknet_descriptor_version, created_at, updated_at`,
         [userId, randomUUID()],
       );
       await client.query("COMMIT");
@@ -773,7 +813,9 @@ export class PgStore implements Store {
 
   async getIwaWalletSetup(userId: string): Promise<IwaWalletSetup | null> {
     const result = await this.pool.query<IwaWalletSetupRow>(
-      `SELECT user_id, wallet_id, setup_status, recovery_status, recovery_generation, created_at, updated_at
+      `SELECT user_id, wallet_id, setup_status, recovery_status, recovery_generation, chain_provisioning_stage,
+              starknet_network_id, starknet_account_address, starknet_public_key, starknet_account_class_id,
+              starknet_account_class_hash, starknet_descriptor_version, created_at, updated_at
          FROM iwa_wallet_setups WHERE user_id = $1`,
       [userId],
     );
@@ -793,7 +835,9 @@ export class PgStore implements Store {
         [userId],
       );
       const setup = await client.query<IwaWalletSetupRow>(
-        `SELECT user_id, wallet_id, setup_status, recovery_status, recovery_generation, created_at, updated_at
+        `SELECT user_id, wallet_id, setup_status, recovery_status, recovery_generation, chain_provisioning_stage,
+                starknet_network_id, starknet_account_address, starknet_public_key, starknet_account_class_id,
+                starknet_account_class_hash, starknet_descriptor_version, created_at, updated_at
            FROM iwa_wallet_setups WHERE user_id = $1 FOR UPDATE`,
         [userId],
       );
@@ -822,7 +866,9 @@ export class PgStore implements Store {
       const updatedSetup = await client.query<IwaWalletSetupRow>(
         `UPDATE iwa_wallet_setups SET setup_status = 'vaultProvisioned', updated_at = now()
           WHERE user_id = $1
-          RETURNING user_id, wallet_id, setup_status, recovery_status, recovery_generation, created_at, updated_at`,
+          RETURNING user_id, wallet_id, setup_status, recovery_status, recovery_generation, chain_provisioning_stage,
+                    starknet_network_id, starknet_account_address, starknet_public_key, starknet_account_class_id,
+                    starknet_account_class_hash, starknet_descriptor_version, created_at, updated_at`,
         [userId],
       );
       const updatedUser = await client.query<IwaUserRow>(
@@ -854,7 +900,9 @@ export class PgStore implements Store {
         [userId],
       );
       const setup = await client.query<IwaWalletSetupRow>(
-        `SELECT user_id, wallet_id, setup_status, recovery_status, recovery_generation, created_at, updated_at
+        `SELECT user_id, wallet_id, setup_status, recovery_status, recovery_generation, chain_provisioning_stage,
+                starknet_network_id, starknet_account_address, starknet_public_key, starknet_account_class_id,
+                starknet_account_class_hash, starknet_descriptor_version, created_at, updated_at
            FROM iwa_wallet_setups WHERE user_id = $1 FOR UPDATE`,
         [userId],
       );
@@ -882,7 +930,9 @@ export class PgStore implements Store {
         `UPDATE iwa_wallet_setups
             SET recovery_status = 'verified', recovery_generation = $2, updated_at = now()
           WHERE user_id = $1
-          RETURNING user_id, wallet_id, setup_status, recovery_status, recovery_generation, created_at, updated_at`,
+          RETURNING user_id, wallet_id, setup_status, recovery_status, recovery_generation, chain_provisioning_stage,
+                    starknet_network_id, starknet_account_address, starknet_public_key, starknet_account_class_id,
+                    starknet_account_class_hash, starknet_descriptor_version, created_at, updated_at`,
         [userId, generation],
       );
       await client.query("COMMIT");
@@ -890,6 +940,197 @@ export class PgStore implements Store {
     } catch (e) {
       await client.query("ROLLBACK");
       throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  async beginIwaWalletChainProvisioning(
+    userId: string,
+    walletId: string,
+  ): Promise<{ user: IwaUser; wallet: IwaWalletSetup } | null> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const user = await client.query<IwaUserRow>(
+        `SELECT id, email, status, onboarding_status, onboarding_step, created_at, updated_at
+           FROM users WHERE id = $1 FOR UPDATE`,
+        [userId],
+      );
+      const setup = await client.query<IwaWalletSetupRow>(
+        `SELECT user_id, wallet_id, setup_status, recovery_status, recovery_generation, chain_provisioning_stage,
+                starknet_network_id, starknet_account_address, starknet_public_key, starknet_account_class_id,
+                starknet_account_class_hash, starknet_descriptor_version, created_at, updated_at
+           FROM iwa_wallet_setups WHERE user_id = $1 FOR UPDATE`,
+        [userId],
+      );
+      if (user.rowCount === 0 || setup.rowCount === 0 || setup.rows[0]?.wallet_id !== walletId) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      const currentUser = toIwaUser(user.rows[0]!);
+      const currentSetup = toIwaWalletSetup(setup.rows[0]!);
+      if (
+        currentUser.onboardingStatus !== "incomplete" ||
+        currentSetup.status !== "vaultProvisioned" ||
+        currentSetup.recoveryStatus !== "verified"
+      ) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      if (currentUser.onboardingStep === "chainProvisioning") {
+        await client.query("COMMIT");
+        return { user: currentUser, wallet: currentSetup };
+      }
+      if (currentUser.onboardingStep !== "recovery") {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      const updatedUser = await client.query<IwaUserRow>(
+        `UPDATE users SET onboarding_step = 'chainProvisioning', updated_at = now()
+          WHERE id = $1
+          RETURNING id, email, status, onboarding_status, onboarding_step, created_at, updated_at`,
+        [userId],
+      );
+      const updatedSetup = await client.query<IwaWalletSetupRow>(
+        `UPDATE iwa_wallet_setups SET updated_at = now()
+          WHERE user_id = $1
+          RETURNING user_id, wallet_id, setup_status, recovery_status, recovery_generation, chain_provisioning_stage,
+                    starknet_network_id, starknet_account_address, starknet_public_key, starknet_account_class_id,
+                    starknet_account_class_hash, starknet_descriptor_version, created_at, updated_at`,
+        [userId],
+      );
+      await client.query("COMMIT");
+      return { user: toIwaUser(updatedUser.rows[0]!), wallet: toIwaWalletSetup(updatedSetup.rows[0]!) };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async recordIwaWalletStarknetAuthority(
+    userId: string,
+    walletId: string,
+    descriptor: IwaWalletStarknetDescriptor,
+  ): Promise<IwaWalletSetup | null> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const user = await client.query<{ onboarding_status: OnboardingStatus; onboarding_step: OnboardingStep }>(
+        "SELECT onboarding_status, onboarding_step FROM users WHERE id = $1 FOR UPDATE",
+        [userId],
+      );
+      const setup = await client.query<IwaWalletSetupRow>(
+        `SELECT user_id, wallet_id, setup_status, recovery_status, recovery_generation, chain_provisioning_stage,
+                starknet_network_id, starknet_account_address, starknet_public_key, starknet_account_class_id,
+                starknet_account_class_hash, starknet_descriptor_version, created_at, updated_at
+           FROM iwa_wallet_setups WHERE user_id = $1 FOR UPDATE`,
+        [userId],
+      );
+      const current = setup.rowCount === 0 ? null : toIwaWalletSetup(setup.rows[0]!);
+      if (
+        user.rowCount === 0 ||
+        user.rows[0]?.onboarding_status !== "incomplete" ||
+        user.rows[0]?.onboarding_step !== "chainProvisioning" ||
+        current === null ||
+        current.walletId !== walletId ||
+        current.status !== "vaultProvisioned" ||
+        current.recoveryStatus !== "verified"
+      ) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      if (current.starknet !== null) {
+        const matches = sameStarknetDescriptor(current.starknet, descriptor);
+        await client.query(matches ? "COMMIT" : "ROLLBACK");
+        return matches ? current : null;
+      }
+      const updated = await client.query<IwaWalletSetupRow>(
+        `UPDATE iwa_wallet_setups
+            SET chain_provisioning_stage = 'starknetAuthority',
+                starknet_network_id = $2,
+                starknet_account_address = $3,
+                starknet_public_key = $4,
+                starknet_account_class_id = $5,
+                starknet_account_class_hash = $6,
+                starknet_descriptor_version = $7,
+                updated_at = now()
+          WHERE user_id = $1
+          RETURNING user_id, wallet_id, setup_status, recovery_status, recovery_generation, chain_provisioning_stage,
+                    starknet_network_id, starknet_account_address, starknet_public_key, starknet_account_class_id,
+                    starknet_account_class_hash, starknet_descriptor_version, created_at, updated_at`,
+        [
+          userId,
+          descriptor.networkId,
+          descriptor.accountAddress,
+          descriptor.publicKey,
+          descriptor.accountClassId,
+          descriptor.accountClassHash,
+          descriptor.descriptorVersion,
+        ],
+      );
+      await client.query("COMMIT");
+      return toIwaWalletSetup(updated.rows[0]!);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async recordIwaWalletStarknetDeploymentAttempt(userId: string, walletId: string): Promise<IwaWalletSetup | null> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const user = await client.query<{ onboarding_status: OnboardingStatus; onboarding_step: OnboardingStep }>(
+        "SELECT onboarding_status, onboarding_step FROM users WHERE id = $1 FOR UPDATE",
+        [userId],
+      );
+      const setup = await client.query<IwaWalletSetupRow>(
+        `SELECT user_id, wallet_id, setup_status, recovery_status, recovery_generation, chain_provisioning_stage,
+                starknet_network_id, starknet_account_address, starknet_public_key, starknet_account_class_id,
+                starknet_account_class_hash, starknet_descriptor_version, created_at, updated_at
+           FROM iwa_wallet_setups WHERE user_id = $1 FOR UPDATE`,
+        [userId],
+      );
+      const current = setup.rowCount === 0 ? null : toIwaWalletSetup(setup.rows[0]!);
+      if (
+        user.rowCount === 0 ||
+        user.rows[0]?.onboarding_status !== "incomplete" ||
+        user.rows[0]?.onboarding_step !== "chainProvisioning" ||
+        current === null ||
+        current.walletId !== walletId ||
+        current.status !== "vaultProvisioned" ||
+        current.recoveryStatus !== "verified" ||
+        current.starknet === null
+      ) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      if (current.chainProvisioningStage === "starknetDeployment") {
+        await client.query("COMMIT");
+        return current;
+      }
+      if (current.chainProvisioningStage !== "starknetAuthority") {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      const updated = await client.query<IwaWalletSetupRow>(
+        `UPDATE iwa_wallet_setups SET chain_provisioning_stage = 'starknetDeployment', updated_at = now()
+          WHERE user_id = $1
+          RETURNING user_id, wallet_id, setup_status, recovery_status, recovery_generation, chain_provisioning_stage,
+                    starknet_network_id, starknet_account_address, starknet_public_key, starknet_account_class_id,
+                    starknet_account_class_hash, starknet_descriptor_version, created_at, updated_at`,
+        [userId],
+      );
+      await client.query("COMMIT");
+      return toIwaWalletSetup(updated.rows[0]!);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
     } finally {
       client.release();
     }

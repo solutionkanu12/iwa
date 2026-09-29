@@ -209,6 +209,62 @@ Next boundary: B2 real chain-authority provisioning only after explicit
 approval. The full internal security/audit campaign remains a later complete-
 wallet gate.
 
+### B2-A Starknet authority and isolated deployment seam (local-only, remote proof pending)
+
+B2-A now has a local implementation for the first real chain authority, while
+preserving the one Iwa Wallet abstraction and the chain-neutral vault record
+model. It has not been pushed, deployed to a public network, or used with a
+real user or fund.
+
+- The vault creates a dedicated Starknet scalar using browser CSPRNG rejection
+  sampling against the Stark curve order. It is immediately encrypted as a
+  manifest-bound `starknet/account` record. The scalar is unrelated to Iwa
+  Account authentication, the vault password, PIN, recovery code, passkey,
+  EVM, or Solana. React, backend, URLs, cookies, browser web storage, logs,
+  telemetry, and network requests receive no scalar.
+- The non-secret descriptor records only chain ID, public key, calculated
+  counterfactual address, verified test account class identifier/hash, schema
+  version, and `addressComputed` or `deployed` status. The vault refuses a
+  substituted/deleted descriptor or an address/public key that cannot be
+  rederived from the encrypted scalar.
+- `chainProvisioning` is the new generic forward onboarding step, not a
+  Starknet-only top-level state. New **unapplied** migration
+  `010_add_iwa_chain_provisioning.sql` adds only an extensible public stage and
+  public Starknet descriptor fields to `iwa_wallet_setups`. No private scalar,
+  ciphertext, recovery data, password, PIN, PRF result, viewing key, or
+  settlement authority is added to the schema or accepted by the endpoint.
+- The bounded deployment seam uses a caller-supplied isolated provider. It
+  checks chain ID, counterfactual address, returned address, and deployed class
+  hash. It preflights the calculated address so an interrupted successful
+  deployment resumes only if the exact expected class is already present;
+  otherwise only RPC `CONTRACT_NOT_FOUND` permits a deployment attempt. A test
+  faucet/sponsor may fund the address but never receives the signer.
+- Recovery now round-trips the encrypted Starknet authority alongside the same
+  logical wallet ID. Local tests prove the recovered descriptor and signing
+  authority match; the actual newly generated account deployment/signature proof
+  is reserved for the disposable devnet harness.
+- `.github/workflows/iwa-starknet-wallet-b2a.yml` is a manually dispatched,
+  25-minute disposable Ubuntu devnet harness. It pins B0's Starknet Devnet
+  `0.8.0-rc.3`, Node `20.20.2`, dynamically checks a fresh devnet account ABI,
+  uses runtime-only test funding and authority, retains no artifact/cache/log
+  containing secrets, and verifies deploy, signing, recovery and resume. It is
+  deliberately unpushed and unrun under the current no-push instruction.
+
+Local verification: frontend full suite **77 passed files / 799 passed tests**
+with **1 devnet-only file / 2 tests skipped**; wallet-vault suite **20 passed
+files / 69 passed tests** with the same intentional skip; focused
+onboarding/lifecycle **16/16**; backend full suite **299 passed, 14 database
+integration skips**; frontend project-reference TypeScript check; backend
+TypeScript check; frontend production build; and `git diff --check` passed. The
+build retained only existing third-party
+externalization, annotation, `eval`, and chunk-size warnings.
+
+**B2-A is not yet a deployment PASS.** The remaining required proof is the
+temporary GitHub Actions/devnet run. It cannot be run while the harness must not
+be pushed. There is no production account class/hash, provider, relayer,
+paymaster, mainnet deployment, STRK20 viewing authority, settlement authority,
+EVM authority, or Solana authority.
+
 ## Zama Prize Savings bounty (active work)
 
 Branch `feature/zama-prize-savings`. Standalone spike-to-bounty track inside

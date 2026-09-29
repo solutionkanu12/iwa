@@ -11,10 +11,16 @@ import {
 } from "../lib/walletVault/recoveryPackage";
 import {
   WalletVault,
+  type DeployStarknetAccountInput,
+  type MarkStarknetAccountDeployedInput,
+  type ProvisionStarknetAuthorityInput,
+  type SignStarknetAuthorityProofInput,
+  type StarknetAccountDeploymentResult,
   type VaultTimeout,
   type WalletPasskeyAuthority,
   type WalletVaultSession,
 } from "../lib/walletVault/walletVault";
+import type { StarknetAccountDescriptor, StarknetAuthoritySignature } from "../lib/walletVault/starknetAuthority";
 
 /** Browser passkey boundary needed only while creating the dedicated wallet credential. */
 export interface WalletPasskeyEnrollmentAuthority extends WalletPasskeyAuthority {
@@ -76,6 +82,11 @@ export interface RecoverLocalVaultInput {
   pin: string;
   replacementPackageId: string;
 }
+
+export type ProvisionLocalStarknetAuthorityInput = ProvisionStarknetAuthorityInput;
+export type MarkLocalStarknetAccountDeployedInput = MarkStarknetAccountDeployedInput;
+export type SignLocalStarknetAuthorityProofInput = SignStarknetAuthorityProofInput;
+export type DeployLocalStarknetAccountInput = DeployStarknetAccountInput;
 
 function fail(code: VaultError["code"] = "authentication_failed"): never {
   throw new VaultError(code);
@@ -225,6 +236,39 @@ export class IwaWalletVaultLifecycle {
       walletId: input.walletId,
       generation: localGeneration,
     });
+  }
+
+  /** Adds a real encrypted Starknet scalar without exposing it to React or callers. */
+  async provisionStarknetAuthority(input: ProvisionLocalStarknetAuthorityInput): Promise<StarknetAccountDescriptor> {
+    const session = warmSessionForLifecycle.get(this);
+    if (this.vault === null || session === undefined || this.walletId !== input.walletId) fail();
+    return this.vault.provisionStarknetAuthority(session, input);
+  }
+
+  /** Returns only public descriptor facts for server-side coordination. */
+  starknetAccountDescriptor(walletId: string): StarknetAccountDescriptor | null {
+    const session = warmSessionForLifecycle.get(this);
+    if (this.vault === null || session === undefined || this.walletId !== walletId) fail();
+    return this.vault.starknetAccountDescriptor(session, walletId);
+  }
+
+  /** Bounded proof operation; neither caller nor UI receives a scalar. */
+  signStarknetAuthorityProof(input: SignLocalStarknetAuthorityProofInput): StarknetAuthoritySignature {
+    const session = warmSessionForLifecycle.get(this);
+    if (this.vault === null || session === undefined || this.walletId !== input.walletId) fail();
+    return this.vault.signStarknetAuthorityProof(session, input);
+  }
+
+  async markStarknetAccountDeployed(input: MarkLocalStarknetAccountDeployedInput): Promise<StarknetAccountDescriptor> {
+    const session = warmSessionForLifecycle.get(this);
+    if (this.vault === null || session === undefined || this.walletId !== input.walletId) fail();
+    return this.vault.markStarknetAccountDeployed(session, input);
+  }
+
+  async deployStarknetAccount(input: DeployLocalStarknetAccountInput): Promise<StarknetAccountDeploymentResult> {
+    const session = warmSessionForLifecycle.get(this);
+    if (this.vault === null || session === undefined || this.walletId !== input.walletId) fail();
+    return this.vault.deployStarknetAccount(session, input);
   }
 
   /**

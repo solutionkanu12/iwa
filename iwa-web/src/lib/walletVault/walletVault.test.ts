@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { forTestOnlyPasswordKdfPolicy, type WalletPasskeyMetadata } from "./vaultCrypto";
 import { InMemoryVaultStore } from "./vaultStore";
 import { WalletVault, type WalletVaultSession } from "./walletVault";
-import { openRecoveryPackage } from "./recoveryPackage";
+import { openRecoveryPackage, wipeVaultAuthorities } from "./recoveryPackage";
 
 const passkey: WalletPasskeyMetadata = {
   credentialId: "test-wallet-passkey",
@@ -106,7 +106,7 @@ describe("cold and warm Iwa Wallet vault lifecycle", () => {
     const recovered = await openRecoveryPackage(replacement, recoveryKey, "wallet-vault-a");
     expect(recovered.authorities).toEqual([{ id: "synthetic-starknet", material: Uint8Array.from({ length: 32 }, (_, index) => index + 100) }]);
     recovered.rootSecret.fill(0);
-    recovered.authorities.forEach((authority) => authority.material.fill(0));
+    wipeVaultAuthorities(recovered.authorities);
     await expect(first.importRecovery({ recovery, recoveryKey, password: "Another synthetic password", passkey, replacementPackageId: "recovery-c" })).rejects.toThrow();
   });
 

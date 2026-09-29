@@ -606,10 +606,11 @@ only; it does not provision any chain account or transaction signer.
 
 The existing Iwa Account onboarding state machine remains the sole product
 progress model: `profile -> passwordPin -> walletProvisioning -> recovery ->
-finish`. B1-B adds one narrowly scoped non-secret coordination record per Iwa
-user. The backend generates and owns the opaque wallet UUID plus a setup status
-only; it never receives the browser vault record, password, PIN, credential
-assertion, PRF result, recovery material, or any chain authority.
+chainProvisioning -> finish`. B1-B adds one narrowly scoped non-secret
+coordination record per Iwa user. The backend generates and owns the opaque
+wallet UUID plus a setup status only; it never receives the browser vault
+record, password, PIN, credential assertion, PRF result, recovery material, or
+any chain authority.
 
 At `passwordPin`, the browser reserves that UUID, locally enrolls the dedicated
 wallet passkey, and creates an empty encrypted B1-A container for the same ID.
@@ -665,6 +666,42 @@ explicitly rather than hidden by a fake rollback guarantee. The exact
 standalone-compatible V1 format is documented in
 `docs/IWA_WALLET_RECOVERY_FORMAT_V1.md`. B1-C uses synthetic authority proof
 only and adds no chain adapter, account deployment, or signer.
+
+### Starknet authority and isolated deployment seam (B2-A)
+
+B2-A adds a Starknet-specific child authority beneath the chain-neutral vault
+record model. It is a separate browser-generated Stark curve scalar, never a
+derivation of the Iwa Account, password, PIN, recovery code, passkey credential,
+EVM key, or Solana key. The scalar is encrypted as the
+`starknet/account` authority record and listed in the authenticated manifest;
+only its public key, counterfactual account address, chain ID, account-class
+identifier/hash, schema version, and deployment state are non-secret
+descriptor facts.
+
+The generic `chainProvisioning` onboarding step is deliberately not
+Starknet-only. Migration 010 adds only the public descriptor and a small
+extensible stage (`notStarted`, `starknetAuthority`, `starknetDeployment`) to
+the existing wallet coordination record. It is an unapplied local migration.
+The server has no private scalar, encrypted vault record, package, recovery
+code, password, PIN, PRF result, viewing key, or settlement authority. Public
+coordination metadata is not wallet authority and cannot authorize signing.
+
+`WalletVault.deployStarknetAccount` receives a caller-supplied isolated-test
+provider, verifies its chain ID, calculates/compares the counterfactual
+address, submits with a short-lived local signer copy, checks the resulting
+class hash, and then rewraps only the public deployment state. A preflight
+class-hash check makes a deployment that reached the network before a local
+interruption resumable without resubmitting it. A future sponsor may fund or
+relay a deployment but cannot receive the scalar or become its signer.
+
+No production class hash is selected or embedded. The disposable B2-A harness
+uses a class read from a fresh isolated devnet and verifies the relevant account
+ABI before attempting deployment. That class is test evidence only. The
+implementation supports recovery of the exact scalar and descriptor under a
+new passkey/password/PIN context, so a recovered wallet derives the same
+account. At this writing, the harness has not been pushed or run: B2-A has no
+devnet deployment claim, no mainnet action, no STRK20 viewing authority, and no
+settlement authority.
 
 ## Starknet frontend adapter
 

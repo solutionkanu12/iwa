@@ -10,6 +10,7 @@ export const ONBOARDING_STEPS = [
   "passwordPin",
   "walletProvisioning",
   "recovery",
+  "chainProvisioning",
   "finish",
 ] as const;
 
@@ -30,7 +31,8 @@ export function onboardingStepFor(
     (persistedStep === "profile" ||
       persistedStep === "passwordPin" ||
       persistedStep === "walletProvisioning" ||
-      persistedStep === "recovery")
+      persistedStep === "recovery" ||
+      persistedStep === "chainProvisioning")
   ) {
     return persistedStep;
   }

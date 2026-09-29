@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { ec } from "starknet";
 
 import { IwaWalletVaultLifecycle } from "./iwaWalletVaultLifecycle";
 import { VaultError, forTestOnlyPasswordKdfPolicy, type WalletPasskeyMetadata } from "../lib/walletVault/vaultCrypto";
 import { InMemoryVaultStore } from "../lib/walletVault/vaultStore";
-import { openRecoveryPackage } from "../lib/walletVault/recoveryPackage";
+import { isSyntheticVaultAuthority, openRecoveryPackage, wipeVaultAuthorities } from "../lib/walletVault/recoveryPackage";
 import { formatRecoveryKey } from "../lib/walletVault/recoveryKey";
 
 const walletId = "00000000-0000-4000-8000-000000000111";
@@ -41,6 +42,16 @@ function lifecycle(store = new InMemoryVaultStore(), passkey = new TestWalletPas
       timeout: { set: () => 1, clear: () => undefined },
     }),
   };
+}
+
+function scalarHex(privateKey: Uint8Array): string {
+  return `0x${Array.from(privateKey, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function compactSignature(signature: { r: string; s: string }) {
+  return ec.starkCurve.Signature.fromCompact(
+    `${signature.r.slice(2).padStart(64, "0")}${signature.s.slice(2).padStart(64, "0")}`,
+  );
 }
 
 describe("Iwa Wallet onboarding vault lifecycle", () => {
@@ -210,6 +221,56 @@ describe("Iwa Wallet onboarding vault lifecycle", () => {
     await expect(
       openRecoveryPackage(replacement, recoveryKey, walletId),
     ).resolves.toMatchObject({ walletId, generation: 2, authorities: [] });
+  });
+
+  it("restores the same encrypted Starknet authority without exposing it through lifecycle state", async () => {
+    const original = lifecycle();
+    await original.controller.provision({ walletId, password, pin });
+    const descriptor = await original.controller.provisionStarknetAuthority({
+      walletId,
+      password,
+      accountClass: {
+        networkId: "SN_IWA_DEVNET",
+        accountClassId: "openzeppelin-account-component-devnet",
+        accountClassHash: "0x1234",
+        descriptorVersion: 1,
+      },
+    });
+    const recoveryKey = Uint8Array.from({ length: 32 }, (_, index) => index + 91);
+    const recovery = await original.controller.exportRecovery({ walletId, recoveryKey, packageId: "starknet-recovery-one" });
+    await original.controller.lock();
+    await original.store.remove(walletId);
+
+    const replacement = lifecycle();
+    await replacement.controller.recover({
+      recovery,
+      recoveryKey,
+      walletId,
+      expectedGeneration: 1,
+      password: "Iwa recovered Starknet wallet password",
+      pin: "654321",
+      replacementPackageId: "starknet-recovery-two",
+    });
+    const recovered = replacement.controller.starknetAccountDescriptor(walletId);
+    if (recovered === null) throw new Error("test setup failed");
+    const signature = replacement.controller.signStarknetAuthorityProof({
+      walletId,
+      networkId: recovered.networkId,
+      accountAddress: recovered.accountAddress,
+      proofHash: "0x4567",
+    });
+    const payload = await openRecoveryPackage(recovery, recoveryKey, walletId);
+    try {
+      const authority = payload.authorities[0];
+      if (authority === undefined || isSyntheticVaultAuthority(authority)) throw new Error("test setup failed");
+      expect(recovered).toEqual(descriptor);
+      expect(ec.starkCurve.verify(compactSignature(signature), "0x4567", ec.starkCurve.getPublicKey(scalarHex(authority.privateKey)))).toBe(true);
+      expect(JSON.stringify(replacement.controller.view())).not.toContain(scalarHex(authority.privateKey));
+    } finally {
+      payload.rootSecret.fill(0);
+      wipeVaultAuthorities(payload.authorities);
+      recoveryKey.fill(0);
+    }
   });
 
   it("refuses recovery into a healthy local vault and checks expected wallet and generation before enrolling a new passkey", async () => {

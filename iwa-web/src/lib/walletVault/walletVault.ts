@@ -1,3 +1,5 @@
+import { Account, type RpcProvider } from "starknet";
+
 import {
   VaultError,
   authorityRecordsMatchManifest,
@@ -13,14 +15,29 @@ import {
 } from "./vaultCrypto";
 import {
   createRecoveryPackage,
+  isSyntheticVaultAuthority,
   openRecoveryPackage,
+  wipeVaultAuthorities,
+  type VaultAuthority,
   type RecoveryPackageV1,
-  type SyntheticVaultAuthority,
 } from "./recoveryPackage";
+import {
+  STARKNET_AUTHORITY_FORMAT,
+  STARKNET_AUTHORITY_VERSION,
+  createStarknetAuthority,
+  signStarknetAuthorityProof,
+  validateStarknetAuthority,
+  withStarknetDeploymentState,
+  type StarknetAccountClassInput,
+  type StarknetAccountDescriptor,
+  type StarknetAuthoritySignature,
+  type StarknetVaultAuthority,
+} from "./starknetAuthority";
 import type { WalletVaultStore } from "./vaultStore";
 
 const AUTHORITY_FORMAT = "iwa-synthetic-vault-authority";
 const PIN_ATTEMPT_LIMIT = 5;
+const STARK_FIELD_PRIME = (1n << 251n) + 17n * (1n << 192n) + 1n;
 
 export interface WalletPasskeyAuthority {
   assertPrf(binding: WalletPasskeyMetadata): Promise<Uint8Array>;
@@ -52,7 +69,7 @@ export interface CreateWalletVaultInput {
   walletId: string;
   password: string;
   passkey: WalletPasskeyMetadata;
-  authorities: readonly SyntheticVaultAuthority[];
+  authorities: readonly VaultAuthority[];
 }
 
 export interface UnlockWalletVaultInput {
@@ -69,24 +86,58 @@ export interface ImportRecoveryInput {
   replacementPackageId: string;
 }
 
+export interface ProvisionStarknetAuthorityInput {
+  readonly walletId: string;
+  readonly password: string;
+  readonly accountClass: StarknetAccountClassInput;
+}
+
+export interface SignStarknetAuthorityProofInput {
+  readonly walletId: string;
+  readonly networkId: string;
+  readonly accountAddress: string;
+  readonly proofHash: string;
+}
+
+export interface MarkStarknetAccountDeployedInput {
+  readonly walletId: string;
+  readonly password: string;
+  readonly networkId: string;
+  readonly accountAddress: string;
+}
+
+export interface DeployStarknetAccountInput {
+  readonly walletId: string;
+  readonly password: string;
+  /** The caller supplies a test/devnet RPC provider. No endpoint is bundled into the vault. */
+  readonly provider: RpcProvider;
+}
+
+export interface StarknetAccountDeploymentResult {
+  readonly accountAddress: string;
+  readonly transactionHash: string | null;
+  readonly resumed: boolean;
+}
+
 /** Public, opaque capability. It deliberately has no secret object graph. */
 export interface WalletVaultSession {
   readonly walletId: string;
 }
 
-interface StoredSyntheticAuthority {
-  format: typeof AUTHORITY_FORMAT;
-  version: 1;
-  id: string;
-  material: string;
+interface StoredStarknetAuthority {
+  format: typeof STARKNET_AUTHORITY_FORMAT;
+  version: typeof STARKNET_AUTHORITY_VERSION;
+  kind: "starknet";
+  privateKey: string;
+  descriptor: StarknetAccountDescriptor;
 }
 
 interface WarmState {
   readonly session: WalletVaultSession;
   readonly walletId: string;
-  readonly record: RootWrapRecordV1;
+  record: RootWrapRecordV1;
   readonly rootSecret: Uint8Array;
-  readonly authorities: SyntheticVaultAuthority[];
+  authorities: VaultAuthority[];
   pinVerifier: Uint8Array | null;
   pinNonce: Uint8Array;
   pinFailures: number;
@@ -106,8 +157,8 @@ function wipe(value: Uint8Array | undefined): void {
   value?.fill(0);
 }
 
-function wipeAuthorities(authorities: readonly SyntheticVaultAuthority[]): void {
-  for (const authority of authorities) wipe(authority.material);
+function wipeAuthorities(authorities: readonly VaultAuthority[]): void {
+  wipeVaultAuthorities(authorities);
 }
 
 function base64UrlEncode(bytes: Uint8Array): string {
@@ -138,36 +189,105 @@ function assertPackageId(packageId: string): void {
   if (packageId.length === 0 || packageId.length > 256 || /[|\r\n]/.test(packageId)) fail();
 }
 
+function canonicalStarknetFelt(value: unknown): string {
+  if (typeof value !== "string" || !/^0x[0-9a-fA-F]{1,64}$/.test(value)) fail();
+  try {
+    const felt = BigInt(value);
+    if (felt <= 0n || felt >= STARK_FIELD_PRIME) fail();
+    return `0x${felt.toString(16)}`;
+  } catch (error) {
+    if (error instanceof VaultError) throw error;
+    fail();
+  }
+}
+
+/** Starknet JSON-RPC CONTRACT_NOT_FOUND. Only this documented response permits a deploy retry. */
+function isStarknetContractNotFound(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  return (error as { readonly code?: unknown }).code === 20;
+}
+
 function randomRootSecret(): Uint8Array {
   const root = new Uint8Array(32);
   crypto.getRandomValues(root);
   return root;
 }
 
-function serializeAuthority(authority: SyntheticVaultAuthority): Uint8Array {
-  if (!/^[A-Za-z0-9_-]{1,128}$/.test(authority.id) || authority.material.length !== 32) fail();
-  return new TextEncoder().encode(
-    JSON.stringify({ format: AUTHORITY_FORMAT, version: 1, id: authority.id, material: base64UrlEncode(authority.material) }),
-  );
+function authorityNamespace(authority: VaultAuthority): string {
+  if (isSyntheticVaultAuthority(authority)) {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(authority.id) || authority.material.length !== 32) fail();
+    return `synthetic/${authority.id}`;
+  }
+  const valid = validateStarknetAuthority(authority);
+  try {
+    return valid.descriptor.namespace;
+  } finally {
+    wipe(valid.privateKey);
+  }
 }
 
-function parseAuthority(plaintext: Uint8Array): SyntheticVaultAuthority {
+function serializeAuthority(authority: VaultAuthority): Uint8Array {
+  if (isSyntheticVaultAuthority(authority)) {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(authority.id) || authority.material.length !== 32) fail();
+    return new TextEncoder().encode(
+      JSON.stringify({ format: AUTHORITY_FORMAT, version: 1, id: authority.id, material: base64UrlEncode(authority.material) }),
+    );
+  }
+  const valid = validateStarknetAuthority(authority);
   try {
-    const parsed = JSON.parse(new TextDecoder().decode(plaintext)) as Partial<StoredSyntheticAuthority>;
+    return new TextEncoder().encode(
+      JSON.stringify({
+        format: STARKNET_AUTHORITY_FORMAT,
+        version: STARKNET_AUTHORITY_VERSION,
+        kind: "starknet",
+        privateKey: base64UrlEncode(valid.privateKey),
+        descriptor: valid.descriptor,
+      } satisfies StoredStarknetAuthority),
+    );
+  } finally {
+    wipe(valid.privateKey);
+  }
+}
+
+function parseAuthority(plaintext: Uint8Array): VaultAuthority {
+  try {
+    const parsed: unknown = JSON.parse(new TextDecoder().decode(plaintext));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) fail();
+    const record = parsed as Record<string, unknown>;
+    if (record.format === AUTHORITY_FORMAT && record.version === 1) {
+      if (
+        Object.keys(record).length !== 4 ||
+        !["format", "version", "id", "material"].every((key) => key in record) ||
+        typeof record.id !== "string" ||
+        !/^[A-Za-z0-9_-]{1,128}$/.test(record.id)
+      ) {
+        fail();
+      }
+      const material = base64UrlDecode(record.material);
+      if (material.length !== 32) {
+        wipe(material);
+        fail();
+      }
+      return { id: record.id, material };
+    }
     if (
-      parsed.format !== AUTHORITY_FORMAT ||
-      parsed.version !== 1 ||
-      typeof parsed.id !== "string" ||
-      !/^[A-Za-z0-9_-]{1,128}$/.test(parsed.id)
+      Object.keys(record).length !== 5 ||
+      !["format", "version", "kind", "privateKey", "descriptor"].every((key) => key in record) ||
+      record.format !== STARKNET_AUTHORITY_FORMAT ||
+      record.version !== STARKNET_AUTHORITY_VERSION ||
+      record.kind !== "starknet"
     ) {
       fail();
     }
-    const material = base64UrlDecode(parsed.material);
-    if (material.length !== 32) {
-      wipe(material);
-      fail();
+    let privateKey: Uint8Array | undefined;
+    try {
+      privateKey = base64UrlDecode(record.privateKey);
+      const authority = validateStarknetAuthority({ kind: "starknet", privateKey, descriptor: record.descriptor });
+      privateKey = undefined;
+      return authority;
+    } finally {
+      wipe(privateKey);
     }
-    return { id: parsed.id, material };
   } catch (error) {
     if (error instanceof VaultError) throw error;
     fail();
@@ -176,8 +296,30 @@ function parseAuthority(plaintext: Uint8Array): SyntheticVaultAuthority {
   }
 }
 
-function cloneAuthorities(authorities: readonly SyntheticVaultAuthority[]): SyntheticVaultAuthority[] {
-  return authorities.map((authority) => ({ id: authority.id, material: new Uint8Array(authority.material) }));
+function cloneAuthorities(authorities: readonly VaultAuthority[]): VaultAuthority[] {
+  return authorities.map((authority) => {
+    if (isSyntheticVaultAuthority(authority)) return { id: authority.id, material: new Uint8Array(authority.material) };
+    return validateStarknetAuthority(authority);
+  });
+}
+
+function singleStarknetAuthority(authorities: readonly VaultAuthority[]): StarknetVaultAuthority | null {
+  let found: StarknetVaultAuthority | null = null;
+  try {
+    for (const authority of authorities) {
+      if (isSyntheticVaultAuthority(authority)) continue;
+      const valid = validateStarknetAuthority(authority);
+      if (found !== null) {
+        wipe(valid.privateKey);
+        fail();
+      }
+      found = valid;
+    }
+    return found;
+  } catch (error) {
+    wipe(found?.privateKey);
+    throw error;
+  }
 }
 
 function sameBytes(first: Uint8Array, second: Uint8Array): boolean {
@@ -196,7 +338,7 @@ async function pinDigest(nonce: Uint8Array, pin: string): Promise<Uint8Array> {
   }
 }
 
-function newWarmState(walletId: string, record: RootWrapRecordV1, rootSecret: Uint8Array, authorities: SyntheticVaultAuthority[]): WarmState {
+function newWarmState(walletId: string, record: RootWrapRecordV1, rootSecret: Uint8Array, authorities: VaultAuthority[]): WarmState {
   const session = Object.freeze({ walletId }) as WalletVaultSession;
   const state: WarmState = {
     session,
@@ -230,6 +372,7 @@ export class WalletVault {
   private readonly timeout: VaultTimeout;
   private readonly idleTimeoutMs: number;
   private readonly passwordKdf: () => PasswordKdfPolicy;
+  private ongoingStarknetProvision: Promise<StarknetAccountDescriptor> | null = null;
 
   constructor(private readonly dependencies: WalletVaultDependencies) {
     this.timeout = dependencies.timeout ?? { set: (callback, milliseconds) => window.setTimeout(callback, milliseconds), clear: window.clearTimeout };
@@ -250,11 +393,12 @@ export class WalletVault {
       rootSecret = randomRootSecret();
       const authorityRecords = [];
       for (const authority of input.authorities) {
+        const namespace = authorityNamespace(authority);
         const plaintext = serializeAuthority(authority);
         try {
           authorityRecords.push(
             await createAuthorityRecord({
-              binding: { walletId: input.walletId, recordType: "authority", namespace: `synthetic/${authority.id}`, version: 1 },
+              binding: { walletId: input.walletId, recordType: "authority", namespace, version: 1 },
               rootSecret,
               plaintext,
             }),
@@ -286,7 +430,7 @@ export class WalletVault {
     let passkey: WalletPasskeyMetadata | undefined;
     let passkeyPrf: Uint8Array | undefined;
     let rootSecret: Uint8Array | undefined;
-    let authorities: SyntheticVaultAuthority[] = [];
+    let authorities: VaultAuthority[] = [];
     try {
       const record = await this.dependencies.store.load(input.walletId);
       await this.checkpoint("after-storage-load", epoch);
@@ -373,6 +517,136 @@ export class WalletVault {
     fail();
   }
 
+  /**
+   * Adds the one B2-A Starknet authority exactly once. Its scalar remains in
+   * the module-private warm state and is immediately re-encrypted at rest.
+   */
+  async provisionStarknetAuthority(
+    session: WalletVaultSession,
+    input: ProvisionStarknetAuthorityInput,
+  ): Promise<StarknetAccountDescriptor> {
+    if (this.ongoingStarknetProvision !== null) return this.ongoingStarknetProvision;
+    const operation = this.provisionStarknetAuthorityOnce(session, input);
+    this.ongoingStarknetProvision = operation;
+    try {
+      return await operation;
+    } finally {
+      if (this.ongoingStarknetProvision === operation) this.ongoingStarknetProvision = null;
+    }
+  }
+
+  /** Public account facts only. It intentionally never returns a signer or scalar. */
+  starknetAccountDescriptor(session: WalletVaultSession, walletId: string): StarknetAccountDescriptor | null {
+    const warm = this.requireWarm(session, walletId);
+    const authority = singleStarknetAuthority(warm.authorities);
+    if (authority === null) return null;
+    try {
+      return { ...authority.descriptor };
+    } finally {
+      wipe(authority.privateKey);
+    }
+  }
+
+  /** Signs a bounded proof only after validating its wallet, network, and account context. */
+  signStarknetAuthorityProof(
+    session: WalletVaultSession,
+    input: SignStarknetAuthorityProofInput,
+  ): StarknetAuthoritySignature {
+    const warm = this.requireWarm(session, input.walletId);
+    const authority = singleStarknetAuthority(warm.authorities);
+    if (authority === null) fail();
+    try {
+      if (authority.descriptor.networkId !== input.networkId || authority.descriptor.accountAddress !== input.accountAddress) fail();
+      return signStarknetAuthorityProof(authority, input.proofHash);
+    } finally {
+      wipe(authority.privateKey);
+    }
+  }
+
+  /** Persists a verified deployment transition without creating or replacing an authority. */
+  async markStarknetAccountDeployed(
+    session: WalletVaultSession,
+    input: MarkStarknetAccountDeployedInput,
+  ): Promise<StarknetAccountDescriptor> {
+    const warm = this.requireWarm(session, input.walletId);
+    const authority = singleStarknetAuthority(warm.authorities);
+    if (authority === null) fail();
+    try {
+      if (authority.descriptor.networkId !== input.networkId || authority.descriptor.accountAddress !== input.accountAddress) fail();
+      if (authority.descriptor.deploymentState === "deployed") return { ...authority.descriptor };
+      const updated = withStarknetDeploymentState(authority, "deployed");
+      const next = cloneAuthorities(warm.authorities).map((candidate) => isSyntheticVaultAuthority(candidate) ? candidate : updated);
+      await this.rewriteAuthorities(warm, session, input.password, next);
+      return { ...updated.descriptor };
+    } finally {
+      wipe(authority.privateKey);
+    }
+  }
+
+  /**
+   * Deploys the counterfactual account with the local Iwa signer. A future
+   * sponsor may fund this address, but it never receives this signer buffer.
+   */
+  async deployStarknetAccount(
+    session: WalletVaultSession,
+    input: DeployStarknetAccountInput,
+  ): Promise<StarknetAccountDeploymentResult> {
+    const warm = this.requireWarm(session, input.walletId);
+    const authority = singleStarknetAuthority(warm.authorities);
+    if (authority === null) fail();
+    let signer: Uint8Array | undefined;
+    try {
+      const descriptor = authority.descriptor;
+      const providerNetwork = await input.provider.getChainId();
+      if (providerNetwork !== descriptor.networkId) fail();
+
+      if (descriptor.deploymentState === "deployed") {
+        const deployedClassHash = canonicalStarknetFelt(await input.provider.getClassHashAt(descriptor.accountAddress));
+        if (deployedClassHash !== descriptor.accountClassHash) fail();
+        return { accountAddress: descriptor.accountAddress, transactionHash: null, resumed: true };
+      }
+
+      // A deployment can reach the isolated network immediately before an
+      // interruption prevents this encrypted descriptor from being updated.
+      // Probe first so a retry never blindly submits a second deployment.
+      try {
+        const existingClassHash = canonicalStarknetFelt(await input.provider.getClassHashAt(descriptor.accountAddress));
+        if (existingClassHash !== descriptor.accountClassHash) fail();
+        await this.markStarknetAccountDeployed(session, {
+          walletId: input.walletId,
+          password: input.password,
+          networkId: descriptor.networkId,
+          accountAddress: descriptor.accountAddress,
+        });
+        return { accountAddress: descriptor.accountAddress, transactionHash: null, resumed: true };
+      } catch (error) {
+        if (!isStarknetContractNotFound(error)) throw error;
+      }
+
+      signer = new Uint8Array(authority.privateKey);
+      const account = new Account({ provider: input.provider, address: descriptor.accountAddress, signer });
+      const deployment = await account.deployAccount({
+        classHash: descriptor.accountClassHash,
+        constructorCalldata: [descriptor.publicKey],
+        addressSalt: descriptor.publicKey,
+      });
+      if (canonicalStarknetFelt(deployment.contract_address) !== descriptor.accountAddress) fail();
+      await input.provider.waitForTransaction(deployment.transaction_hash);
+      const deployedClassHash = canonicalStarknetFelt(await input.provider.getClassHashAt(descriptor.accountAddress));
+      if (deployedClassHash !== descriptor.accountClassHash) fail();
+      await this.markStarknetAccountDeployed(session, {
+        walletId: input.walletId,
+        password: input.password,
+        networkId: descriptor.networkId,
+        accountAddress: descriptor.accountAddress,
+      });
+      return { accountAddress: descriptor.accountAddress, transactionHash: deployment.transaction_hash, resumed: false };
+    } finally {
+      wipe(signer);
+      wipe(authority.privateKey);
+    }
+  }
+
   /** Non-secret local freshness metadata, available only to a live capability. */
   recoveryGeneration(session: WalletVaultSession, walletId: string): number {
     return this.requireWarm(session, walletId).record.recoveryGeneration;
@@ -390,7 +664,7 @@ export class WalletVault {
     let metadata: WalletPasskeyMetadata | undefined;
     let prf: Uint8Array | undefined;
     let rootSecret: Uint8Array | undefined;
-    let authorities: SyntheticVaultAuthority[] = [];
+    let authorities: VaultAuthority[] = [];
     try {
       metadata = rootPasskeyMetadata(warm.record);
       prf = await this.dependencies.passkey.assertPrf(metadata);
@@ -437,11 +711,12 @@ export class WalletVault {
       this.assertCurrent(epoch);
       const authorityRecords = [];
       for (const authority of payload.authorities) {
+        const namespace = authorityNamespace(authority);
         const plaintext = serializeAuthority(authority);
         try {
           authorityRecords.push(
             await createAuthorityRecord({
-              binding: { walletId: payload.walletId, recordType: "authority", namespace: `synthetic/${authority.id}`, version: 1 },
+              binding: { walletId: payload.walletId, recordType: "authority", namespace, version: 1 },
               rootSecret: payload.rootSecret,
               plaintext,
             }),
@@ -490,6 +765,102 @@ export class WalletVault {
         wipe(payload.rootSecret);
         wipeAuthorities(payload.authorities);
       }
+    }
+  }
+
+  private async provisionStarknetAuthorityOnce(
+    session: WalletVaultSession,
+    input: ProvisionStarknetAuthorityInput,
+  ): Promise<StarknetAccountDescriptor> {
+    const warm = this.requireWarm(session, input.walletId);
+    const existing = singleStarknetAuthority(warm.authorities);
+    if (existing !== null) {
+      try {
+        const descriptor = existing.descriptor;
+        if (
+          descriptor.networkId !== input.accountClass.networkId ||
+          descriptor.accountClassId !== input.accountClass.accountClassId ||
+          descriptor.accountClassHash !== input.accountClass.accountClassHash ||
+          descriptor.descriptorVersion !== input.accountClass.descriptorVersion
+        ) {
+          fail();
+        }
+        return { ...descriptor };
+      } finally {
+        wipe(existing.privateKey);
+      }
+    }
+    let created: StarknetVaultAuthority | undefined;
+    let next: VaultAuthority[] = [];
+    try {
+      created = createStarknetAuthority(input.accountClass);
+      next = [...cloneAuthorities(warm.authorities), validateStarknetAuthority(created)];
+      await this.rewriteAuthorities(warm, session, input.password, next);
+      const descriptor = created.descriptor;
+      next = [];
+      return { ...descriptor };
+    } finally {
+      wipe(created?.privateKey);
+      wipeAuthorities(next);
+    }
+  }
+
+  private async rewriteAuthorities(
+    warm: WarmState,
+    session: WalletVaultSession,
+    password: string,
+    nextAuthorities: VaultAuthority[],
+  ): Promise<void> {
+    const epoch = this.operationEpoch;
+    let metadata: WalletPasskeyMetadata | undefined;
+    let passkeyPrf: Uint8Array | undefined;
+    let root: RootWrapRecordV1 | undefined;
+    let committed = false;
+    try {
+      this.assertLiveWarm(warm, session, epoch);
+      metadata = rootPasskeyMetadata(warm.record);
+      passkeyPrf = await this.dependencies.passkey.assertPrf(metadata);
+      this.assertLiveWarm(warm, session, epoch);
+      const authorityRecords = [];
+      for (const authority of nextAuthorities) {
+        const namespace = authorityNamespace(authority);
+        const plaintext = serializeAuthority(authority);
+        try {
+          authorityRecords.push(
+            await createAuthorityRecord({
+              binding: { walletId: warm.walletId, recordType: "authority", namespace, version: 1 },
+              rootSecret: warm.rootSecret,
+              plaintext,
+            }),
+          );
+          this.assertLiveWarm(warm, session, epoch);
+        } finally {
+          wipe(plaintext);
+        }
+      }
+      root = await createRootWrap({
+        binding: { walletId: warm.walletId, recordType: "root-wrap", namespace: "root", version: 1 },
+        password,
+        passkeyPrf,
+        rootSecret: warm.rootSecret,
+        passwordKdf: this.passwordKdf(),
+        passkey: metadata,
+        authorityRecords,
+        recoveryGeneration: warm.record.recoveryGeneration,
+      });
+      this.assertLiveWarm(warm, session, epoch);
+      if (!(await this.dependencies.store.replaceIfUnchanged(warm.record, root))) fail();
+      this.assertLiveWarm(warm, session, epoch);
+      const previousAuthorities = warm.authorities;
+      warm.record = root;
+      warm.authorities = nextAuthorities;
+      committed = true;
+      wipeAuthorities(previousAuthorities);
+      this.armLock();
+    } finally {
+      wipe(metadata?.prfInput);
+      wipe(passkeyPrf);
+      if (!committed) wipeAuthorities(nextAuthorities);
     }
   }
 

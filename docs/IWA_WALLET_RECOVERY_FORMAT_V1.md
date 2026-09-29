@@ -2,10 +2,13 @@
 
 ## Status and scope
 
-This is the local implementation specification for B1-C. It is not a public
-release format or a substitute for the future independent recovery application.
-It carries only the B1-A synthetic-authority test fixtures today. It contains
-no deployed Starknet, EVM, Solana, STRK20 viewing, or settlement authority.
+This is the local implementation specification for B1-C and B2-A. It is not a
+public release format or a substitute for the future independent recovery
+application. V1 continues to read the B1 synthetic-authority fixture and now
+also carries the B2-A Starknet authority record entirely inside authenticated
+ciphertext. It contains no EVM, Solana, STRK20 viewing, or settlement
+authority. The B2-A devnet deployment harness remains a test-only proof, not a
+production deployment configuration.
 
 A package is portable: a future standalone Iwa Wallet recovery PWA or CLI can
 restore it without the Iwa frontend, backend, database, session, or any Iwa
@@ -83,24 +86,40 @@ walletId            must match outer envelope
 packageId           must match outer envelope
 generation          must match outer envelope
 rootSecret          base64url, exactly 32 bytes
-authorities[]:
-  id                unique bounded authority identifier
-  material          base64url, exactly 32 bytes in the current B1 fixture
+authorities[]:      one of the exact version-1 authority records below
+  synthetic fixture:
+    id              unique bounded authority identifier
+    material        base64url, exactly 32 bytes
+  Starknet record:
+    kind            "starknet"
+    privateKey      base64url, exactly 32 bytes, only inside ciphertext
+    descriptor:
+      namespace             "starknet/account"
+      descriptorVersion     1
+      networkId             exact target network identifier
+      accountClassId        verified account implementation identifier
+      accountClassHash      canonical Starknet felt
+      publicKey             canonical Starknet public x-coordinate
+      accountAddress        canonical counterfactual/deployed account address
+      deploymentState       "addressComputed" | "deployed"
 publicDescriptors[]:
   namespace         bounded non-secret namespace
   publicId          bounded non-secret descriptor
 ```
 
-The encrypted payload's exact duplicate-free authority list is the V1 recovery
-manifest. AES-GCM authenticates it. On import, Iwa Wallet rebuilds the local
-root wrapper's SHA-256 authority manifest from that list, then binds the root
-manifest, recovery generation, wallet ID, record type, and namespace into the
-root wrapper's authenticated associated data.
+The encrypted payload's exact duplicate-free authority namespace list is the
+V1 recovery manifest. AES-GCM authenticates it. On import, Iwa Wallet
+rebuilds the local root wrapper's SHA-256 authority manifest from that list,
+then binds the root manifest, recovery generation, wallet ID, record type, and
+namespace into the root wrapper's authenticated associated data. The Starknet
+private scalar is never in the outer JSON, a public descriptor, Iwa backend
+metadata, an URL, browser storage outside the encrypted envelope, or a log.
 
 V1 has an explicit envelope and authority-list boundary so later authority
 types can be added through reviewed, versioned authority-record evolution
-rather than a new recovery architecture. B1-C does not claim that a real chain
-authority format has been approved or populated yet.
+rather than a new recovery architecture. B2-A adds only the Starknet record
+described above. It does not imply that the account has been deployed or that
+any other chain authority has been approved.
 
 ## Validation order and failure rule
 

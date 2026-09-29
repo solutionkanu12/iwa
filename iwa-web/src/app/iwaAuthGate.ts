@@ -6,7 +6,7 @@
 
 export type IwaUserStatus = "active" | "suspended";
 export type OnboardingStatus = "new" | "incomplete" | "completed";
-export type OnboardingStep = "profile" | "passwordPin" | "walletProvisioning" | "recovery" | "finish";
+export type OnboardingStep = "profile" | "passwordPin" | "walletProvisioning" | "recovery" | "chainProvisioning" | "finish";
 
 export interface IwaUser {
   id: string;

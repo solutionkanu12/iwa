@@ -24,6 +24,7 @@ const STEP_COPY: Record<OnboardingStep, { label: string; detail: string }> = {
   passwordPin: { label: "Secure your Iwa Wallet", detail: "Create a wallet passkey, local vault password, and quick-confirmation PIN." },
   walletProvisioning: { label: "Your Iwa Wallet", detail: "Create and unlock the encrypted wallet container on this device." },
   recovery: { label: "Recovery", detail: "Choose how you can safely return to your wallet." },
+  chainProvisioning: { label: "Chain accounts", detail: "Set up the accounts that live inside your Iwa Wallet." },
   finish: { label: "Ready for Iwa", detail: "Your account and wallet setup are complete." },
 };
 
@@ -89,7 +90,7 @@ export function OnboardingView() {
   }, [recoveryKeyReveal]);
 
   useEffect(() => {
-    if (currentStep !== "walletProvisioning" && currentStep !== "recovery") {
+    if (currentStep !== "walletProvisioning" && currentStep !== "recovery" && currentStep !== "chainProvisioning") {
       setWalletSetup(undefined);
       return;
     }
@@ -280,6 +281,37 @@ export function OnboardingView() {
     }
   };
 
+  const advanceToChainProvisioning = async () => {
+    const userId = auth.user?.id;
+    if (
+      userId === undefined ||
+      busy ||
+      walletSetup?.status !== "vaultProvisioned" ||
+      walletSetup.recoveryStatus !== "verified" ||
+      vaultView.state !== "warm"
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await iwaAccount.beginChainProvisioning(walletSetup.walletId);
+      const session = await auth.refresh();
+      if (
+        session === null ||
+        session.user.id !== userId ||
+        session.user.onboardingStatus !== "incomplete" ||
+        session.user.onboardingStep !== "chainProvisioning"
+      ) {
+        throw new IwaAccountError(401, "onboarding_recovery_failed", "Iwa could not restore your account setup. Please sign in again.");
+      }
+    } catch (cause) {
+      setError(cause instanceof IwaAccountError ? cause.message : "Iwa could not begin chain account setup.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const revealRecoveryPackage = async () => {
     if (
       busy ||
@@ -428,6 +460,8 @@ export function OnboardingView() {
                 ? "Your wallet is local to this device. Your Iwa account cannot unlock it."
                 : currentStep === "recovery"
                   ? "Your local wallet is secured. Recovery setup is the next protected step."
+                  : currentStep === "chainProvisioning"
+                    ? "Your Iwa Wallet remains local. Chain accounts are added only through approved wallet authority."
               : "Your account setup is saved. Continue from the same place whenever you return."}
         </p>
 
@@ -684,6 +718,7 @@ export function OnboardingView() {
                 <p>Your portable recovery package is verified. Iwa has not created a blockchain account or wallet key.</p>
               </div>
               <p className={styles.notice}>Keep the current recovery package and its separate recovery key together only when you need to recover. A later wallet phase will add chain authority.</p>
+              <Button onClick={() => void advanceToChainProvisioning()} disabled={busy}>{busy ? "Continuing..." : "Continue to chain accounts"}</Button>
             </section>
           ) : walletSetup.recoveryStatus !== "verified" || walletSetup.recoveryGeneration === null ? (
             <section className={styles.credentials} aria-labelledby="recovery-unavailable-title">
@@ -767,6 +802,18 @@ export function OnboardingView() {
               <p className={styles.notice}>Your old wallet passkey and PIN are not copied to this device. A replacement encrypted package will be downloaded after recovery.</p>
               <Button type="submit" disabled={busy}>{busy ? "Recovering Iwa Wallet..." : "Recover Iwa Wallet"}</Button>
             </form>
+          )
+        ) : currentStep === "chainProvisioning" ? (
+          walletSetup === undefined ? (
+            <p className={styles.notice}>Checking chain account setup for this Iwa Wallet...</p>
+          ) : (
+            <section className={styles.credentials} aria-labelledby="chain-provisioning-title">
+              <div className={styles.credentialsHeading}>
+                <h2 id="chain-provisioning-title">Chain account setup</h2>
+                <p>Your encrypted Iwa Wallet is ready for chain accounts. No production network is configured in this build.</p>
+              </div>
+              <p className={styles.notice}>Starknet authority creation and test deployment are verified only in the isolated B2-A harness. STRK20, settlement, EVM, and Solana are not configured here.</p>
+            </section>
           )
         ) : (
           <p className={styles.notice}>This account setup stage is not available yet.</p>

@@ -35,6 +35,7 @@ export const ONBOARDING_STEPS = [
   "passwordPin",
   "walletProvisioning",
   "recovery",
+  "chainProvisioning",
   "finish",
 ] as const;
 
@@ -50,6 +51,17 @@ export type OnboardingTransitionKind = "start" | "advance" | "retry";
  */
 export type IwaWalletSetupStatus = "reserved" | "vaultProvisioned";
 export type IwaWalletRecoveryStatus = "notConfigured" | "verified";
+export type IwaWalletChainProvisioningStage = "notStarted" | "starknetAuthority" | "starknetDeployment";
+
+/** Public Starknet facts only. None of these values can sign, unlock, or recover a wallet. */
+export interface IwaWalletStarknetDescriptor {
+  networkId: string;
+  accountAddress: string;
+  publicKey: string;
+  accountClassId: string;
+  accountClassHash: string;
+  descriptorVersion: number;
+}
 
 export interface IwaWalletSetup {
   userId: string;
@@ -58,6 +70,8 @@ export interface IwaWalletSetup {
   /** Non-secret online freshness hint. It never proves recovery authority. */
   recoveryStatus: IwaWalletRecoveryStatus;
   recoveryGeneration: number | null;
+  chainProvisioningStage: IwaWalletChainProvisioningStage;
+  starknet: IwaWalletStarknetDescriptor | null;
   createdAt: string;
   updatedAt: string;
 }

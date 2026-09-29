@@ -207,6 +207,33 @@ function markWalletRecoveryVerified(cookie: string, token: string, walletId: str
     .send({ walletId, generation });
 }
 
+function beginChainProvisioning(cookie: string, token: string, walletId: string) {
+  return request(app)
+    .post("/api/onboarding/wallet/chain-provisioning")
+    .set("Origin", ORIGIN)
+    .set("Cookie", cookie)
+    .set(IWA_CSRF_HEADER, token)
+    .send({ walletId });
+}
+
+const PUBLIC_STARKNET_DESCRIPTOR = {
+  networkId: "SN_IWA_DEVNET",
+  accountAddress: "0x1234",
+  publicKey: "0x5678",
+  accountClassId: "openzeppelin-account-component-devnet",
+  accountClassHash: "0x9abc",
+  descriptorVersion: 1,
+};
+
+function recordStarknetAuthority(cookie: string, token: string, walletId: string, descriptor = PUBLIC_STARKNET_DESCRIPTOR) {
+  return request(app)
+    .post("/api/onboarding/wallet/starknet/authority")
+    .set("Origin", ORIGIN)
+    .set("Cookie", cookie)
+    .set(IWA_CSRF_HEADER, token)
+    .send({ walletId, descriptor });
+}
+
 function signEs256Jwt(
   payload: Record<string, unknown>,
   privateKey: KeyObject,
@@ -834,6 +861,8 @@ describe("onboarding foundation", () => {
       status: "vaultProvisioned",
       recoveryStatus: "notConfigured",
       recoveryGeneration: null,
+      chainProvisioningStage: "notStarted",
+      starknet: null,
     });
     await markWalletProvisioned(cookie, token, walletId).expect(200);
 
@@ -850,6 +879,8 @@ describe("onboarding foundation", () => {
       status: "vaultProvisioned",
       recoveryStatus: "notConfigured",
       recoveryGeneration: null,
+      chainProvisioningStage: "notStarted",
+      starknet: null,
     });
 
     await transitionOnboarding(cookie, token, { from: "walletProvisioning", to: "recovery" }).expect(200);
@@ -869,6 +900,8 @@ describe("onboarding foundation", () => {
       status: "vaultProvisioned",
       recoveryStatus: "verified",
       recoveryGeneration: 1,
+      chainProvisioningStage: "notStarted",
+      starknet: null,
     });
     expect(initialRecovery.body.onboarding).toEqual({ status: "incomplete", step: "recovery" });
     expect(JSON.stringify(initialRecovery.body)).not.toMatch(/password|pin|prf|secret|key|ciphertext/i);
@@ -877,6 +910,50 @@ describe("onboarding foundation", () => {
     await markWalletRecoveryVerified(cookie, token, walletId, 3).expect(409);
     const rotatedRecovery = await markWalletRecoveryVerified(cookie, token, walletId, 2).expect(200);
     expect(rotatedRecovery.body.wallet).toMatchObject({ recoveryStatus: "verified", recoveryGeneration: 2 });
+  });
+
+  it("uses one forward-only chain provisioning state and stores only public Starknet facts", async () => {
+    const signedIn = await login("google-alice").expect(200);
+    const { cookie, token } = csrfFrom(signedIn);
+    await transitionOnboarding(cookie, token).expect(200);
+    await transitionOnboarding(cookie, token, { from: "profile", to: "passwordPin" }).expect(200);
+    const reserved = await reserveWalletSetup(cookie, token).expect(200);
+    const walletId = reserved.body.wallet.walletId as string;
+    await markWalletProvisioned(cookie, token, walletId).expect(200);
+    await transitionOnboarding(cookie, token, { from: "walletProvisioning", to: "recovery" }).expect(200);
+
+    await beginChainProvisioning(cookie, token, walletId).expect(409);
+    await markWalletRecoveryVerified(cookie, token, walletId, 1).expect(200);
+    const started = await beginChainProvisioning(cookie, token, walletId).expect(200);
+    expect(started.body.onboarding).toEqual({ status: "incomplete", step: "chainProvisioning" });
+    expect(started.body.wallet).toMatchObject({ chainProvisioningStage: "notStarted", starknet: null });
+    await beginChainProvisioning(cookie, token, walletId).expect(200);
+
+    await request(app)
+      .post("/api/onboarding/wallet/starknet/authority")
+      .set("Origin", ORIGIN)
+      .set("Cookie", cookie)
+      .set(IWA_CSRF_HEADER, token)
+      .send({ walletId, descriptor: { ...PUBLIC_STARKNET_DESCRIPTOR, privateKey: "never-send-a-private-key" } })
+      .expect(400);
+    const authority = await recordStarknetAuthority(cookie, token, walletId).expect(200);
+    expect(authority.body.wallet).toMatchObject({
+      chainProvisioningStage: "starknetAuthority",
+      starknet: PUBLIC_STARKNET_DESCRIPTOR,
+    });
+    expect(JSON.stringify(authority.body)).not.toMatch(/private_key|privatekey|password|pin|ciphertext|prf|viewing_key|settlement/i);
+    await recordStarknetAuthority(cookie, token, walletId).expect(200);
+    await recordStarknetAuthority(cookie, token, walletId, { ...PUBLIC_STARKNET_DESCRIPTOR, accountAddress: "0x1235" }).expect(409);
+
+    const deployment = await request(app)
+      .post("/api/onboarding/wallet/starknet/deployment-attempt")
+      .set("Origin", ORIGIN)
+      .set("Cookie", cookie)
+      .set(IWA_CSRF_HEADER, token)
+      .send({ walletId })
+      .expect(200);
+    expect(deployment.body.onboarding).toEqual({ status: "incomplete", step: "chainProvisioning" });
+    expect(deployment.body.wallet).toMatchObject({ chainProvisioningStage: "starknetDeployment", starknet: PUBLIC_STARKNET_DESCRIPTOR });
   });
 });
 
@@ -998,8 +1075,8 @@ describe("schema", () => {
     expect(sql).toContain("recovery_status");
     expect(sql).toContain("recovery_generation");
     for (const banned of [
-      "password",
-      "pin",
+      "password_hash",
+      "pin_hash",
       "private_key",
       "seed",
       "mnemonic",
@@ -1008,6 +1085,39 @@ describe("schema", () => {
       "ciphertext",
       "vault_root",
       "viewing_key",
+    ]) {
+      expect(sql).not.toContain(banned);
+    }
+  });
+
+  it("adds generic chain provisioning with public Starknet metadata only in migration 010", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const sql = readFileSync(resolve(here, "../migrations/010_add_iwa_chain_provisioning.sql"), "utf8")
+      .replace(/--.*$/gm, "")
+      .toLowerCase();
+    expect(sql).toContain("chainprovisioning");
+    for (const field of [
+      "chain_provisioning_stage",
+      "starknet_network_id",
+      "starknet_account_address",
+      "starknet_public_key",
+      "starknet_account_class_id",
+      "starknet_account_class_hash",
+      "starknet_descriptor_version",
+    ]) {
+      expect(sql).toContain(field);
+    }
+    for (const banned of [
+      "private_key",
+      "privatekey",
+      "password_hash",
+      "pin_hash",
+      "recovery_key",
+      "recovery_secret",
+      "ciphertext",
+      "vault_root",
+      "viewing_key",
+      "settlement",
     ]) {
       expect(sql).not.toContain(banned);
     }

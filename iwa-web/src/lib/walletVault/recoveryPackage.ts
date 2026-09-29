@@ -1,4 +1,5 @@
 import { VaultError } from "./vaultCrypto";
+import { validateStarknetAuthority, type StarknetVaultAuthority } from "./starknetAuthority";
 
 export { VaultError } from "./vaultCrypto";
 
@@ -14,6 +15,9 @@ export interface SyntheticVaultAuthority {
   id: string;
   material: Uint8Array;
 }
+
+/** Synthetic records remain readable for B1 regression and migration proofs. */
+export type VaultAuthority = SyntheticVaultAuthority | StarknetVaultAuthority;
 
 export interface RecoveryPublicDescriptor {
   namespace: string;
@@ -40,7 +44,7 @@ export interface CreateRecoveryPackageInput {
   generation: number;
   recoveryKey: Uint8Array;
   rootSecret: Uint8Array;
-  authorities: readonly SyntheticVaultAuthority[];
+  authorities: readonly VaultAuthority[];
   publicDescriptors: readonly RecoveryPublicDescriptor[];
 }
 
@@ -49,7 +53,7 @@ export interface RecoveredVaultPayload {
   packageId: string;
   generation: number;
   rootSecret: Uint8Array;
-  authorities: SyntheticVaultAuthority[];
+  authorities: VaultAuthority[];
   publicDescriptors: RecoveryPublicDescriptor[];
 }
 
@@ -69,9 +73,13 @@ interface RecoveryPayloadV1 {
   packageId: string;
   generation: number;
   rootSecret: string;
-  authorities: Array<{ id: string; material: string }>;
+  authorities: Array<{ id: string; material: string } | { kind: "starknet"; privateKey: string; descriptor: unknown }>;
   publicDescriptors: RecoveryPublicDescriptor[];
 }
+
+type EncodedRecoveryAuthority =
+  | { id: string; material: string }
+  | { kind: "starknet"; privateKey: string; descriptor: StarknetVaultAuthority["descriptor"] };
 
 function fail(code: VaultError["code"] = "invalid_record"): never {
   throw new VaultError(code);
@@ -90,6 +98,19 @@ function randomBytes(length: number): Uint8Array {
 
 function wipe(value: Uint8Array | undefined): void {
   value?.fill(0);
+}
+
+export function isSyntheticVaultAuthority(value: VaultAuthority): value is SyntheticVaultAuthority {
+  return !("kind" in value);
+}
+
+export function wipeVaultAuthority(value: VaultAuthority): void {
+  if (isSyntheticVaultAuthority(value)) wipe(value.material);
+  else wipe(value.privateKey);
+}
+
+export function wipeVaultAuthorities(values: readonly VaultAuthority[]): void {
+  for (const value of values) wipeVaultAuthority(value);
 }
 
 function cryptoBytes(bytes: Uint8Array): ArrayBuffer {
@@ -180,16 +201,30 @@ function validatePayload(value: unknown, header: RecoveryPackageV1): RecoveredVa
     fail();
   }
   let rootSecret: Uint8Array | undefined;
-  const authorities: SyntheticVaultAuthority[] = [];
+  const authorities: VaultAuthority[] = [];
   try {
     rootSecret = base64UrlDecode(value.rootSecret, SECRET_BYTES);
     for (const authority of value.authorities) {
       if (!isPlainObject(authority)) fail();
-      assertExactKeys(authority, ["id", "material"]);
-      assertIdentifier(authority.id);
-      authorities.push({ id: authority.id, material: base64UrlDecode(authority.material, SECRET_BYTES) });
+      if ("kind" in authority) {
+        assertExactKeys(authority, ["kind", "privateKey", "descriptor"]);
+        if (authority.kind !== "starknet") fail();
+        let privateKey: Uint8Array | undefined;
+        try {
+          privateKey = base64UrlDecode(authority.privateKey, SECRET_BYTES);
+          const validated = validateStarknetAuthority({ kind: "starknet", privateKey, descriptor: authority.descriptor });
+          authorities.push(validated);
+          privateKey = undefined;
+        } finally {
+          wipe(privateKey);
+        }
+      } else {
+        assertExactKeys(authority, ["id", "material"]);
+        assertIdentifier(authority.id);
+        authorities.push({ id: authority.id, material: base64UrlDecode(authority.material, SECRET_BYTES) });
+      }
     }
-    const uniqueAuthorityIds = new Set(authorities.map((authority) => authority.id));
+    const uniqueAuthorityIds = new Set(authorities.map((authority) => isSyntheticVaultAuthority(authority) ? authority.id : authority.descriptor.namespace));
     if (uniqueAuthorityIds.size !== authorities.length) fail();
     const publicDescriptors = value.publicDescriptors.map(validateDescriptor);
     const recoveredRoot = rootSecret;
@@ -204,7 +239,7 @@ function validatePayload(value: unknown, header: RecoveryPackageV1): RecoveredVa
     };
   } finally {
     wipe(rootSecret);
-    if (rootSecret !== undefined) for (const authority of authorities) wipe(authority.material);
+    if (rootSecret !== undefined) wipeVaultAuthorities(authorities);
   }
 }
 
@@ -259,12 +294,28 @@ function payloadFrom(input: CreateRecoveryPackageInput): RecoveryPayloadV1 {
   assertGeneration(input.generation);
   assertSecret(input.rootSecret);
   assertSecret(input.recoveryKey);
-  const authorities = input.authorities.map((authority) => {
-    assertIdentifier(authority.id);
-    assertSecret(authority.material);
-    return { id: authority.id, material: base64UrlEncode(authority.material) };
+  const authorities: EncodedRecoveryAuthority[] = input.authorities.map((authority) => {
+    if (isSyntheticVaultAuthority(authority)) {
+      assertIdentifier(authority.id);
+      assertSecret(authority.material);
+      return { id: authority.id, material: base64UrlEncode(authority.material) };
+    }
+    const valid = validateStarknetAuthority(authority);
+    try {
+      return {
+        kind: "starknet" as const,
+        privateKey: base64UrlEncode(valid.privateKey),
+        descriptor: valid.descriptor,
+      };
+    } finally {
+      wipe(valid.privateKey);
+    }
   });
-  if (new Set(authorities.map((authority) => authority.id)).size !== authorities.length) fail("invalid_input");
+  const authorityIds = authorities.map((authority) => {
+    if ("kind" in authority) return authority.descriptor.namespace;
+    return authority.id;
+  });
+  if (new Set(authorityIds).size !== authorities.length) fail("invalid_input");
   return {
     format: RECOVERY_PAYLOAD_FORMAT,
     version: RECOVERY_VERSION,
@@ -366,7 +417,7 @@ export async function verifyRecoveryPackage(
     wipe(key);
     if (payload !== undefined) {
       wipe(payload.rootSecret);
-      for (const authority of payload.authorities) wipe(authority.material);
+      wipeVaultAuthorities(payload.authorities);
     }
   }
 }

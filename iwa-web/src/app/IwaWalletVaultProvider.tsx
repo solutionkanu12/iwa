@@ -14,13 +14,19 @@ import { IndexedDbVaultStore } from "../lib/walletVault/vaultStore";
 import {
   IwaWalletVaultLifecycle,
   type ExportRecoveryPackageInput,
+  type DeployLocalStarknetAccountInput,
+  type MarkLocalStarknetAccountDeployedInput,
+  type ProvisionLocalStarknetAuthorityInput,
   type ProvisionLocalVaultInput,
   type PublicWalletVaultState,
   type RecoverLocalVaultInput,
+  type SignLocalStarknetAuthorityProofInput,
   type UnlockLocalVaultInput,
   type VerifyRecoveryPackageInput,
 } from "./iwaWalletVaultLifecycle";
 import type { RecoveryPackageV1, RecoveryPackageVerification } from "../lib/walletVault/recoveryPackage";
+import type { StarknetAccountDescriptor, StarknetAuthoritySignature } from "../lib/walletVault/starknetAuthority";
+import type { StarknetAccountDeploymentResult } from "../lib/walletVault/walletVault";
 import { useIwaAuth } from "./IwaAuthProvider";
 
 export interface IwaWalletVaultState {
@@ -31,6 +37,11 @@ export interface IwaWalletVaultState {
   exportRecovery(input: ExportRecoveryPackageInput): Promise<RecoveryPackageV1>;
   verifyRecovery(input: VerifyRecoveryPackageInput): Promise<RecoveryPackageVerification>;
   recover(input: RecoverLocalVaultInput): Promise<RecoveryPackageV1>;
+  provisionStarknetAuthority(input: ProvisionLocalStarknetAuthorityInput): Promise<StarknetAccountDescriptor>;
+  starknetAccountDescriptor(walletId: string): StarknetAccountDescriptor | null;
+  signStarknetAuthorityProof(input: SignLocalStarknetAuthorityProofInput): StarknetAuthoritySignature;
+  markStarknetAccountDeployed(input: MarkLocalStarknetAccountDeployedInput): Promise<StarknetAccountDescriptor>;
+  deployStarknetAccount(input: DeployLocalStarknetAccountInput): Promise<StarknetAccountDeploymentResult>;
   lock(): void;
 }
 
@@ -103,6 +114,27 @@ export function IwaWalletVaultProvider({ children }: { children: ReactNode }) {
     }
   }, [lifecycle]);
 
+  const provisionStarknetAuthority = useCallback(
+    (input: ProvisionLocalStarknetAuthorityInput) => lifecycle.provisionStarknetAuthority(input),
+    [lifecycle],
+  );
+  const starknetAccountDescriptor = useCallback(
+    (walletId: string) => lifecycle.starknetAccountDescriptor(walletId),
+    [lifecycle],
+  );
+  const signStarknetAuthorityProof = useCallback(
+    (input: SignLocalStarknetAuthorityProofInput) => lifecycle.signStarknetAuthorityProof(input),
+    [lifecycle],
+  );
+  const markStarknetAccountDeployed = useCallback(
+    (input: MarkLocalStarknetAccountDeployedInput) => lifecycle.markStarknetAccountDeployed(input),
+    [lifecycle],
+  );
+  const deployStarknetAccount = useCallback(
+    (input: DeployLocalStarknetAccountInput) => lifecycle.deployStarknetAccount(input),
+    [lifecycle],
+  );
+
   useEffect(() => auth.registerWalletLock(lock), [auth, lock]);
 
   useEffect(() => {
@@ -123,8 +155,8 @@ export function IwaWalletVaultProvider({ children }: { children: ReactNode }) {
   }, [auth.phase, lock]);
 
   const value = useMemo<IwaWalletVaultState>(
-    () => ({ view, inspect, provision, unlock, exportRecovery, verifyRecovery, recover, lock }),
-    [view, inspect, provision, unlock, exportRecovery, verifyRecovery, recover, lock],
+    () => ({ view, inspect, provision, unlock, exportRecovery, verifyRecovery, recover, provisionStarknetAuthority, starknetAccountDescriptor, signStarknetAuthorityProof, markStarknetAccountDeployed, deployStarknetAccount, lock }),
+    [view, inspect, provision, unlock, exportRecovery, verifyRecovery, recover, provisionStarknetAuthority, starknetAccountDescriptor, signStarknetAuthorityProof, markStarknetAccountDeployed, deployStarknetAccount, lock],
   );
   return <IwaWalletVaultContext.Provider value={value}>{children}</IwaWalletVaultContext.Provider>;
 }

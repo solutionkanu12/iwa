@@ -100,6 +100,18 @@ export interface WalletSetupView {
   status: "reserved" | "vaultProvisioned";
   recoveryStatus: "notConfigured" | "verified";
   recoveryGeneration: number | null;
+  chainProvisioningStage: "notStarted" | "starknetAuthority" | "starknetDeployment";
+  starknet: WalletStarknetDescriptorView | null;
+}
+
+/** Non-secret public account descriptor. It is never a signing capability. */
+export interface WalletStarknetDescriptorView {
+  networkId: string;
+  accountAddress: string;
+  publicKey: string;
+  accountClassId: string;
+  accountClassHash: string;
+  descriptorVersion: 1;
 }
 
 /** Reservation happens before any recovery package exists. */
@@ -434,6 +446,27 @@ export const iwaAccount = {
     return call("/api/onboarding/wallet/recovery/verified", {
       method: "POST",
       body: JSON.stringify({ walletId, generation }),
+    });
+  },
+
+  async beginChainProvisioning(walletId: string): Promise<WalletProvisioningView> {
+    return call("/api/onboarding/wallet/chain-provisioning", {
+      method: "POST",
+      body: JSON.stringify({ walletId }),
+    });
+  },
+
+  async recordStarknetAuthority(walletId: string, descriptor: WalletStarknetDescriptorView): Promise<WalletProvisioningView> {
+    return call("/api/onboarding/wallet/starknet/authority", {
+      method: "POST",
+      body: JSON.stringify({ walletId, descriptor }),
+    });
+  },
+
+  async markStarknetDeploymentAttempt(walletId: string): Promise<WalletProvisioningView> {
+    return call("/api/onboarding/wallet/starknet/deployment-attempt", {
+      method: "POST",
+      body: JSON.stringify({ walletId }),
     });
   },
 

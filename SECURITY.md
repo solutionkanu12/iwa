@@ -884,11 +884,48 @@ Migration 009 has no custody data. It can retain only a recovery status and
 positive generation for an opaque wallet ID, with CSRF, origin, session, user,
 and ordering checks. It accepts no endpoint shape that could receive package
 bytes, recovery code, ciphertext, root secret, password, PIN, PRF output,
-viewing key, seed, private key, or future authority. Generation metadata is an
-online freshness hint, not proof that an Iwa session possesses wallet
+viewing key, seed, private key, or encrypted authority. Generation metadata is
+an online freshness hint, not proof that an Iwa session possesses wallet
 authority. Offline recovery remains portable but cannot distinguish an old
 valid bearer package from the newest package; a later chain-authority rotation
 may be needed to invalidate a stolen older package.
+
+### B2-A Starknet authority boundary (local implementation, devnet proof pending)
+
+The first future chain authority is a Starknet private scalar made from browser
+CSPRNG output with rejection sampling against the Stark curve order. It is a
+dedicated vault authority and is not derived from an Iwa Account identity,
+wallet password, PIN, recovery code, passkey, EVM key, or Solana key. Its only
+persistent homes are the authenticated encrypted local vault record and the
+encrypted portable recovery package. It is not placed in React state, URLs,
+cookies, localStorage, sessionStorage, logs, telemetry, network requests,
+backend storage, CI artifacts, or deployment sponsorship material.
+
+The Starknet descriptor is integrity-bound to the authority record and root
+manifest. It contains public chain ID, class identifier/hash, public key,
+counterfactual address, schema version, and deployment state. Substitution,
+deletion, or a descriptor whose public key/address no longer derives from the
+encrypted scalar fails during vault validation. A deployment operation requires
+the live opaque vault capability and validates the provider chain ID plus the
+class hash at the calculated address. A local preflight sees an exact already
+deployed class as a resumable result; any different class or RPC failure other
+than the documented `CONTRACT_NOT_FOUND` response fails closed.
+
+Migration 010 and its coordination endpoints may receive only that public
+descriptor and a generic chain-provisioning stage. They reject secret fields
+by request shape and expose no endpoint for signing, unlocking, recovering, or
+exporting. This server metadata is not proof of on-chain control and must never
+be used as payment, deployment, or wallet authorization. A stolen Iwa session
+could at most submit conflicting public coordination metadata, causing an
+availability conflict; it cannot derive the scalar, create a valid account
+signature, or move funds. A later on-chain reconciliation/proof design is
+required before such metadata can be trusted for operational decisions.
+
+There is no hardcoded production account-class hash, production provider,
+paymaster, relayer, mainnet deployment, STRK20 viewing key, or settlement
+authority in B2-A. The generated-account deployment test is restricted to a
+fresh disposable devnet runner. Until that runner succeeds, no devnet deployment
+or full account-control claim is made.
 
 ## Backend security
 
