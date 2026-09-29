@@ -58,12 +58,13 @@ jobs:
         run: |
           set -euo pipefail
           devnet_log="$RUNNER_TEMP/iwa-b2a-devnet.log"
+          test_log="$RUNNER_TEMP/iwa-b2a-test.log"
           "$RUNNER_TEMP/iwa-starknet-devnet" --seed 42 >"$devnet_log" 2>&1 &
           devnet_pid=$!
           cleanup() {
             kill "$devnet_pid" 2>/dev/null || true
             wait "$devnet_pid" 2>/dev/null || true
-            rm -f "$devnet_log"
+            rm -f "$devnet_log" "$test_log"
           }
           trap cleanup EXIT
           for _ in $(seq 1 30); do
@@ -80,7 +81,21 @@ jobs:
             --data '{"jsonrpc":"2.0","id":1,"method":"starknet_chainId","params":[]}' \
             "$IWA_B2A_DEVNET_URL" >/dev/null
           cd iwa-web
-          npx vitest run src/lib/walletVault/starknetAuthority.devnet.test.ts --reporter=dot
+          set +e
+          npx vitest run src/lib/walletVault/starknetAuthority.devnet.test.ts --reporter=dot >"$test_log" 2>&1
+          test_status=$?
+          set -e
+          if [ "$test_status" -ne 0 ]; then
+            phase="$(grep -Eo 'B2A_PHASE_FAILED:[A-Za-z0-9_-]+' "$test_log" | tail -n 1 || true)"
+            rm -f "$test_log"
+            if [ -z "$phase" ]; then
+              phase="B2A_PHASE_FAILED:unknown"
+            fi
+            echo "::error title=B2-A sanitized test phase::$phase"
+            exit "$test_status"
+          fi
+          rm -f "$test_log"
+          echo "B2A_DEVNET_TEST=passed"
 
       - name: Record sanitized outcome
         if: always()

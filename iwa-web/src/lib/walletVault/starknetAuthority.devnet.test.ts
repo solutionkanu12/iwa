@@ -96,127 +96,152 @@ function newVault(store = new InMemoryVaultStore()) {
 
 describeDevnet("B2-A isolated Starknet account deployment", () => {
   it("deploys a newly generated vault authority using a devnet-verified account class and restores the same account", async () => {
-    const provider = new RpcProvider({ nodeUrl: DEVNET_URL! });
-    const predeployed = await devnetRpc<Array<{ address: string }>>("devnet_getPredeployedAccounts");
-    const reference = predeployed[0];
-    if (reference === undefined) throw new Error("isolated devnet did not provide a reference account");
-    const classHash = await provider.getClassHashAt(reference.address);
-    const contractClass = await provider.getClassByHash(classHash);
-    assertDeployablePublicKeyAccountAbi((contractClass as { abi?: unknown }).abi);
+    let phase = "initialize";
+    try {
+      phase = "discover-predeployed-account";
+      const provider = new RpcProvider({ nodeUrl: DEVNET_URL! });
+      const predeployed = await devnetRpc<Array<{ address: string }>>("devnet_getPredeployedAccounts");
+      const reference = predeployed[0];
+      if (reference === undefined) throw new Error("isolated devnet did not provide a reference account");
+      const classHash = await provider.getClassHashAt(reference.address);
+      phase = "verify-account-class";
+      const contractClass = await provider.getClassByHash(classHash);
+      assertDeployablePublicKeyAccountAbi((contractClass as { abi?: unknown }).abi);
 
-    const networkId = await provider.getChainId();
-    const store = new InMemoryVaultStore();
-    const vault = newVault(store);
-    await vault.create({ walletId, password, passkey, authorities: [] });
-    const session = await vault.unlock({ walletId, password });
-    const descriptor = await vault.provisionStarknetAuthority(session, {
-      walletId,
-      password,
-      accountClass: {
+      phase = "create-encrypted-authority";
+      const networkId = await provider.getChainId();
+      const store = new InMemoryVaultStore();
+      const vault = newVault(store);
+      await vault.create({ walletId, password, passkey, authorities: [] });
+      const session = await vault.unlock({ walletId, password });
+      const descriptor = await vault.provisionStarknetAuthority(session, {
+        walletId,
+        password,
+        accountClass: {
+          networkId,
+          accountClassId: "devnet-predeployed-account-verified",
+          accountClassHash: classHash,
+          descriptorVersion: 1,
+        },
+      });
+      phase = "fund-counterfactual-account";
+      await mintTestFunding(descriptor.accountAddress);
+      phase = "deploy-account";
+      const deployment = await vault.deployStarknetAccount(session, { walletId, password, provider });
+
+      phase = "verify-deployment";
+      expect(deployment.accountAddress).toBe(descriptor.accountAddress);
+      expect(deployment.transactionHash).not.toBeNull();
+      expect(deployment.resumed).toBe(false);
+      expect(await provider.getClassHashAt(descriptor.accountAddress)).toBe(descriptor.accountClassHash);
+      expect(BigInt((await provider.callContract({ contractAddress: descriptor.accountAddress, entrypoint: "get_public_key", calldata: [] }))[0]!)).toBe(BigInt(descriptor.publicKey));
+
+      phase = "verify-signer-ownership";
+      const proofHash = "0x4567";
+      const signature = vault.signStarknetAuthorityProof(session, {
+        walletId,
+        networkId: descriptor.networkId,
+        accountAddress: descriptor.accountAddress,
+        proofHash,
+      });
+      await expect(provider.callContract({
+        contractAddress: descriptor.accountAddress,
+        entrypoint: "is_valid_signature",
+        calldata: [proofHash, "2", signature.r, signature.s],
+      })).resolves.toHaveLength(1);
+      phase = "reject-wrong-signer-and-payload";
+      await expect(provider.callContract({
+        contractAddress: descriptor.accountAddress,
+        entrypoint: "is_valid_signature",
+        calldata: ["0x4568", "2", signature.r, signature.s],
+      })).rejects.toThrow();
+      const substitute = createStarknetAuthority({
         networkId,
         accountClassId: "devnet-predeployed-account-verified",
         accountClassHash: classHash,
         descriptorVersion: 1,
-      },
-    });
-    await mintTestFunding(descriptor.accountAddress);
-    const deployment = await vault.deployStarknetAccount(session, { walletId, password, provider });
+      });
+      try {
+        const substituteSignature = ec.starkCurve.sign(proofHash, scalarHex(substitute.privateKey));
+        await expect(provider.callContract({
+          contractAddress: descriptor.accountAddress,
+          entrypoint: "is_valid_signature",
+          calldata: [proofHash, "2", `0x${substituteSignature.r.toString(16)}`, `0x${substituteSignature.s.toString(16)}`],
+        })).rejects.toThrow();
+      } finally {
+        substitute.privateKey.fill(0);
+      }
+      phase = "resume-provisioning";
+      await expect(vault.deployStarknetAccount(session, { walletId, password, provider })).resolves.toMatchObject({ resumed: true, transactionHash: null });
 
-    expect(deployment.accountAddress).toBe(descriptor.accountAddress);
-    expect(deployment.transactionHash).not.toBeNull();
-    expect(deployment.resumed).toBe(false);
-    expect(await provider.getClassHashAt(descriptor.accountAddress)).toBe(descriptor.accountClassHash);
-    expect(BigInt((await provider.callContract({ contractAddress: descriptor.accountAddress, entrypoint: "get_public_key", calldata: [] }))[0]!)).toBe(BigInt(descriptor.publicKey));
-
-    const proofHash = "0x4567";
-    const signature = vault.signStarknetAuthorityProof(session, {
-      walletId,
-      networkId: descriptor.networkId,
-      accountAddress: descriptor.accountAddress,
-      proofHash,
-    });
-    await expect(provider.callContract({
-      contractAddress: descriptor.accountAddress,
-      entrypoint: "is_valid_signature",
-      calldata: [proofHash, "2", signature.r, signature.s],
-    })).resolves.toHaveLength(1);
-    await expect(provider.callContract({
-      contractAddress: descriptor.accountAddress,
-      entrypoint: "is_valid_signature",
-      calldata: ["0x4568", "2", signature.r, signature.s],
-    })).rejects.toThrow();
-    const substitute = createStarknetAuthority({
-      networkId,
-      accountClassId: "devnet-predeployed-account-verified",
-      accountClassHash: classHash,
-      descriptorVersion: 1,
-    });
-    try {
-      const substituteSignature = ec.starkCurve.sign(proofHash, scalarHex(substitute.privateKey));
-      await expect(provider.callContract({
-        contractAddress: descriptor.accountAddress,
-        entrypoint: "is_valid_signature",
-        calldata: [proofHash, "2", `0x${substituteSignature.r.toString(16)}`, `0x${substituteSignature.s.toString(16)}`],
-      })).rejects.toThrow();
-    } finally {
-      substitute.privateKey.fill(0);
-    }
-    await expect(vault.deployStarknetAccount(session, { walletId, password, provider })).resolves.toMatchObject({ resumed: true, transactionHash: null });
-
-    const recoveryKey = Uint8Array.from({ length: 32 }, (_, index) => index + 91);
-    const recovery = await vault.exportRecovery(session, walletId, recoveryKey, "b2a-devnet-recovery-one");
-    await vault.destroy(walletId);
-    const restored = newVault(store);
-    const replacement = await restored.importRecovery({
-      recovery,
-      recoveryKey,
-      password: "Iwa restored isolated devnet wallet password",
-      passkey,
-      replacementPackageId: "b2a-devnet-recovery-two",
-    });
-    const restoredSession = await restored.unlock({ walletId, password: "Iwa restored isolated devnet wallet password" });
-    const restoredDescriptor = restored.starknetAccountDescriptor(restoredSession, walletId);
-    if (restoredDescriptor === null) throw new Error("restored Starknet authority was unavailable");
-    const restoredSignature = restored.signStarknetAuthorityProof(restoredSession, {
-      walletId,
-      networkId: restoredDescriptor.networkId,
-      accountAddress: restoredDescriptor.accountAddress,
-      proofHash,
-    });
-    const payload = await openRecoveryPackage(replacement, recoveryKey, walletId);
-    try {
-      const authority = payload.authorities[0];
-      if (authority === undefined || isSyntheticVaultAuthority(authority)) throw new Error("restored recovery authority was unavailable");
-      expect(restoredDescriptor).toEqual({ ...descriptor, deploymentState: "deployed" });
-      expect(ec.starkCurve.verify(compactSignature(restoredSignature), proofHash, ec.starkCurve.getPublicKey(scalarHex(authority.privateKey)))).toBe(true);
-      await expect(provider.callContract({
-        contractAddress: descriptor.accountAddress,
-        entrypoint: "is_valid_signature",
-        calldata: [proofHash, "2", restoredSignature.r, restoredSignature.s],
-      })).resolves.toHaveLength(1);
-    } finally {
-      payload.rootSecret.fill(0);
-      wipeVaultAuthorities(payload.authorities);
-      recoveryKey.fill(0);
+      phase = "export-recovery";
+      const recoveryKey = Uint8Array.from({ length: 32 }, (_, index) => index + 91);
+      const recovery = await vault.exportRecovery(session, walletId, recoveryKey, "b2a-devnet-recovery-one");
+      await vault.destroy(walletId);
+      phase = "import-recovery";
+      const restored = newVault(store);
+      const replacement = await restored.importRecovery({
+        recovery,
+        recoveryKey,
+        password: "Iwa restored isolated devnet wallet password",
+        passkey,
+        replacementPackageId: "b2a-devnet-recovery-two",
+      });
+      const restoredSession = await restored.unlock({ walletId, password: "Iwa restored isolated devnet wallet password" });
+      const restoredDescriptor = restored.starknetAccountDescriptor(restoredSession, walletId);
+      if (restoredDescriptor === null) throw new Error("restored Starknet authority was unavailable");
+      const restoredSignature = restored.signStarknetAuthorityProof(restoredSession, {
+        walletId,
+        networkId: restoredDescriptor.networkId,
+        accountAddress: restoredDescriptor.accountAddress,
+        proofHash,
+      });
+      phase = "verify-recovered-authority";
+      const payload = await openRecoveryPackage(replacement, recoveryKey, walletId);
+      try {
+        const authority = payload.authorities[0];
+        if (authority === undefined || isSyntheticVaultAuthority(authority)) throw new Error("restored recovery authority was unavailable");
+        expect(restoredDescriptor).toEqual({ ...descriptor, deploymentState: "deployed" });
+        expect(ec.starkCurve.verify(compactSignature(restoredSignature), proofHash, ec.starkCurve.getPublicKey(scalarHex(authority.privateKey)))).toBe(true);
+        await expect(provider.callContract({
+          contractAddress: descriptor.accountAddress,
+          entrypoint: "is_valid_signature",
+          calldata: [proofHash, "2", restoredSignature.r, restoredSignature.s],
+        })).resolves.toHaveLength(1);
+      } finally {
+        payload.rootSecret.fill(0);
+        wipeVaultAuthorities(payload.authorities);
+        recoveryKey.fill(0);
+      }
+    } catch {
+      throw new Error(`B2A_PHASE_FAILED:${phase}`);
     }
   }, 180_000);
 
   it("rejects wrong network and wrong account context before any deployment request", async () => {
-    const provider = new RpcProvider({ nodeUrl: DEVNET_URL! });
-    const reference = (await devnetRpc<Array<{ address: string }>>("devnet_getPredeployedAccounts"))[0];
-    if (reference === undefined) throw new Error("isolated devnet did not provide a reference account");
-    const networkId = await provider.getChainId();
-    const classHash = await provider.getClassHashAt(reference.address);
-    const vault = newVault();
-    await vault.create({ walletId, password, passkey, authorities: [] });
-    const session = await vault.unlock({ walletId, password });
-    const descriptor = await vault.provisionStarknetAuthority(session, {
-      walletId,
-      password,
-      accountClass: { networkId, accountClassId: "devnet-predeployed-account-verified", accountClassHash: classHash, descriptorVersion: 1 },
-    });
-    await expect(vault.deployStarknetAccount(session, { walletId, password, provider: { getChainId: async () => "0x1" } as unknown as RpcProvider })).rejects.toThrow();
-    expect(vault.signStarknetAuthorityProof(session, { walletId, networkId, accountAddress: descriptor.accountAddress, proofHash: "0x4567" }).r).toMatch(/^0x/);
-    expect(() => vault.signStarknetAuthorityProof(session, { walletId, networkId, accountAddress: "0x1", proofHash: "0x4567" })).toThrow();
+    let phase = "initialize";
+    try {
+      phase = "discover-predeployed-account";
+      const provider = new RpcProvider({ nodeUrl: DEVNET_URL! });
+      const reference = (await devnetRpc<Array<{ address: string }>>("devnet_getPredeployedAccounts"))[0];
+      if (reference === undefined) throw new Error("isolated devnet did not provide a reference account");
+      const networkId = await provider.getChainId();
+      const classHash = await provider.getClassHashAt(reference.address);
+      phase = "create-encrypted-authority";
+      const vault = newVault();
+      await vault.create({ walletId, password, passkey, authorities: [] });
+      const session = await vault.unlock({ walletId, password });
+      const descriptor = await vault.provisionStarknetAuthority(session, {
+        walletId,
+        password,
+        accountClass: { networkId, accountClassId: "devnet-predeployed-account-verified", accountClassHash: classHash, descriptorVersion: 1 },
+      });
+      phase = "reject-wrong-network-and-context";
+      await expect(vault.deployStarknetAccount(session, { walletId, password, provider: { getChainId: async () => "0x1" } as unknown as RpcProvider })).rejects.toThrow();
+      expect(vault.signStarknetAuthorityProof(session, { walletId, networkId, accountAddress: descriptor.accountAddress, proofHash: "0x4567" }).r).toMatch(/^0x/);
+      expect(() => vault.signStarknetAuthorityProof(session, { walletId, networkId, accountAddress: "0x1", proofHash: "0x4567" })).toThrow();
+    } catch {
+      throw new Error(`B2A_PHASE_FAILED:network-${phase}`);
+    }
   }, 180_000);
 });
