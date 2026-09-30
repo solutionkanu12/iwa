@@ -1,5 +1,6 @@
 import { VaultError } from "./vaultCrypto";
 import { validateStarknetAuthority, type StarknetVaultAuthority } from "./starknetAuthority";
+import { validateStrk20ViewingAuthority, type Strk20ViewingVaultAuthority } from "./strk20ViewingAuthority";
 
 export { VaultError } from "./vaultCrypto";
 
@@ -17,7 +18,7 @@ export interface SyntheticVaultAuthority {
 }
 
 /** Synthetic records remain readable for B1 regression and migration proofs. */
-export type VaultAuthority = SyntheticVaultAuthority | StarknetVaultAuthority;
+export type VaultAuthority = SyntheticVaultAuthority | StarknetVaultAuthority | Strk20ViewingVaultAuthority;
 
 export interface RecoveryPublicDescriptor {
   namespace: string;
@@ -73,13 +74,18 @@ interface RecoveryPayloadV1 {
   packageId: string;
   generation: number;
   rootSecret: string;
-  authorities: Array<{ id: string; material: string } | { kind: "starknet"; privateKey: string; descriptor: unknown }>;
+  authorities: Array<
+    | { id: string; material: string }
+    | { kind: "starknet"; privateKey: string; descriptor: unknown }
+    | { kind: "strk20Viewing"; privateKey: string; descriptor: unknown }
+  >;
   publicDescriptors: RecoveryPublicDescriptor[];
 }
 
 type EncodedRecoveryAuthority =
   | { id: string; material: string }
-  | { kind: "starknet"; privateKey: string; descriptor: StarknetVaultAuthority["descriptor"] };
+  | { kind: "starknet"; privateKey: string; descriptor: StarknetVaultAuthority["descriptor"] }
+  | { kind: "strk20Viewing"; privateKey: string; descriptor: Strk20ViewingVaultAuthority["descriptor"] };
 
 function fail(code: VaultError["code"] = "invalid_record"): never {
   throw new VaultError(code);
@@ -104,9 +110,19 @@ export function isSyntheticVaultAuthority(value: VaultAuthority): value is Synth
   return !("kind" in value);
 }
 
+export function isStarknetVaultAuthority(value: VaultAuthority): value is StarknetVaultAuthority {
+  return !isSyntheticVaultAuthority(value) && value.kind === "starknet";
+}
+
+export function isStrk20ViewingVaultAuthority(value: VaultAuthority): value is Strk20ViewingVaultAuthority {
+  return !isSyntheticVaultAuthority(value) && value.kind === "strk20Viewing";
+}
+
 export function wipeVaultAuthority(value: VaultAuthority): void {
   if (isSyntheticVaultAuthority(value)) wipe(value.material);
-  else wipe(value.privateKey);
+  else if (isStarknetVaultAuthority(value)) wipe(value.privateKey);
+  else if (isStrk20ViewingVaultAuthority(value)) wipe(value.privateKey);
+  else fail();
 }
 
 export function wipeVaultAuthorities(values: readonly VaultAuthority[]): void {
@@ -208,11 +224,14 @@ function validatePayload(value: unknown, header: RecoveryPackageV1): RecoveredVa
       if (!isPlainObject(authority)) fail();
       if ("kind" in authority) {
         assertExactKeys(authority, ["kind", "privateKey", "descriptor"]);
-        if (authority.kind !== "starknet") fail();
         let privateKey: Uint8Array | undefined;
         try {
           privateKey = base64UrlDecode(authority.privateKey, SECRET_BYTES);
-          const validated = validateStarknetAuthority({ kind: "starknet", privateKey, descriptor: authority.descriptor });
+          const validated = authority.kind === "starknet"
+            ? validateStarknetAuthority({ kind: "starknet", privateKey, descriptor: authority.descriptor })
+            : authority.kind === "strk20Viewing"
+              ? validateStrk20ViewingAuthority({ kind: "strk20Viewing", privateKey, descriptor: authority.descriptor })
+              : fail();
           authorities.push(validated);
           privateKey = undefined;
         } finally {
@@ -300,16 +319,31 @@ function payloadFrom(input: CreateRecoveryPackageInput): RecoveryPayloadV1 {
       assertSecret(authority.material);
       return { id: authority.id, material: base64UrlEncode(authority.material) };
     }
-    const valid = validateStarknetAuthority(authority);
-    try {
-      return {
-        kind: "starknet" as const,
-        privateKey: base64UrlEncode(valid.privateKey),
-        descriptor: valid.descriptor,
-      };
-    } finally {
-      wipe(valid.privateKey);
+    if (isStarknetVaultAuthority(authority)) {
+      const valid = validateStarknetAuthority(authority);
+      try {
+        return {
+          kind: "starknet" as const,
+          privateKey: base64UrlEncode(valid.privateKey),
+          descriptor: valid.descriptor,
+        };
+      } finally {
+        wipe(valid.privateKey);
+      }
     }
+    if (isStrk20ViewingVaultAuthority(authority)) {
+      const valid = validateStrk20ViewingAuthority(authority);
+      try {
+        return {
+          kind: "strk20Viewing" as const,
+          privateKey: base64UrlEncode(valid.privateKey),
+          descriptor: valid.descriptor,
+        };
+      } finally {
+        wipe(valid.privateKey);
+      }
+    }
+    return fail();
   });
   const authorityIds = authorities.map((authority) => {
     if ("kind" in authority) return authority.descriptor.namespace;

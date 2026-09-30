@@ -1,4 +1,4 @@
-import { Account, type RpcProvider } from "starknet";
+import { Account, Signer, type RpcProvider } from "starknet";
 
 import {
   VaultError,
@@ -15,6 +15,8 @@ import {
 } from "./vaultCrypto";
 import {
   createRecoveryPackage,
+  isStarknetVaultAuthority,
+  isStrk20ViewingVaultAuthority,
   isSyntheticVaultAuthority,
   openRecoveryPackage,
   wipeVaultAuthorities,
@@ -33,6 +35,20 @@ import {
   type StarknetAuthoritySignature,
   type StarknetVaultAuthority,
 } from "./starknetAuthority";
+import {
+  STRK20_VIEWING_AUTHORITY_FORMAT,
+  STRK20_VIEWING_AUTHORITY_VERSION,
+  createStrk20ViewingAuthority,
+  validateStrk20ViewingAuthority,
+  withStrk20ViewingRegistrationState,
+  type Strk20ViewingDescriptor,
+  type Strk20ViewingVaultAuthority,
+} from "./strk20ViewingAuthority";
+import {
+  type IwaStrk20PrivacyRuntime,
+  type IwaHelperPrivateInvoke,
+  type Strk20PrivateStateSummary,
+} from "./strk20PrivacyRuntime";
 import type { WalletVaultStore } from "./vaultStore";
 
 const AUTHORITY_FORMAT = "iwa-synthetic-vault-authority";
@@ -113,6 +129,36 @@ export interface DeployStarknetAccountInput {
   readonly provider: RpcProvider;
 }
 
+export interface ProvisionStrk20ViewingAuthorityInput {
+  readonly walletId: string;
+  readonly password: string;
+  readonly networkId: string;
+  readonly poolAddress: string;
+  readonly accountAddress: string;
+}
+
+export interface RegisterStrk20ViewingAuthorityInput {
+  readonly walletId: string;
+  readonly password: string;
+  readonly provider: RpcProvider;
+  readonly runtime: IwaStrk20PrivacyRuntime;
+}
+
+export interface DiscoverStrk20PrivateStateInput {
+  readonly walletId: string;
+  readonly provider: RpcProvider;
+  readonly runtime: IwaStrk20PrivacyRuntime;
+}
+
+export interface InvokeStrk20IwaHelperInput {
+  readonly walletId: string;
+  readonly provider: RpcProvider;
+  readonly runtime: IwaStrk20PrivacyRuntime;
+  readonly helperAddress: string;
+  /** A later B2-C settlement module supplies only contract-specific calldata. */
+  readonly build: IwaHelperPrivateInvoke["build"];
+}
+
 export interface StarknetAccountDeploymentResult {
   readonly accountAddress: string;
   readonly transactionHash: string | null;
@@ -130,6 +176,14 @@ interface StoredStarknetAuthority {
   kind: "starknet";
   privateKey: string;
   descriptor: StarknetAccountDescriptor;
+}
+
+interface StoredStrk20ViewingAuthority {
+  format: typeof STRK20_VIEWING_AUTHORITY_FORMAT;
+  version: typeof STRK20_VIEWING_AUTHORITY_VERSION;
+  kind: "strk20Viewing";
+  privateKey: string;
+  descriptor: Strk20ViewingDescriptor;
 }
 
 interface WarmState {
@@ -177,6 +231,12 @@ function base64UrlDecode(value: unknown): Uint8Array {
   }
 }
 
+function bytesToBigInt(bytes: Uint8Array): bigint {
+  let value = 0n;
+  for (const byte of bytes) value = (value << 8n) | BigInt(byte);
+  return value;
+}
+
 function assertWalletId(walletId: string): void {
   if (walletId.length === 0 || walletId.length > 256 || /[|\r\n]/.test(walletId)) fail();
 }
@@ -218,12 +278,23 @@ function authorityNamespace(authority: VaultAuthority): string {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(authority.id) || authority.material.length !== 32) fail();
     return `synthetic/${authority.id}`;
   }
-  const valid = validateStarknetAuthority(authority);
-  try {
-    return valid.descriptor.namespace;
-  } finally {
-    wipe(valid.privateKey);
+  if (isStarknetVaultAuthority(authority)) {
+    const valid = validateStarknetAuthority(authority);
+    try {
+      return valid.descriptor.namespace;
+    } finally {
+      wipe(valid.privateKey);
+    }
   }
+  if (isStrk20ViewingVaultAuthority(authority)) {
+    const valid = validateStrk20ViewingAuthority(authority);
+    try {
+      return valid.descriptor.namespace;
+    } finally {
+      wipe(valid.privateKey);
+    }
+  }
+  return fail();
 }
 
 function serializeAuthority(authority: VaultAuthority): Uint8Array {
@@ -233,20 +304,39 @@ function serializeAuthority(authority: VaultAuthority): Uint8Array {
       JSON.stringify({ format: AUTHORITY_FORMAT, version: 1, id: authority.id, material: base64UrlEncode(authority.material) }),
     );
   }
-  const valid = validateStarknetAuthority(authority);
-  try {
-    return new TextEncoder().encode(
-      JSON.stringify({
-        format: STARKNET_AUTHORITY_FORMAT,
-        version: STARKNET_AUTHORITY_VERSION,
-        kind: "starknet",
-        privateKey: base64UrlEncode(valid.privateKey),
-        descriptor: valid.descriptor,
-      } satisfies StoredStarknetAuthority),
-    );
-  } finally {
-    wipe(valid.privateKey);
+  if (isStarknetVaultAuthority(authority)) {
+    const valid = validateStarknetAuthority(authority);
+    try {
+      return new TextEncoder().encode(
+        JSON.stringify({
+          format: STARKNET_AUTHORITY_FORMAT,
+          version: STARKNET_AUTHORITY_VERSION,
+          kind: "starknet",
+          privateKey: base64UrlEncode(valid.privateKey),
+          descriptor: valid.descriptor,
+        } satisfies StoredStarknetAuthority),
+      );
+    } finally {
+      wipe(valid.privateKey);
+    }
   }
+  if (isStrk20ViewingVaultAuthority(authority)) {
+    const valid = validateStrk20ViewingAuthority(authority);
+    try {
+      return new TextEncoder().encode(
+        JSON.stringify({
+          format: STRK20_VIEWING_AUTHORITY_FORMAT,
+          version: STRK20_VIEWING_AUTHORITY_VERSION,
+          kind: "strk20Viewing",
+          privateKey: base64UrlEncode(valid.privateKey),
+          descriptor: valid.descriptor,
+        } satisfies StoredStrk20ViewingAuthority),
+      );
+    } finally {
+      wipe(valid.privateKey);
+    }
+  }
+  return fail();
 }
 
 function parseAuthority(plaintext: Uint8Array): VaultAuthority {
@@ -270,19 +360,20 @@ function parseAuthority(plaintext: Uint8Array): VaultAuthority {
       }
       return { id: record.id, material };
     }
-    if (
-      Object.keys(record).length !== 5 ||
-      !["format", "version", "kind", "privateKey", "descriptor"].every((key) => key in record) ||
-      record.format !== STARKNET_AUTHORITY_FORMAT ||
-      record.version !== STARKNET_AUTHORITY_VERSION ||
-      record.kind !== "starknet"
-    ) {
-      fail();
-    }
+    if (Object.keys(record).length !== 5 || !["format", "version", "kind", "privateKey", "descriptor"].every((key) => key in record)) fail();
     let privateKey: Uint8Array | undefined;
     try {
       privateKey = base64UrlDecode(record.privateKey);
-      const authority = validateStarknetAuthority({ kind: "starknet", privateKey, descriptor: record.descriptor });
+      const authority =
+        record.format === STARKNET_AUTHORITY_FORMAT &&
+        record.version === STARKNET_AUTHORITY_VERSION &&
+        record.kind === "starknet"
+          ? validateStarknetAuthority({ kind: "starknet", privateKey, descriptor: record.descriptor })
+          : record.format === STRK20_VIEWING_AUTHORITY_FORMAT &&
+            record.version === STRK20_VIEWING_AUTHORITY_VERSION &&
+            record.kind === "strk20Viewing"
+            ? validateStrk20ViewingAuthority({ kind: "strk20Viewing", privateKey, descriptor: record.descriptor })
+            : fail();
       privateKey = undefined;
       return authority;
     } finally {
@@ -299,7 +390,9 @@ function parseAuthority(plaintext: Uint8Array): VaultAuthority {
 function cloneAuthorities(authorities: readonly VaultAuthority[]): VaultAuthority[] {
   return authorities.map((authority) => {
     if (isSyntheticVaultAuthority(authority)) return { id: authority.id, material: new Uint8Array(authority.material) };
-    return validateStarknetAuthority(authority);
+    if (isStarknetVaultAuthority(authority)) return validateStarknetAuthority(authority);
+    if (isStrk20ViewingVaultAuthority(authority)) return validateStrk20ViewingAuthority(authority);
+    return fail();
   });
 }
 
@@ -307,8 +400,27 @@ function singleStarknetAuthority(authorities: readonly VaultAuthority[]): Starkn
   let found: StarknetVaultAuthority | null = null;
   try {
     for (const authority of authorities) {
-      if (isSyntheticVaultAuthority(authority)) continue;
+      if (!isStarknetVaultAuthority(authority)) continue;
       const valid = validateStarknetAuthority(authority);
+      if (found !== null) {
+        wipe(valid.privateKey);
+        fail();
+      }
+      found = valid;
+    }
+    return found;
+  } catch (error) {
+    wipe(found?.privateKey);
+    throw error;
+  }
+}
+
+function singleStrk20ViewingAuthority(authorities: readonly VaultAuthority[]): Strk20ViewingVaultAuthority | null {
+  let found: Strk20ViewingVaultAuthority | null = null;
+  try {
+    for (const authority of authorities) {
+      if (!isStrk20ViewingVaultAuthority(authority)) continue;
+      const valid = validateStrk20ViewingAuthority(authority);
       if (found !== null) {
         wipe(valid.privateKey);
         fail();
@@ -373,6 +485,7 @@ export class WalletVault {
   private readonly idleTimeoutMs: number;
   private readonly passwordKdf: () => PasswordKdfPolicy;
   private ongoingStarknetProvision: Promise<StarknetAccountDescriptor> | null = null;
+  private ongoingStrk20ViewingProvision: Promise<Strk20ViewingDescriptor> | null = null;
 
   constructor(private readonly dependencies: WalletVaultDependencies) {
     this.timeout = dependencies.timeout ?? { set: (callback, milliseconds) => window.setTimeout(callback, milliseconds), clear: window.clearTimeout };
@@ -547,6 +660,111 @@ export class WalletVault {
     }
   }
 
+  /** Public STRK20 setup facts only. The viewing scalar never leaves warm state. */
+  strk20ViewingAuthorityDescriptor(session: WalletVaultSession, walletId: string): Strk20ViewingDescriptor | null {
+    const warm = this.requireWarm(session, walletId);
+    const authority = singleStrk20ViewingAuthority(warm.authorities);
+    if (authority === null) return null;
+    try {
+      return { ...authority.descriptor };
+    } finally {
+      wipe(authority.privateKey);
+    }
+  }
+
+  /**
+   * Creates the independent viewing scalar once, only after the stored
+   * Starknet account is verified as deployed. A retry must match every public
+   * context field and returns the original descriptor instead of rotating it.
+   */
+  async provisionStrk20ViewingAuthority(
+    session: WalletVaultSession,
+    input: ProvisionStrk20ViewingAuthorityInput,
+  ): Promise<Strk20ViewingDescriptor> {
+    if (this.ongoingStrk20ViewingProvision !== null) return this.ongoingStrk20ViewingProvision;
+    const operation = this.provisionStrk20ViewingAuthorityOnce(session, input);
+    this.ongoingStrk20ViewingProvision = operation;
+    try {
+      return await operation;
+    } finally {
+      if (this.ongoingStrk20ViewingProvision === operation) this.ongoingStrk20ViewingProvision = null;
+    }
+  }
+
+  /**
+   * Registers only the existing local viewing identity. A completed but
+   * unpersisted registration is recovered through the protocol probe; a retry
+   * never creates or substitutes a second viewing scalar.
+   */
+  async registerStrk20ViewingAuthority(
+    session: WalletVaultSession,
+    input: RegisterStrk20ViewingAuthorityInput,
+  ): Promise<Strk20ViewingDescriptor> {
+    const warm = this.requireWarm(session, input.walletId);
+    const epoch = this.operationEpoch;
+    await this.withStrk20Runtime(warm, session, epoch, input.provider, async (context) => {
+      await input.runtime.ensureRegistered(context);
+    });
+    const viewing = singleStrk20ViewingAuthority(warm.authorities);
+    if (viewing === null) fail();
+    let next: VaultAuthority[] = [];
+    try {
+      this.assertLiveWarm(warm, session, epoch);
+      if (viewing.descriptor.registrationState === "registered") return { ...viewing.descriptor };
+      const updated = withStrk20ViewingRegistrationState(viewing, "registered");
+      next = cloneAuthorities(warm.authorities).map((authority) => isStrk20ViewingVaultAuthority(authority) ? updated : authority);
+      await this.rewriteAuthorities(warm, session, input.password, next);
+      next = [];
+      return { ...updated.descriptor };
+    } finally {
+      wipe(viewing.privateKey);
+      wipeAuthorities(next);
+    }
+  }
+
+  /** Returns summaries only; raw notes and the viewing scalar remain internal. */
+  async discoverStrk20PrivateState(
+    session: WalletVaultSession,
+    input: DiscoverStrk20PrivateStateInput,
+  ): Promise<Strk20PrivateStateSummary> {
+    const warm = this.requireWarm(session, input.walletId);
+    const epoch = this.operationEpoch;
+    const viewing = singleStrk20ViewingAuthority(warm.authorities);
+    if (viewing === null || viewing.descriptor.registrationState !== "registered") {
+      wipe(viewing?.privateKey);
+      fail();
+    }
+    wipe(viewing.privateKey);
+    return this.withStrk20Runtime(warm, session, epoch, input.provider, async (context) => input.runtime.discover(context));
+  }
+
+  /**
+   * Executes a single B2-B Iwa helper private operation with the recovered
+   * Starknet signer and viewing scalar. It deliberately contains no Iwa
+   * settlement authority; B2-C must supply approved settlement calldata.
+   */
+  async invokeStrk20IwaHelper(
+    session: WalletVaultSession,
+    input: InvokeStrk20IwaHelperInput,
+  ): Promise<void> {
+    const warm = this.requireWarm(session, input.walletId);
+    const epoch = this.operationEpoch;
+    const viewing = singleStrk20ViewingAuthority(warm.authorities);
+    if (viewing === null || viewing.descriptor.registrationState !== "registered") {
+      wipe(viewing?.privateKey);
+      fail();
+    }
+    wipe(viewing.privateKey);
+    await this.withStrk20Runtime(warm, session, epoch, input.provider, async (context) => input.runtime.invokeIwaHelper(context, {
+      walletId: context.walletId,
+      networkId: context.networkId,
+      poolAddress: context.poolAddress,
+      accountAddress: context.accountAddress,
+      helperAddress: input.helperAddress,
+      build: input.build,
+    }));
+  }
+
   /** Signs a bounded proof only after validating its wallet, network, and account context. */
   signStarknetAuthorityProof(
     session: WalletVaultSession,
@@ -575,7 +793,7 @@ export class WalletVault {
       if (authority.descriptor.networkId !== input.networkId || authority.descriptor.accountAddress !== input.accountAddress) fail();
       if (authority.descriptor.deploymentState === "deployed") return { ...authority.descriptor };
       const updated = withStarknetDeploymentState(authority, "deployed");
-      const next = cloneAuthorities(warm.authorities).map((candidate) => isSyntheticVaultAuthority(candidate) ? candidate : updated);
+      const next = cloneAuthorities(warm.authorities).map((candidate) => isStarknetVaultAuthority(candidate) ? updated : candidate);
       await this.rewriteAuthorities(warm, session, input.password, next);
       return { ...updated.descriptor };
     } finally {
@@ -800,6 +1018,105 @@ export class WalletVault {
       next = [];
       return { ...descriptor };
     } finally {
+      wipe(created?.privateKey);
+      wipeAuthorities(next);
+    }
+  }
+
+  private async withStrk20Runtime<T>(
+    warm: WarmState,
+    session: WalletVaultSession,
+    epoch: number,
+    provider: RpcProvider,
+    operation: (context: Parameters<IwaStrk20PrivacyRuntime["ensureRegistered"]>[0]) => Promise<T>,
+  ): Promise<T> {
+    const account = singleStarknetAuthority(warm.authorities);
+    const viewing = singleStrk20ViewingAuthority(warm.authorities);
+    if (account === null || viewing === null) {
+      wipe(account?.privateKey);
+      wipe(viewing?.privateKey);
+      fail();
+    }
+    let signer: Uint8Array | undefined;
+    try {
+      this.assertLiveWarm(warm, session, epoch);
+      if (
+        account.descriptor.deploymentState !== "deployed" ||
+        account.descriptor.networkId !== viewing.descriptor.networkId ||
+        account.descriptor.accountAddress !== viewing.descriptor.accountAddress
+      ) {
+        fail();
+      }
+      const providerNetwork = await provider.getChainId();
+      this.assertLiveWarm(warm, session, epoch);
+      if (providerNetwork !== account.descriptor.networkId) fail();
+      signer = new Uint8Array(account.privateKey);
+      const embeddedSigner = new Signer(signer);
+      const result = await operation({
+        walletId: warm.walletId,
+        networkId: account.descriptor.networkId,
+        poolAddress: viewing.descriptor.poolAddress,
+        accountAddress: account.descriptor.accountAddress,
+        account: { address: account.descriptor.accountAddress, signer: embeddedSigner },
+        // The privacy SDK requires bigint here. JavaScript BigInts are immutable
+        // and cannot be zeroized; its scope is limited to this operation.
+        viewingKey: bytesToBigInt(viewing.privateKey),
+      });
+      this.assertLiveWarm(warm, session, epoch);
+      return result;
+    } finally {
+      wipe(signer);
+      wipe(account.privateKey);
+      wipe(viewing.privateKey);
+    }
+  }
+
+  private async provisionStrk20ViewingAuthorityOnce(
+    session: WalletVaultSession,
+    input: ProvisionStrk20ViewingAuthorityInput,
+  ): Promise<Strk20ViewingDescriptor> {
+    const warm = this.requireWarm(session, input.walletId);
+    const account = singleStarknetAuthority(warm.authorities);
+    if (account === null) fail();
+    let created: Strk20ViewingVaultAuthority | undefined;
+    let next: VaultAuthority[] = [];
+    try {
+      if (
+        account.descriptor.deploymentState !== "deployed" ||
+        account.descriptor.networkId !== input.networkId ||
+        account.descriptor.accountAddress !== input.accountAddress
+      ) {
+        fail();
+      }
+      const existing = singleStrk20ViewingAuthority(warm.authorities);
+      if (existing !== null) {
+        try {
+          const descriptor = existing.descriptor;
+          if (
+            descriptor.networkId !== input.networkId ||
+            descriptor.poolAddress !== canonicalStarknetFelt(input.poolAddress) ||
+            descriptor.accountAddress !== input.accountAddress
+          ) {
+            fail();
+          }
+          return { ...descriptor };
+        } finally {
+          wipe(existing.privateKey);
+        }
+      }
+      created = createStrk20ViewingAuthority({
+        networkId: input.networkId,
+        poolAddress: input.poolAddress,
+        accountAddress: input.accountAddress,
+        descriptorVersion: 1,
+      });
+      next = [...cloneAuthorities(warm.authorities), validateStrk20ViewingAuthority(created)];
+      await this.rewriteAuthorities(warm, session, input.password, next);
+      const descriptor = created.descriptor;
+      next = [];
+      return { ...descriptor };
+    } finally {
+      wipe(account.privateKey);
       wipe(created?.privateKey);
       wipeAuthorities(next);
     }

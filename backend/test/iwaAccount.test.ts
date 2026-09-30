@@ -234,6 +234,16 @@ function recordStarknetAuthority(cookie: string, token: string, walletId: string
     .send({ walletId, descriptor });
 }
 
+/** Records public-only completion after a local STRK20 privacy proof. */
+function recordStrk20PrivateState(cookie: string, token: string, walletId: string) {
+  return request(app)
+    .post("/api/onboarding/wallet/strk20/private-state-ready")
+    .set("Origin", ORIGIN)
+    .set("Cookie", cookie)
+    .set(IWA_CSRF_HEADER, token)
+    .send({ walletId });
+}
+
 function signEs256Jwt(
   payload: Record<string, unknown>,
   privateKey: KeyObject,
@@ -954,6 +964,19 @@ describe("onboarding foundation", () => {
       .expect(200);
     expect(deployment.body.onboarding).toEqual({ status: "incomplete", step: "chainProvisioning" });
     expect(deployment.body.wallet).toMatchObject({ chainProvisioningStage: "starknetDeployment", starknet: PUBLIC_STARKNET_DESCRIPTOR });
+
+    await request(app)
+      .post("/api/onboarding/wallet/strk20/private-state-ready")
+      .set("Origin", ORIGIN)
+      .set("Cookie", cookie)
+      .set(IWA_CSRF_HEADER, token)
+      .send({ walletId, viewingKey: "never-send-a-viewing-key" })
+      .expect(400);
+    const strk20 = await recordStrk20PrivateState(cookie, token, walletId).expect(200);
+    expect(strk20.body.onboarding).toEqual({ status: "incomplete", step: "chainProvisioning" });
+    expect(strk20.body.wallet).toMatchObject({ chainProvisioningStage: "strk20", starknet: PUBLIC_STARKNET_DESCRIPTOR });
+    expect(JSON.stringify(strk20.body)).not.toMatch(/private_key|privatekey|password|pin|ciphertext|prf|viewing_key|settlement|note|balance/i);
+    await recordStrk20PrivateState(cookie, token, walletId).expect(200);
   });
 });
 
@@ -1118,6 +1141,31 @@ describe("schema", () => {
       "vault_root",
       "viewing_key",
       "settlement",
+    ]) {
+      expect(sql).not.toContain(banned);
+    }
+  });
+
+  it("adds only a public STRK20 completion substage in migration 011", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const sql = readFileSync(resolve(here, "../migrations/011_add_iwa_strk20_provisioning_stage.sql"), "utf8")
+      .replace(/--.*$/gm, "")
+      .toLowerCase();
+    expect(sql).toContain("chain_provisioning_stage");
+    expect(sql).toContain("'strk20'");
+    for (const banned of [
+      "private_key",
+      "privatekey",
+      "password_hash",
+      "pin_hash",
+      "recovery_key",
+      "recovery_secret",
+      "ciphertext",
+      "vault_root",
+      "viewing_key",
+      "settlement",
+      "note",
+      "balance",
     ]) {
       expect(sql).not.toContain(banned);
     }

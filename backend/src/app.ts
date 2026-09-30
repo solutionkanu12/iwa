@@ -1209,6 +1209,41 @@ export function createApp(options: AppOptions): Express {
     }
   });
 
+  /**
+   * Records only a non-secret completion marker after the browser has proved
+   * the local STRK20 path. This route never accepts a view authority, private
+   * state, proof, or vault data, and the session alone cannot perform that
+   * proof.
+   */
+  app.post("/api/onboarding/wallet/strk20/private-state-ready", async (req, res, next) => {
+    if (!mutate(req, res)) return;
+    try {
+      if (!requireOrigin(req, res)) return;
+      const loaded = await loadAccountSession(req);
+      if (!loaded.ok) return res.status(401).json({ error: "session_invalid", message: "Please sign in to Iwa again." });
+      if (!requireCsrf(req, res)) return;
+      if (loaded.user.status === "suspended") {
+        return res.status(403).json({ error: "account_suspended", message: "This Iwa account is suspended. Your on-chain funds are untouched." });
+      }
+      const body = req.body;
+      if (
+        body === null ||
+        typeof body !== "object" ||
+        Array.isArray(body) ||
+        Object.keys(body).length !== 1 ||
+        typeof (body as { walletId?: unknown }).walletId !== "string" ||
+        !isUuid((body as { walletId: string }).walletId)
+      ) {
+        return res.status(400).json({ error: "invalid_request", message: "That private-state completion request could not be verified." });
+      }
+      const wallet = await store.recordIwaWalletStrk20PrivateState(loaded.user.id, (body as { walletId: string }).walletId);
+      if (wallet === null) return res.status(409).json({ error: "invalid_onboarding_transition", message: "That private-state completion is not available yet." });
+      res.json({ onboarding: onboardingProgress(loaded.user.onboardingStatus, loaded.user.onboardingStep), wallet: publicWalletSetup(wallet) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   // --- drafts ---
 
   app.post("/api/drafts", async (req, res, next) => {

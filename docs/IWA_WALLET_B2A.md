@@ -84,6 +84,9 @@ faucet, deploys the account, verifies valid and invalid signatures, destroys
 the local vault, recovers it, and verifies that the restored signer controls
 the same account.
 
-Until a temporary branch containing the harness is explicitly pushed and the
-manual run succeeds, this is prepared test infrastructure rather than a
-completed devnet deployment claim.
+The approved disposable CI devnet proof has passed. It deployed a newly
+generated Iwa Starknet authority, verified the computed and deployed address,
+rejected a wrong signer and changed payload, exercised interrupted/resumed
+provisioning, and recovered the same authority into the same deployed account
+before rotating the recovery generation. This is test-only evidence. It does
+not select a production class hash or enable a production deployment path.

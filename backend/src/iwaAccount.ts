@@ -51,7 +51,11 @@ export type OnboardingTransitionKind = "start" | "advance" | "retry";
  */
 export type IwaWalletSetupStatus = "reserved" | "vaultProvisioned";
 export type IwaWalletRecoveryStatus = "notConfigured" | "verified";
-export type IwaWalletChainProvisioningStage = "notStarted" | "starknetAuthority" | "starknetDeployment";
+export type IwaWalletChainProvisioningStage =
+  | "notStarted"
+  | "starknetAuthority"
+  | "starknetDeployment"
+  | "strk20";
 
 /** Public Starknet facts only. None of these values can sign, unlock, or recover a wallet. */
 export interface IwaWalletStarknetDescriptor {

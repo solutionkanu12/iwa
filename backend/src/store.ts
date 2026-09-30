@@ -219,6 +219,11 @@ export interface Store {
     userId: string,
     walletId: string,
   ): Promise<IwaWalletSetup | null>;
+  /** Records only the public STRK20 completion marker after an in-device proof. */
+  recordIwaWalletStrk20PrivateState(
+    userId: string,
+    walletId: string,
+  ): Promise<IwaWalletSetup | null>;
   createAccountSession(
     userId: string,
     tokenHash: string,
@@ -727,6 +732,31 @@ export class MemoryStore implements Store {
       return null;
     }
     setup.chainProvisioningStage = "starknetDeployment";
+    setup.updatedAt = new Date().toISOString();
+    return structuredClone(setup);
+  }
+
+  async recordIwaWalletStrk20PrivateState(
+    userId: string,
+    walletId: string,
+  ): Promise<IwaWalletSetup | null> {
+    const user = this.users.get(userId);
+    const setup = this.walletSetups.get(userId);
+    if (
+      user === undefined ||
+      setup === undefined ||
+      user.onboardingStatus !== "incomplete" ||
+      user.onboardingStep !== "chainProvisioning" ||
+      setup.walletId !== walletId ||
+      setup.status !== "vaultProvisioned" ||
+      setup.recoveryStatus !== "verified" ||
+      setup.starknet === null
+    ) {
+      return null;
+    }
+    if (setup.chainProvisioningStage === "strk20") return structuredClone(setup);
+    if (setup.chainProvisioningStage !== "starknetDeployment") return null;
+    setup.chainProvisioningStage = "strk20";
     setup.updatedAt = new Date().toISOString();
     return structuredClone(setup);
   }

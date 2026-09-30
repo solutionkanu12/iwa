@@ -4,8 +4,8 @@ What works today, what does not, and where the line between them sits. Written
 against verified behaviour: contract reads, deployed code and passing tests, not
 intent.
 
-Last reviewed against the working tree on 2026-09-27 during the local Iwa
-Wallet B1-C portable recovery pass.
+Last reviewed against the working tree on 2026-09-30 during local Iwa Wallet
+B2-B STRK20 viewing-authority work.
 
 ## Iwa Account auth and durable sessions (production verified)
 
@@ -209,12 +209,12 @@ Next boundary: B2 real chain-authority provisioning only after explicit
 approval. The full internal security/audit campaign remains a later complete-
 wallet gate.
 
-### B2-A Starknet authority and isolated deployment seam (local-only, remote proof pending)
+### B2-A Starknet authority and isolated deployment proof (approved PASS)
 
-B2-A now has a local implementation for the first real chain authority, while
-preserving the one Iwa Wallet abstraction and the chain-neutral vault record
-model. It has not been pushed, deployed to a public network, or used with a
-real user or fund.
+B2-A provides the first real chain authority while preserving the one Iwa
+Wallet abstraction and the chain-neutral vault record model. The approved
+disposable CI proof deployed only to an isolated devnet. No public network,
+real user, or real fund was used.
 
 - The vault creates a dedicated Starknet scalar using browser CSPRNG rejection
   sampling against the Stark curve order. It is immediately encrypted as a
@@ -243,12 +243,10 @@ real user or fund.
   logical wallet ID. Local tests prove the recovered descriptor and signing
   authority match; the actual newly generated account deployment/signature proof
   is reserved for the disposable devnet harness.
-- `.github/workflows/iwa-starknet-wallet-b2a.yml` is a manually dispatched,
-  25-minute disposable Ubuntu devnet harness. It pins B0's Starknet Devnet
-  `0.8.0-rc.3`, Node `20.20.2`, dynamically checks a fresh devnet account ABI,
-  uses runtime-only test funding and authority, retains no artifact/cache/log
-  containing secrets, and verifies deploy, signing, recovery and resume. It is
-  deliberately unpushed and unrun under the current no-push instruction.
+- The disposable Ubuntu devnet harness pinned B0's Starknet Devnet
+  `0.8.0-rc.3` and Node `20.20.2`, dynamically checked a fresh devnet account
+  ABI, used runtime-only test funding and authority, retained no secret
+  artifact/cache, and passed deployment, signing, recovery, and resume checks.
 
 Local verification: frontend full suite **77 passed files / 799 passed tests**
 with **1 devnet-only file / 2 tests skipped**; wallet-vault suite **20 passed
@@ -259,11 +257,44 @@ TypeScript check; frontend production build; and `git diff --check` passed. The
 build retained only existing third-party
 externalization, annotation, `eval`, and chunk-size warnings.
 
-**B2-A is not yet a deployment PASS.** The remaining required proof is the
-temporary GitHub Actions/devnet run. It cannot be run while the harness must not
-be pushed. There is no production account class/hash, provider, relayer,
-paymaster, mainnet deployment, STRK20 viewing authority, settlement authority,
-EVM authority, or Solana authority.
+**B2-A is approved PASS for isolated devnet evidence.** There is no production
+account class/hash, provider, relayer, paymaster, mainnet deployment,
+settlement authority, EVM authority, or Solana authority.
+
+### B2-B STRK20 viewing authority and private-state boundary (local-only, remote proof pending)
+
+B2-B adds a separate encrypted `strk20/viewing` authority to the deployed B2-A
+Starknet account. It is generated from Web Crypto CSPRNG in the exact
+SDK-supported scalar range and is unrelated to the spending scalar, Iwa
+identity, password, PIN, passkey, or recovery code. Its public descriptor binds
+network, pool, account, version, and registration state; the scalar remains in
+the authenticated vault manifest and encrypted portable recovery package.
+
+- The direct runtime uses the B0.2-compatible Privacy SDK shape
+  `{ address, signer }`, never `WalletAccountV6` or an external wallet. It
+  carries the viewing scalar only into protocol-local SDK/discovery/prover
+  boundaries, never the Iwa backend, browser storage, URL, telemetry, or React
+  state.
+- Registration is idempotent and marks the encrypted descriptor `registered`
+  only after the local protocol operation succeeds. Discovery returns a
+  minimized summary, while raw notes remain inside the adapter. The recovered
+  wallet retains the identical viewing authority and its registration state.
+- New **unapplied** migration
+  `011_add_iwa_strk20_provisioning_stage.sql` permits only the existing generic
+  `chainProvisioning` substage `strk20`. It adds no columns. The protected
+  public-only endpoint accepts exactly `{ walletId }` and cannot receive any
+  authority, proof, private state, vault data, recovery material, password,
+  PIN, or passkey output.
+- The helper path is deliberately absent from the React lifecycle and UI. Its
+  low-level test boundary binds output to the declared helper and
+  `privacy_invoke`; B2-C must not replace that with a generic call surface.
+
+Focused local tests use fixtures and synthetic private state. The real
+SDK/prover/discovery/private-invoke proof remains a disposable GitHub
+Actions/devnet prerequisite because the exact privacy package registry denies
+unauthenticated local package reads. No temporary B2-B branch has been pushed.
+See `docs/IWA_WALLET_B2B.md` for the exact local boundary and remote-proof
+requirements.
 
 ## Zama Prize Savings bounty (active work)
 

@@ -11,9 +11,12 @@ import {
 } from "../lib/walletVault/recoveryPackage";
 import {
   WalletVault,
+  type DiscoverStrk20PrivateStateInput,
   type DeployStarknetAccountInput,
   type MarkStarknetAccountDeployedInput,
+  type ProvisionStrk20ViewingAuthorityInput,
   type ProvisionStarknetAuthorityInput,
+  type RegisterStrk20ViewingAuthorityInput,
   type SignStarknetAuthorityProofInput,
   type StarknetAccountDeploymentResult,
   type VaultTimeout,
@@ -21,6 +24,8 @@ import {
   type WalletVaultSession,
 } from "../lib/walletVault/walletVault";
 import type { StarknetAccountDescriptor, StarknetAuthoritySignature } from "../lib/walletVault/starknetAuthority";
+import type { Strk20ViewingDescriptor } from "../lib/walletVault/strk20ViewingAuthority";
+import type { Strk20PrivateStateSummary } from "../lib/walletVault/strk20PrivacyRuntime";
 
 /** Browser passkey boundary needed only while creating the dedicated wallet credential. */
 export interface WalletPasskeyEnrollmentAuthority extends WalletPasskeyAuthority {
@@ -87,6 +92,9 @@ export type ProvisionLocalStarknetAuthorityInput = ProvisionStarknetAuthorityInp
 export type MarkLocalStarknetAccountDeployedInput = MarkStarknetAccountDeployedInput;
 export type SignLocalStarknetAuthorityProofInput = SignStarknetAuthorityProofInput;
 export type DeployLocalStarknetAccountInput = DeployStarknetAccountInput;
+export type ProvisionLocalStrk20ViewingAuthorityInput = ProvisionStrk20ViewingAuthorityInput;
+export type RegisterLocalStrk20ViewingAuthorityInput = RegisterStrk20ViewingAuthorityInput;
+export type DiscoverLocalStrk20PrivateStateInput = DiscoverStrk20PrivateStateInput;
 
 function fail(code: VaultError["code"] = "authentication_failed"): never {
   throw new VaultError(code);
@@ -269,6 +277,34 @@ export class IwaWalletVaultLifecycle {
     const session = warmSessionForLifecycle.get(this);
     if (this.vault === null || session === undefined || this.walletId !== input.walletId) fail();
     return this.vault.deployStarknetAccount(session, input);
+  }
+
+  /** Adds the independent encrypted STRK20 viewing authority without exposing its scalar. */
+  async provisionStrk20ViewingAuthority(input: ProvisionLocalStrk20ViewingAuthorityInput): Promise<Strk20ViewingDescriptor> {
+    const session = warmSessionForLifecycle.get(this);
+    if (this.vault === null || session === undefined || this.walletId !== input.walletId) fail();
+    return this.vault.provisionStrk20ViewingAuthority(session, input);
+  }
+
+  /** Public setup facts only. The viewing scalar remains module-private. */
+  strk20ViewingAuthorityDescriptor(walletId: string): Strk20ViewingDescriptor | null {
+    const session = warmSessionForLifecycle.get(this);
+    if (this.vault === null || session === undefined || this.walletId !== walletId) fail();
+    return this.vault.strk20ViewingAuthorityDescriptor(session, walletId);
+  }
+
+  /** Registers only the existing local viewing authority through the embedded signer path. */
+  async registerStrk20ViewingAuthority(input: RegisterLocalStrk20ViewingAuthorityInput): Promise<Strk20ViewingDescriptor> {
+    const session = warmSessionForLifecycle.get(this);
+    if (this.vault === null || session === undefined || this.walletId !== input.walletId) fail();
+    return this.vault.registerStrk20ViewingAuthority(session, input);
+  }
+
+  /** Returns only a minimized private-state summary. Raw notes never leave the vault adapter. */
+  async discoverStrk20PrivateState(input: DiscoverLocalStrk20PrivateStateInput): Promise<Strk20PrivateStateSummary> {
+    const session = warmSessionForLifecycle.get(this);
+    if (this.vault === null || session === undefined || this.walletId !== input.walletId) fail();
+    return this.vault.discoverStrk20PrivateState(session, input);
   }
 
   /**

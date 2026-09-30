@@ -13,13 +13,16 @@ import { currentBrowserWalletPasskey } from "../lib/walletVault/passkey";
 import { IndexedDbVaultStore } from "../lib/walletVault/vaultStore";
 import {
   IwaWalletVaultLifecycle,
+  type DiscoverLocalStrk20PrivateStateInput,
   type ExportRecoveryPackageInput,
   type DeployLocalStarknetAccountInput,
   type MarkLocalStarknetAccountDeployedInput,
+  type ProvisionLocalStrk20ViewingAuthorityInput,
   type ProvisionLocalStarknetAuthorityInput,
   type ProvisionLocalVaultInput,
   type PublicWalletVaultState,
   type RecoverLocalVaultInput,
+  type RegisterLocalStrk20ViewingAuthorityInput,
   type SignLocalStarknetAuthorityProofInput,
   type UnlockLocalVaultInput,
   type VerifyRecoveryPackageInput,
@@ -27,6 +30,8 @@ import {
 import type { RecoveryPackageV1, RecoveryPackageVerification } from "../lib/walletVault/recoveryPackage";
 import type { StarknetAccountDescriptor, StarknetAuthoritySignature } from "../lib/walletVault/starknetAuthority";
 import type { StarknetAccountDeploymentResult } from "../lib/walletVault/walletVault";
+import type { Strk20ViewingDescriptor } from "../lib/walletVault/strk20ViewingAuthority";
+import type { Strk20PrivateStateSummary } from "../lib/walletVault/strk20PrivacyRuntime";
 import { useIwaAuth } from "./IwaAuthProvider";
 
 export interface IwaWalletVaultState {
@@ -42,6 +47,10 @@ export interface IwaWalletVaultState {
   signStarknetAuthorityProof(input: SignLocalStarknetAuthorityProofInput): StarknetAuthoritySignature;
   markStarknetAccountDeployed(input: MarkLocalStarknetAccountDeployedInput): Promise<StarknetAccountDescriptor>;
   deployStarknetAccount(input: DeployLocalStarknetAccountInput): Promise<StarknetAccountDeploymentResult>;
+  provisionStrk20ViewingAuthority(input: ProvisionLocalStrk20ViewingAuthorityInput): Promise<Strk20ViewingDescriptor>;
+  strk20ViewingAuthorityDescriptor(walletId: string): Strk20ViewingDescriptor | null;
+  registerStrk20ViewingAuthority(input: RegisterLocalStrk20ViewingAuthorityInput): Promise<Strk20ViewingDescriptor>;
+  discoverStrk20PrivateState(input: DiscoverLocalStrk20PrivateStateInput): Promise<Strk20PrivateStateSummary>;
   lock(): void;
 }
 
@@ -58,9 +67,10 @@ function productionLifecycle(): IwaWalletVaultLifecycle {
 }
 
 /**
- * Owns the B1-B empty local vault container. It intentionally sits inside the
- * Iwa account provider only to receive lock notifications; account identity
- * neither unlocks the vault nor receives its passkey or decrypted state.
+ * Owns the local vault lifecycle. It intentionally sits inside the Iwa account
+ * provider only to receive lock notifications; account identity neither
+ * unlocks the vault nor receives its passkey, viewing authority, signer, or
+ * decrypted state.
  */
 export function IwaWalletVaultProvider({ children }: { children: ReactNode }) {
   const auth = useIwaAuth();
@@ -134,6 +144,22 @@ export function IwaWalletVaultProvider({ children }: { children: ReactNode }) {
     (input: DeployLocalStarknetAccountInput) => lifecycle.deployStarknetAccount(input),
     [lifecycle],
   );
+  const provisionStrk20ViewingAuthority = useCallback(
+    (input: ProvisionLocalStrk20ViewingAuthorityInput) => lifecycle.provisionStrk20ViewingAuthority(input),
+    [lifecycle],
+  );
+  const strk20ViewingAuthorityDescriptor = useCallback(
+    (walletId: string) => lifecycle.strk20ViewingAuthorityDescriptor(walletId),
+    [lifecycle],
+  );
+  const registerStrk20ViewingAuthority = useCallback(
+    (input: RegisterLocalStrk20ViewingAuthorityInput) => lifecycle.registerStrk20ViewingAuthority(input),
+    [lifecycle],
+  );
+  const discoverStrk20PrivateState = useCallback(
+    (input: DiscoverLocalStrk20PrivateStateInput) => lifecycle.discoverStrk20PrivateState(input),
+    [lifecycle],
+  );
 
   useEffect(() => auth.registerWalletLock(lock), [auth, lock]);
 
@@ -155,8 +181,8 @@ export function IwaWalletVaultProvider({ children }: { children: ReactNode }) {
   }, [auth.phase, lock]);
 
   const value = useMemo<IwaWalletVaultState>(
-    () => ({ view, inspect, provision, unlock, exportRecovery, verifyRecovery, recover, provisionStarknetAuthority, starknetAccountDescriptor, signStarknetAuthorityProof, markStarknetAccountDeployed, deployStarknetAccount, lock }),
-    [view, inspect, provision, unlock, exportRecovery, verifyRecovery, recover, provisionStarknetAuthority, starknetAccountDescriptor, signStarknetAuthorityProof, markStarknetAccountDeployed, deployStarknetAccount, lock],
+    () => ({ view, inspect, provision, unlock, exportRecovery, verifyRecovery, recover, provisionStarknetAuthority, starknetAccountDescriptor, signStarknetAuthorityProof, markStarknetAccountDeployed, deployStarknetAccount, provisionStrk20ViewingAuthority, strk20ViewingAuthorityDescriptor, registerStrk20ViewingAuthority, discoverStrk20PrivateState, lock }),
+    [view, inspect, provision, unlock, exportRecovery, verifyRecovery, recover, provisionStarknetAuthority, starknetAccountDescriptor, signStarknetAuthorityProof, markStarknetAccountDeployed, deployStarknetAccount, provisionStrk20ViewingAuthority, strk20ViewingAuthorityDescriptor, registerStrk20ViewingAuthority, discoverStrk20PrivateState, lock],
   );
   return <IwaWalletVaultContext.Provider value={value}>{children}</IwaWalletVaultContext.Provider>;
 }

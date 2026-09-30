@@ -1136,6 +1136,61 @@ export class PgStore implements Store {
     }
   }
 
+  async recordIwaWalletStrk20PrivateState(userId: string, walletId: string): Promise<IwaWalletSetup | null> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const user = await client.query<{ onboarding_status: OnboardingStatus; onboarding_step: OnboardingStep }>(
+        "SELECT onboarding_status, onboarding_step FROM users WHERE id = $1 FOR UPDATE",
+        [userId],
+      );
+      const setup = await client.query<IwaWalletSetupRow>(
+        `SELECT user_id, wallet_id, setup_status, recovery_status, recovery_generation, chain_provisioning_stage,
+                starknet_network_id, starknet_account_address, starknet_public_key, starknet_account_class_id,
+                starknet_account_class_hash, starknet_descriptor_version, created_at, updated_at
+           FROM iwa_wallet_setups WHERE user_id = $1 FOR UPDATE`,
+        [userId],
+      );
+      const current = setup.rowCount === 0 ? null : toIwaWalletSetup(setup.rows[0]!);
+      if (
+        user.rowCount === 0 ||
+        user.rows[0]?.onboarding_status !== "incomplete" ||
+        user.rows[0]?.onboarding_step !== "chainProvisioning" ||
+        current === null ||
+        current.walletId !== walletId ||
+        current.status !== "vaultProvisioned" ||
+        current.recoveryStatus !== "verified" ||
+        current.starknet === null
+      ) {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      if (current.chainProvisioningStage === "strk20") {
+        await client.query("COMMIT");
+        return current;
+      }
+      if (current.chainProvisioningStage !== "starknetDeployment") {
+        await client.query("ROLLBACK");
+        return null;
+      }
+      const updated = await client.query<IwaWalletSetupRow>(
+        `UPDATE iwa_wallet_setups SET chain_provisioning_stage = 'strk20', updated_at = now()
+          WHERE user_id = $1
+          RETURNING user_id, wallet_id, setup_status, recovery_status, recovery_generation, chain_provisioning_stage,
+                    starknet_network_id, starknet_account_address, starknet_public_key, starknet_account_class_id,
+                    starknet_account_class_hash, starknet_descriptor_version, created_at, updated_at`,
+        [userId],
+      );
+      await client.query("COMMIT");
+      return toIwaWalletSetup(updated.rows[0]!);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async createAccountSession(
     userId: string,
     tokenHash: string,

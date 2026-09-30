@@ -100,7 +100,7 @@ export interface WalletSetupView {
   status: "reserved" | "vaultProvisioned";
   recoveryStatus: "notConfigured" | "verified";
   recoveryGeneration: number | null;
-  chainProvisioningStage: "notStarted" | "starknetAuthority" | "starknetDeployment";
+  chainProvisioningStage: "notStarted" | "starknetAuthority" | "starknetDeployment" | "strk20";
   starknet: WalletStarknetDescriptorView | null;
 }
 
@@ -465,6 +465,14 @@ export const iwaAccount = {
 
   async markStarknetDeploymentAttempt(walletId: string): Promise<WalletProvisioningView> {
     return call("/api/onboarding/wallet/starknet/deployment-attempt", {
+      method: "POST",
+      body: JSON.stringify({ walletId }),
+    });
+  },
+
+  /** Public-only state marker; local wallet code proves STRK20 first. */
+  async markStrk20PrivateStateReady(walletId: string): Promise<WalletProvisioningView> {
+    return call("/api/onboarding/wallet/strk20/private-state-ready", {
       method: "POST",
       body: JSON.stringify({ walletId }),
     });
