@@ -11,6 +11,7 @@ const DEVNET_URL = process.env.IWA_B2A_DEVNET_URL;
 const describeDevnet = DEVNET_URL === undefined ? describe.skip : describe;
 const walletId = "00000000-0000-4000-8000-000000000222";
 const password = "Iwa isolated devnet Starknet wallet password";
+const SRC6_VALIDATED = 0x56414c4944n; // ASCII `VALID`, returned by the pinned OpenZeppelin account.
 /** Exact decimal amount from the pinned devnet's own V3 deployment test. */
 const DEVNET_DEPLOYMENT_FUNDING_FRI = "1000000000000000000000";
 const passkey: WalletPasskeyMetadata = {
@@ -224,17 +225,19 @@ describeDevnet("B2-A isolated Starknet account deployment", () => {
         accountAddress: descriptor.accountAddress,
         proofHash,
       });
-      await expect(provider.callContract({
+      const validResult = await provider.callContract({
         contractAddress: descriptor.accountAddress,
         entrypoint: "is_valid_signature",
         calldata: [proofHash, "2", signature.r, signature.s],
-      })).resolves.toHaveLength(1);
+      });
+      expect(BigInt(validResult[0]!)).toBe(SRC6_VALIDATED);
       phase = "reject-wrong-signer-and-payload";
-      await expect(provider.callContract({
+      const mutatedPayloadResult = await provider.callContract({
         contractAddress: descriptor.accountAddress,
         entrypoint: "is_valid_signature",
         calldata: ["0x4568", "2", signature.r, signature.s],
-      })).rejects.toThrow();
+      });
+      expect(BigInt(mutatedPayloadResult[0]!)).toBe(0n);
       const substitute = createStarknetAuthority({
         networkId,
         accountClassId: "devnet-predeployed-account-verified",
@@ -243,11 +246,12 @@ describeDevnet("B2-A isolated Starknet account deployment", () => {
       });
       try {
         const substituteSignature = ec.starkCurve.sign(proofHash, scalarHex(substitute.privateKey));
-        await expect(provider.callContract({
+        const substituteResult = await provider.callContract({
           contractAddress: descriptor.accountAddress,
           entrypoint: "is_valid_signature",
           calldata: [proofHash, "2", `0x${substituteSignature.r.toString(16)}`, `0x${substituteSignature.s.toString(16)}`],
-        })).rejects.toThrow();
+        });
+        expect(BigInt(substituteResult[0]!)).toBe(0n);
       } finally {
         substitute.privateKey.fill(0);
       }
@@ -283,11 +287,12 @@ describeDevnet("B2-A isolated Starknet account deployment", () => {
         if (authority === undefined || isSyntheticVaultAuthority(authority)) throw new Error("restored recovery authority was unavailable");
         expect(restoredDescriptor).toEqual({ ...descriptor, deploymentState: "deployed" });
         expect(ec.starkCurve.verify(compactSignature(restoredSignature), proofHash, ec.starkCurve.getPublicKey(scalarHex(authority.privateKey)))).toBe(true);
-        await expect(provider.callContract({
+        const restoredResult = await provider.callContract({
           contractAddress: descriptor.accountAddress,
           entrypoint: "is_valid_signature",
           calldata: [proofHash, "2", restoredSignature.r, restoredSignature.s],
-        })).resolves.toHaveLength(1);
+        });
+        expect(BigInt(restoredResult[0]!)).toBe(SRC6_VALIDATED);
       } finally {
         payload.rootSecret.fill(0);
         wipeVaultAuthorities(payload.authorities);
