@@ -11,7 +11,8 @@ const DEVNET_URL = process.env.IWA_B2A_DEVNET_URL;
 const describeDevnet = DEVNET_URL === undefined ? describe.skip : describe;
 const walletId = "00000000-0000-4000-8000-000000000222";
 const password = "Iwa isolated devnet Starknet wallet password";
-const DEVNET_DEPLOYMENT_FUNDING_FRI = 1_000_000_000_000_000;
+/** Exact decimal amount from the pinned devnet's own V3 deployment test. */
+const DEVNET_DEPLOYMENT_FUNDING_FRI = "1000000000000000000000";
 const passkey: WalletPasskeyMetadata = {
   credentialId: "iwa-b2a-devnet-wallet-passkey",
   rpId: "wallet.example.test",
@@ -44,12 +45,9 @@ async function mintTestFunding(address: string, rpcUrl = DEVNET_URL!): Promise<v
   const response = await fetch(rpcUrl, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "devnet_mint",
-      params: { address, amount: DEVNET_DEPLOYMENT_FUNDING_FRI, unit: "FRI" },
-    }),
+    // JSON numbers above Number.MAX_SAFE_INTEGER must stay decimal literals.
+    // The pinned devnet accepts this exact BigUint request shape.
+    body: `{"jsonrpc":"2.0","id":1,"method":"devnet_mint","params":{"address":${JSON.stringify(address)},"amount":${DEVNET_DEPLOYMENT_FUNDING_FRI},"unit":"FRI"}}`,
   });
   const payload = (await response.json()) as { result?: unknown; error?: unknown };
   if (!response.ok || payload.error !== undefined || payload.result === undefined) {
@@ -137,13 +135,15 @@ describe("B2-A devnet account ABI gate", () => {
 });
 
 describe("B2-A devnet funding request", () => {
-  it("sends a JavaScript-safe numeric FRI devnet_mint JSON-RPC request", async () => {
+  it("sends the exact pinned-devnet FRI amount as a JSON-RPC integer", async () => {
     const originalFetch = globalThis.fetch;
     let requestUrl: string | undefined;
+    let requestBody: string | undefined;
     let request: unknown;
     globalThis.fetch = (async (input, init) => {
       requestUrl = String(input);
-      request = JSON.parse(String(init?.body));
+      requestBody = String(init?.body);
+      request = JSON.parse(requestBody);
       return new Response('{"jsonrpc":"2.0","id":1,"result":{}}', { status: 200 });
     }) as typeof fetch;
     try {
@@ -152,13 +152,13 @@ describe("B2-A devnet funding request", () => {
       globalThis.fetch = originalFetch;
     }
     expect(requestUrl).toBe("http://127.0.0.1:5050/rpc");
-    expect(request).toEqual({
+    expect(requestBody).toContain('"amount":1000000000000000000000');
+    expect(request).toMatchObject({
       jsonrpc: "2.0",
       id: 1,
       method: "devnet_mint",
       params: {
         address: "0x123",
-        amount: DEVNET_DEPLOYMENT_FUNDING_FRI,
         unit: "FRI",
       },
     });
