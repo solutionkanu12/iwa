@@ -116,7 +116,7 @@ jobs:
               # require authentication even on the temporary branch.
               sanitized="$(printf '%s' "$output" | sed -E \
                 -e 's/((private|viewing|recovery)[_-]?(key|seed|secret)[[:space:]]*[:=][[:space:]]*)[^[:space:],}]+/\1[REDACTED]/Ig' \
-                -e 's/(0x[0-9a-fA-F]{64,})/[REDACTED_HEX]/g' | tail -c 3000)"
+                -e 's/(0x[0-9a-fA-F]{64,})/[REDACTED_HEX]/g' | tail -c 3000 | tr '\n\r' '  ')"
               echo "::error title=B2-B Iwa Cairo artifact build failed::$sanitized"
               return "$status"
             fi
