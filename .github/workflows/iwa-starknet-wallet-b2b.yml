@@ -23,6 +23,9 @@ jobs:
     env:
       CARGO_INCREMENTAL: "0"
       CARGO_PROFILE_DEV_DEBUG: "0"
+      # Scarb otherwise defaults to the runner image cache location. Keep each
+      # disposable proof isolated from any pre-existing Git checkout state.
+      SCARB_CACHE: ${{ runner.temp }}/iwa-b2b-scarb-cache
       RUST_VERSION: 1.91.0
       NODE_VERSION: 20.20.2
       SCARB_VERSION: 2.18.0
@@ -202,4 +205,5 @@ jobs:
       - name: Record disposable cleanup boundary
         if: always()
         run: |
+          rm -rf -- "$SCARB_CACHE"
           echo '- Cleanup: no artifact upload, package cache, generated authority, recovery code, or build directory is retained.' >> "$GITHUB_STEP_SUMMARY"
