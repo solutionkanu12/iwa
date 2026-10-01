@@ -213,6 +213,16 @@ jobs:
             --reporter=dot)
           echo '- B2-B canonical intent and recovery regressions: **PASS**' >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Run B2-B-R2 integrated vault and STRK20 proof
+        run: |
+          set -euo pipefail
+          harness="$IWA_PRIVACY_DIR/e2e/tests/devnet/iwa-wallet-integrated.test.ts"
+          ln -s "$GITHUB_WORKSPACE/iwa-web/src/lib/walletVault" \
+            "$IWA_PRIVACY_DIR/e2e/tests/devnet/iwa-wallet-vault"
+          cp "$GITHUB_WORKSPACE/spikes/starknet-strk20-b2b/iwa-wallet-integrated.test.ts" "$harness"
+          (cd "$IWA_PRIVACY_DIR/e2e" && IWA_ARTIFACT_DIR="$IWA_ARTIFACT_DIR" \
+            npx vitest run tests/devnet/iwa-wallet-integrated.test.ts --reporter=default --reporter=github-actions)
+
       - name: Record disposable cleanup boundary
         if: always()
         run: |
