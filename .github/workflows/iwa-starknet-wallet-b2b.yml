@@ -113,21 +113,28 @@ jobs:
         run: |
           set -euo pipefail
           build_iwa_artifacts() {
-            local output status sanitized
-            set +e
-            output="$(cd contracts/starknet && scarb build 2>&1)"
-            status=$?
-            set -e
-            if test "$status" -ne 0; then
-              # Cairo compilation handles no runtime wallet material. Still cap and
-              # redact this public diagnostic defensively because Actions logs may
-              # require authentication even on the temporary branch.
-              sanitized="$(printf '%s' "$output" | sed -E \
-                -e 's/((private|viewing|recovery)[_-]?(key|seed|secret)[[:space:]]*[:=][[:space:]]*)[^[:space:],}]+/\1[REDACTED]/Ig' \
-                -e 's/(0x[0-9a-fA-F]{64,})/[REDACTED_HEX]/g' | tail -c 3000 | tr '\n\r' '  ')"
-              echo "::error title=B2-B Iwa Cairo artifact build failed::$sanitized"
-              return "$status"
-            fi
+            local attempt output status sanitized
+            for attempt in 1 2 3; do
+              set +e
+              output="$(cd contracts/starknet && scarb build 2>&1)"
+              status=$?
+              set -e
+              if test "$status" -eq 0; then
+                return 0
+              fi
+              # Scarb 2.18 can race while refreshing nested Git checkouts on a
+              # clean filesystem. Retry the same pinned build, never a version
+              # change or a dependency substitution.
+              if test "$attempt" -lt 3; then sleep "$attempt"; fi
+            done
+            # Cairo compilation handles no runtime wallet material. Still cap and
+            # redact this public diagnostic defensively because Actions logs may
+            # require authentication even on the temporary branch.
+            sanitized="$(printf '%s' "$output" | sed -E \
+              -e 's/((private|viewing|recovery)[_-]?(key|seed|secret)[[:space:]]*[:=][[:space:]]*)[^[:space:],}]+/\1[REDACTED]/Ig' \
+              -e 's/(0x[0-9a-fA-F]{64,})/[REDACTED_HEX]/g' | tail -c 3000 | tr '\n\r' '  ')"
+            echo "::error title=B2-B Iwa Cairo artifact build failed after three identical pinned attempts::$sanitized"
+            return "$status"
           }
           build_iwa_artifacts
           artifact_dir="$GITHUB_WORKSPACE/contracts/starknet/target/dev"
