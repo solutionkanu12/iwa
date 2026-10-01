@@ -23,9 +23,6 @@ jobs:
     env:
       CARGO_INCREMENTAL: "0"
       CARGO_PROFILE_DEV_DEBUG: "0"
-      # Scarb otherwise defaults to the runner image cache location. Keep each
-      # disposable proof isolated from any pre-existing Git checkout state.
-      SCARB_CACHE: ${{ runner.temp }}/iwa-b2b-scarb-cache
       RUST_VERSION: 1.91.0
       NODE_VERSION: 20.20.2
       SCARB_VERSION: 2.18.0
@@ -45,6 +42,13 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20.20.2
+
+      - name: Isolate the disposable Scarb cache
+        run: |
+          set -euo pipefail
+          cache_dir="$RUNNER_TEMP/iwa-b2b-scarb-cache"
+          case "$cache_dir" in "$RUNNER_TEMP"/*) ;; *) exit 1 ;; esac
+          echo "SCARB_CACHE=$cache_dir" >> "$GITHUB_ENV"
 
       - uses: software-mansion/setup-scarb@2a96b748888e3329ee44ac9ac073d930e692b3cd # v1
         with:
