@@ -1,0 +1,185 @@
+name: B2-B disposable STRK20 privacy proof
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ci/iwa-starknet-b2b
+
+permissions:
+  contents: read
+
+concurrency:
+  group: iwa-starknet-wallet-b2b-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  b2b-disposable-devnet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      RUST_VERSION: 1.91.0
+      NODE_VERSION: 20.20.2
+      SCARB_VERSION: 2.18.0
+      IWA_PRIVACY_SCARB_VERSION: 2.17.0
+      VESU_SCARB_VERSION: 2.11.4
+      DEVNET_VERSION: 0.8.0-rc.3
+      UNIVERSAL_SIERRA_COMPILER_VERSION: v2.8.0
+      IWA_PRIVACY_REVISION: 66e3caae8c0201227a6719696d004e30d90aea65
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: 1.91.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20.20.2
+
+      - uses: software-mansion/setup-scarb@2a96b748888e3329ee44ac9ac073d930e692b3cd # v1
+        with:
+          scarb-version: 2.18.0
+
+      - uses: software-mansion/setup-universal-sierra-compiler@30c139bca57cc0561cfae6f5353825bbc42c9f37 # v1
+        with:
+          universal-sierra-compiler-version: v2.8.0
+
+      - name: Install and verify the pinned patched devnet
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/starknet-devnet.tar.gz"
+          curl --fail --location --retry 3 --silent --show-error \
+            "https://github.com/0xSpaceShard/starknet-devnet/releases/download/v${DEVNET_VERSION}/starknet-devnet-x86_64-unknown-linux-gnu.tar.gz" \
+            --output "$archive"
+          tar --extract --gzip --file "$archive" --directory "$RUNNER_TEMP"
+          install -m 0755 "$RUNNER_TEMP/starknet-devnet" /usr/local/bin/starknet-devnet
+          version="$(starknet-devnet --version 2>&1)"
+          case "$version" in *"$DEVNET_VERSION"*) ;; *) echo 'Pinned devnet mismatch' >&2; exit 1 ;; esac
+          rm -f "$archive"
+
+      - name: Verify pinned sources and tool versions
+        run: |
+          set -euo pipefail
+          require_version() {
+            local label="$1" expected="$2"
+            shift 2
+            local actual
+            if ! actual="$("$@" 2>&1)"; then
+              printf 'VERSION CHECK FAILED [%s]: probe failed: %s\n' "$label" "$actual" >&2
+              return 1
+            fi
+            case "$actual" in
+              *"$expected"*) ;;
+              *) printf 'VERSION CHECK FAILED [%s]: expected %s; received %s\n' "$label" "$expected" "$actual" >&2; return 1 ;;
+            esac
+          }
+          require_version Node "v${NODE_VERSION}" node --version
+          require_version Rust "$RUST_VERSION" rustc --version
+          require_version Scarb "$SCARB_VERSION" scarb --version
+          test "$(sed -nE 's/.*starknet-privacy.*rev = "([0-9a-f]+)".*/\1/p' contracts/starknet/Scarb.toml)" = "$IWA_PRIVACY_REVISION"
+          {
+            echo '## IWA B2-B disposable devnet proof'
+            echo "- Run: \`${GITHUB_RUN_ID}\`"
+            echo "- Privacy revision: \`${IWA_PRIVACY_REVISION}\`"
+            echo "- Network: isolated patched Starknet devnet only"
+            echo "- Credentials, artifacts, and dependency caches: none retained"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fetch exact Iwa-pinned privacy source
+        run: |
+          set -euo pipefail
+          privacy_dir="$RUNNER_TEMP/starknet-privacy"
+          git clone --filter=blob:none https://github.com/starkware-libs/starknet-privacy.git "$privacy_dir"
+          git -C "$privacy_dir" checkout --detach "$IWA_PRIVACY_REVISION"
+          test "$(git -C "$privacy_dir" rev-parse HEAD)" = "$IWA_PRIVACY_REVISION"
+          echo "IWA_PRIVACY_DIR=$privacy_dir" >> "$GITHUB_ENV"
+
+      - name: Build matching privacy and Iwa deployment artifacts
+        run: |
+          set -euo pipefail
+          (cd contracts/starknet && scarb build)
+          artifact_dir="$GITHUB_WORKSPACE/contracts/starknet/target/dev"
+          for contract in IwaCircle IwaStrk20Helper; do
+            universal-sierra-compiler compile-contract \
+              --sierra-path "$artifact_dir/iwa_${contract}.contract_class.json" \
+              --output-path "$artifact_dir/iwa_${contract}.compiled_contract_class.json"
+          done
+          echo "IWA_ARTIFACT_DIR=$artifact_dir" >> "$GITHUB_ENV"
+
+      - uses: software-mansion/setup-scarb@2a96b748888e3329ee44ac9ac073d930e692b3cd # v1
+        with:
+          scarb-version: 2.17.0
+
+      - name: Build the exact privacy stack and discovery prerequisites
+        run: |
+          set -euo pipefail
+          cd "$IWA_PRIVACY_DIR"
+          rm -rf target/dev
+          scarb --profile release build -p privacy
+          scarb build -p privacy -p vesu_lending_anonymizer -p ekubo_swap_anonymizer -p shadow_account_anonymizer
+          scarb build -t -p shadow_account_anonymizer
+          scarb build -t -p privacy
+          (cd e2e/contracts/ekubo && scarb build)
+          (cd e2e/contracts/test-token && scarb build)
+
+      - uses: software-mansion/setup-scarb@2a96b748888e3329ee44ac9ac073d930e692b3cd # v1
+        with:
+          scarb-version: 2.11.4
+
+      - name: Build matching discovery and E2E dependencies
+        run: |
+          set -euo pipefail
+          (cd "$IWA_PRIVACY_DIR/e2e/contracts/vesu" && scarb build)
+          cd "$IWA_PRIVACY_DIR"
+          cargo build --release -p discovery-service
+          (cd sdk && npm ci && npm run build)
+          (cd client && npm ci && npm run build)
+          (cd e2e && npm ci)
+
+      - name: Run official Iwa-pinned upstream devnet baseline
+        run: |
+          set -euo pipefail
+          (cd "$IWA_PRIVACY_DIR/e2e" && npm run test:devnet)
+          echo '- Upstream Iwa-pinned devnet baseline: **PASS**' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run current Iwa helper wallet-free private path
+        run: |
+          set -euo pipefail
+          git fetch origin ci/starknet-strk20-b01
+          harness="$IWA_PRIVACY_DIR/e2e/tests/devnet/iwa-b2b-current-helper.test.ts"
+          git show FETCH_HEAD:spikes/starknet-strk20-b02/iwa-contract-embedded-signer.test.ts > "$harness"
+          if grep -nE 'WalletAccountV6|walletV6|wallet[_-]?api|localStorage|sessionStorage|indexedDB|process\.(stdout|stderr)' "$harness"; then
+            echo 'Unsafe external-wallet, persistence, or output dependency in temporary harness' >&2
+            exit 1
+          fi
+          set +e
+          (cd "$IWA_PRIVACY_DIR/e2e" && IWA_ARTIFACT_DIR="$IWA_ARTIFACT_DIR" npx vitest run tests/devnet/iwa-b2b-current-helper.test.ts --reporter=default --reporter=github-actions) 2>&1 | sed -E \
+            -e 's/((private|viewing|recovery)[_-]?(key|seed|secret)[[:space:]]*[:=][[:space:]]*)[^[:space:],}]+/\1[REDACTED]/Ig' \
+            -e 's/("private_key"[[:space:]]*:[[:space:]]*")[^"]+("?)/\1[REDACTED]\2/Ig'
+          status=${PIPESTATUS[0]}
+          set -e
+          test "$status" -eq 0
+          echo '- Current Iwa helper wallet-free STRK20 path: **PASS**' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run B2-B vault intent and recovery regressions
+        run: |
+          set -euo pipefail
+          npm ci --prefix iwa-web
+          (cd iwa-web && npx vitest run \
+            src/lib/walletVault/strk20PoolActionDecoder.test.ts \
+            src/lib/walletVault/strk20PrivacyRuntime.test.ts \
+            src/lib/walletVault/strk20PrivateInvokeRecovery.test.ts \
+            --reporter=dot)
+          echo '- B2-B canonical intent and recovery regressions: **PASS**' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record disposable cleanup boundary
+        if: always()
+        run: |
+          echo '- Cleanup: no artifact upload, package cache, generated authority, recovery code, or build directory is retained.' >> "$GITHUB_STEP_SUMMARY"
