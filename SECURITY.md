@@ -890,7 +890,7 @@ authority. Offline recovery remains portable but cannot distinguish an old
 valid bearer package from the newest package; a later chain-authority rotation
 may be needed to invalidate a stolen older package.
 
-### B2-A Starknet authority boundary (local implementation, devnet proof pending)
+### B2-A Starknet authority boundary (local implementation, isolated devnet proof PASS)
 
 The first future chain authority is a Starknet private scalar made from browser
 CSPRNG output with rejection sampling against the Stark curve order. It is a
@@ -923,9 +923,35 @@ required before such metadata can be trusted for operational decisions.
 
 There is no hardcoded production account-class hash, production provider,
 paymaster, relayer, mainnet deployment, STRK20 viewing key, or settlement
-authority in B2-A. The generated-account deployment test is restricted to a
-fresh disposable devnet runner. Until that runner succeeds, no devnet deployment
-or full account-control claim is made.
+authority in B2-A. The generated-account deployment and recovery proof passed
+only on a fresh disposable devnet runner; it is not a production deployment or
+mainnet-account-control claim.
+
+### B2-B STRK20 private-invoke intent boundary (local remediation, remote proof pending)
+
+The pinned STRK20 v0.14.3-rc.5 SDK creates an outer
+`PrivacyPool.apply_actions` call. An Iwa helper operation is a
+proof-authenticated inner `ServerAction::Invoke`, not an outer helper call.
+The wallet decodes the exact proof action span with the pinned vendored ABI and
+requires a canonical ABI round-trip. It binds the outer pool and
+`apply_actions` entrypoint, active Iwa Starknet account, network, helper,
+exact nine-felt `privacy_invoke` intent, Iwa operation and nonce, approved
+token/amount movements, and the complete ordered action-type transcript.
+
+The validator accepts only the reviewed operation shape. It rejects unknown or
+non-canonical encodings, malformed/truncated spans, a direct helper outer
+call, wrong pool/helper/account, unapproved funding, changed recipient/token/
+amount, multiple or reordered helper actions, `InvokeWithComputation`, and
+extra proof-bound actions. The SDK's screening suffix is independently parsed
+as the pinned `Option` encoding and cannot be confused with authenticated
+actions. This avoids accepting arbitrary `pool.apply_actions` while retaining
+the canonical SDK path.
+
+The private invoke remains an internal, fixed intent and is not exposed by the
+vault, React, or UI as a generic action builder. Viewing authority and notes
+remain local to the SDK/discovery/proving boundary, never Iwa backend or web
+storage. The unit evidence is not a substitute for the required disposable
+devnet proof with real registration, discovery, proving, invoke, and recovery.
 
 ## Backend security
 

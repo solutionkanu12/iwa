@@ -135,7 +135,7 @@ describe("STRK20 private state through the opaque Iwa vault", () => {
     })).rejects.toThrow();
   }, CRYPTO_LIFECYCLE_TEST_TIMEOUT_MS);
 
-  it("routes a bounded Iwa helper invoke through the embedded signer after registration only", async () => {
+  it("does not expose a generic Iwa helper invoke builder after registration", async () => {
     const { vault } = newVault();
     await vault.create({ walletId, password, passkey, authorities: [] });
     const session = await vault.unlock({ walletId, password });
@@ -152,21 +152,9 @@ describe("STRK20 private state through the opaque Iwa vault", () => {
     const provider = { getChainId: async () => account.networkId };
     await vault.registerStrk20ViewingAuthority(session, { walletId, password, provider: provider as never, runtime: harness.runtime });
 
-    await expect(vault.invokeStrk20IwaHelper(session, {
-      walletId,
-      provider: provider as never,
-      runtime: harness.runtime,
-      helperAddress: "0x9876",
-      build: (builder) => builder.invoke(() => ({ contractAddress: "0x9876", entrypoint: "privacy_invoke", calldata: ["0x1"] })),
-    })).resolves.toBeUndefined();
-    expect(harness.submit).toHaveBeenCalledTimes(1);
-
-    await expect(vault.invokeStrk20IwaHelper(session, {
-      walletId,
-      provider: provider as never,
-      runtime: harness.runtime,
-      helperAddress: "not-a-felt",
-      build: (builder) => builder,
-    })).rejects.toThrow();
+    // The vault exposes no generic private-action builder. A future product
+    // operation must be a reviewed, fixed intent handled in the chain adapter.
+    expect("invokeStrk20IwaHelper" in (vault as object)).toBe(false);
+    expect(harness.submit).not.toHaveBeenCalled();
   }, CRYPTO_LIFECYCLE_TEST_TIMEOUT_MS);
 });

@@ -1,5 +1,13 @@
 import type { SignerInterface } from "starknet";
 
+import {
+  decodePinnedStrk20ServerActions,
+  type PinnedStrk20ServerAction,
+  type PinnedStrk20ServerActionType,
+} from "./strk20PoolActionDecoder";
+
+const STARK_FIELD_PRIME = (1n << 251n) + 17n * (1n << 192n) + 1n;
+
 /**
  * Exact package/revision selected by B0.2 compatibility proof. The boundary is
  * structural so browser code remains buildable without embedding a provider or
@@ -27,7 +35,7 @@ export interface Strk20PrivateContext extends Strk20PublicContext {
 export interface Strk20PrivacyCall {
   readonly contractAddress: string;
   readonly entrypoint: string;
-  readonly calldata: readonly unknown[];
+  readonly calldata: readonly string[];
 }
 
 export interface Strk20PrivacyCallAndProof {
@@ -77,6 +85,11 @@ export interface IwaStrk20PrivacyRuntimeDependencies {
   readonly discoveryProvider: unknown;
   readonly probeRegistration: Strk20RegistrationProbe;
   readonly submit: Strk20ProofSubmitter;
+  /** Chain-adapter only. It is never exposed by the vault or React lifecycle. */
+  readonly buildIwaHelperOperation?: (
+    transfers: Strk20PrivacyTransfers,
+    intent: IwaHelperPrivateInvoke,
+  ) => Strk20PrivacyBuilder;
 }
 
 export interface Strk20PrivateStateSummary {
@@ -90,8 +103,20 @@ export interface IwaHelperPrivateInvoke {
   readonly poolAddress: string;
   readonly accountAddress: string;
   readonly helperAddress: string;
-  /** Internal chain adapter callback, never a UI-supplied arbitrary call. */
-  readonly build: (builder: Strk20PrivacyBuilder) => Strk20PrivacyBuilder;
+  /** The pool hard-codes this selector for an Invoke server action. */
+  readonly helperEntrypoint: "privacy_invoke";
+  /** Current IwaStrk20Helper IwaOperation discriminant, bound to calldata[0]. */
+  readonly operation: 0 | 1 | 2 | 3;
+  /** Exact nine-felt IwaStrk20Helper::privacy_invoke argument list. */
+  readonly helperCalldata: readonly string[];
+  /** Bound to calldata[6], preventing a replacement/replayed Iwa authorization. */
+  readonly nonce: string;
+  /** The only pool-to-external value movement permitted by this B2-B intent. */
+  readonly expectedWithdrawal: { readonly token: string; readonly amount: string };
+  /** Optional fresh public funding, always from the active Iwa Starknet account. */
+  readonly expectedFunding?: { readonly token: string; readonly amount: string };
+  /** Exact ordered transcript of every proof-bound pool action. */
+  readonly expectedServerActionTypes: readonly PinnedStrk20ServerActionType[];
 }
 
 function fail(): never {
@@ -105,17 +130,180 @@ function assertIdentifier(value: string): void {
 function assertContext(context: Strk20PublicContext): void {
   assertIdentifier(context.walletId);
   assertIdentifier(context.networkId);
-  if (!/^0x[0-9a-fA-F]{1,64}$/.test(context.poolAddress) || !/^0x[0-9a-fA-F]{1,64}$/.test(context.accountAddress)) fail();
+  canonicalNonZeroFelt(context.poolAddress);
+  canonicalNonZeroFelt(context.accountAddress);
 }
 
 function canonicalFelt(value: string): string {
   if (!/^0x[0-9a-fA-F]{1,64}$/.test(value)) fail();
   try {
     const felt = BigInt(value);
-    if (felt <= 0n) fail();
+    if (felt < 0n || felt >= STARK_FIELD_PRIME) fail();
     return `0x${felt.toString(16)}`;
   } catch {
     fail();
+  }
+}
+
+function canonicalNonZeroFelt(value: string): string {
+  const felt = canonicalFelt(value);
+  if (felt === "0x0") fail();
+  return felt;
+}
+
+function canonicalFeltArray(value: readonly unknown[], maxLength: number): readonly string[] {
+  if (value.length > maxLength) fail();
+  return value.map((felt) => {
+    if (typeof felt !== "string") fail();
+    return canonicalFelt(felt);
+  });
+}
+
+function sameFelts(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((felt, index) => felt === right[index]);
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function assertScreeningSuffix(value: readonly string[]): void {
+  // v0.14.3-rc.5 encodes ScreeningAttestation as Option: None is [0x1];
+  // Some is [0x0, issued_at:u64, sig_r, sig_s]. It is outside the proof
+  // action span and cannot alter the decoded helper action.
+  if (value.length === 1 && value[0] === "0x1") return;
+  if (value.length !== 4 || value[0] !== "0x0") fail();
+  const issuedAt = BigInt(canonicalFelt(value[1] ?? ""));
+  if (issuedAt > 0xffff_ffff_ffff_ffffn) fail();
+  canonicalFelt(value[2] ?? "");
+  canonicalFelt(value[3] ?? "");
+}
+
+function assertHelperIntent(intent: IwaHelperPrivateInvoke): {
+  readonly helperAddress: string;
+  readonly helperCalldata: readonly string[];
+  readonly expectedWithdrawal: { readonly token: string; readonly amount: string };
+  readonly expectedFunding: { readonly token: string; readonly amount: string } | undefined;
+  readonly expectedServerActionTypes: readonly PinnedStrk20ServerActionType[];
+} {
+  if (intent.helperEntrypoint !== "privacy_invoke") fail();
+  const helperAddress = canonicalNonZeroFelt(intent.helperAddress);
+  const helperCalldata = canonicalFeltArray(intent.helperCalldata, 9);
+  if (helperCalldata.length !== 9 || helperCalldata[0] !== `0x${intent.operation.toString(16)}`) fail();
+  if (helperCalldata[6] !== canonicalFelt(intent.nonce)) fail();
+  const expectedWithdrawal = {
+    token: canonicalNonZeroFelt(intent.expectedWithdrawal.token),
+    amount: canonicalNonZeroFelt(intent.expectedWithdrawal.amount),
+  };
+  if (helperCalldata[4] !== expectedWithdrawal.token) fail();
+  const expectedFunding = intent.expectedFunding === undefined
+    ? undefined
+    : {
+      token: canonicalNonZeroFelt(intent.expectedFunding.token),
+      amount: canonicalNonZeroFelt(intent.expectedFunding.amount),
+    };
+  if (intent.expectedServerActionTypes.length === 0 || intent.expectedServerActionTypes.length > 128) fail();
+  const expectedServerActionTypes = intent.expectedServerActionTypes.map((type) => {
+    if (![
+      "WriteOnce",
+      "Append",
+      "TransferFrom",
+      "TransferTo",
+      "EmitViewingKeySet",
+      "EmitWithdrawal",
+      "EmitDeposit",
+      "EmitOpenNoteCreated",
+      "EmitEncNoteCreated",
+      "EmitNoteUsed",
+      "Invoke",
+      "InvokeWithComputation",
+    ].includes(type)) {
+      fail();
+    }
+    return type;
+  });
+  return { helperAddress, helperCalldata, expectedWithdrawal, expectedFunding, expectedServerActionTypes };
+}
+
+function assertPoolEnvelope(
+  callAndProof: Strk20PrivacyCallAndProof,
+  context: Strk20PublicContext,
+): readonly PinnedStrk20ServerAction[] {
+  if (
+    canonicalNonZeroFelt(callAndProof.call.contractAddress) !== canonicalNonZeroFelt(context.poolAddress) ||
+    callAndProof.call.entrypoint !== "apply_actions"
+  ) {
+    fail();
+  }
+  const output = canonicalFeltArray(callAndProof.proof.output, 8_193);
+  if (output.length < 2) fail();
+  canonicalNonZeroFelt(output[0] ?? ""); // pool class hash, proof-bound on chain
+  const actionSpan = output.slice(1);
+  const submitted = canonicalFeltArray(callAndProof.call.calldata, 8_197);
+  if (!sameFelts(submitted.slice(0, actionSpan.length), actionSpan)) fail();
+  assertScreeningSuffix(submitted.slice(actionSpan.length));
+  return decodePinnedStrk20ServerActions(actionSpan);
+}
+
+function assertBoundIwaHelperAction(
+  actions: readonly PinnedStrk20ServerAction[],
+  context: Strk20PublicContext,
+  intent: IwaHelperPrivateInvoke,
+): void {
+  const expected = assertHelperIntent(intent);
+  if (actions.length === 0 || actions.length > 128) fail();
+  if (!sameStrings(actions.map((action) => action.type), expected.expectedServerActionTypes)) fail();
+
+  const externalInvocations: Array<{ readonly index: number; readonly action: Extract<PinnedStrk20ServerAction, { readonly type: "Invoke" | "InvokeWithComputation" }> }> = [];
+  const transferFrom: Array<{ readonly index: number; readonly action: Extract<PinnedStrk20ServerAction, { readonly type: "TransferFrom" }> }> = [];
+  const transferTo: Array<{ readonly index: number; readonly action: Extract<PinnedStrk20ServerAction, { readonly type: "TransferTo" }> }> = [];
+  actions.forEach((action, index) => {
+    if (action.type === "Invoke" || action.type === "InvokeWithComputation") externalInvocations.push({ index, action });
+    if (action.type === "TransferFrom") transferFrom.push({ index, action });
+    if (action.type === "TransferTo") transferTo.push({ index, action });
+  });
+
+  // The pool has a single invoke phase. Iwa permits exactly one Invoke, never
+  // the distinct computation entrypoint, and it must target this helper.
+  if (externalInvocations.length !== 1 || externalInvocations[0]?.action.type !== "Invoke") fail();
+  const invoke = externalInvocations[0];
+  if (
+    invoke === undefined ||
+    invoke.action.contractAddress !== expected.helperAddress ||
+    !sameFelts(invoke.action.calldata, expected.helperCalldata)
+  ) {
+    fail();
+  }
+
+  // IwaStrk20Helper expects its exact inbound balance before the invocation.
+  // Reject all other pool transfers, including a substituted recipient/token or
+  // a second transfer that would make a visually similar proof spend more.
+  if (transferTo.length !== 1) fail();
+  const withdrawal = transferTo[0];
+  if (
+    withdrawal === undefined ||
+    withdrawal.action.toAddress !== expected.helperAddress ||
+    withdrawal.action.token !== expected.expectedWithdrawal.token ||
+    withdrawal.action.amount !== expected.expectedWithdrawal.amount ||
+    withdrawal.index >= invoke.index
+  ) {
+    fail();
+  }
+
+  if (expected.expectedFunding === undefined) {
+    if (transferFrom.length !== 0) fail();
+  } else {
+    if (transferFrom.length !== 1) fail();
+    const funding = transferFrom[0];
+    if (
+      funding === undefined ||
+      funding.action.fromAddress !== canonicalNonZeroFelt(context.accountAddress) ||
+      funding.action.token !== expected.expectedFunding.token ||
+      funding.action.amount !== expected.expectedFunding.amount ||
+      funding.index >= withdrawal.index
+    ) {
+      fail();
+    }
   }
 }
 
@@ -203,24 +391,14 @@ export class IwaStrk20PrivacyRuntime {
 
   async invokeIwaHelper(context: Strk20PrivateContext, intent: IwaHelperPrivateInvoke): Promise<void> {
     assertContext(context);
-    if (!samePublicContext(publicContext(context), intent) || !/^0x[0-9a-fA-F]{1,64}$/.test(intent.helperAddress)) fail();
+    if (!samePublicContext(publicContext(context), intent)) fail();
     if (!(await this.dependencies.probeRegistration(context))) fail();
-    const builder = intent.build(this.transfersFor(context).build({
-      autoDiscover: { notes: "refresh", channels: "refresh" },
-      autoSelectNotes: "naive",
-    }));
+    if (this.dependencies.buildIwaHelperOperation === undefined) fail();
+    const builder = this.dependencies.buildIwaHelperOperation(this.transfersFor(context), intent);
     const result = await builder.execute();
     assertCallAndProof(result);
-    // The B2-B helper seam is deliberately not an arbitrary private-call
-    // facility. Even a chain-layer caller cannot redirect this proof to a
-    // different contract or entrypoint. B2-C may add a reviewed fixed intent,
-    // but must not loosen this boundary into a UI-supplied transaction.
-    if (
-      canonicalFelt(result.callAndProof.call.contractAddress) !== canonicalFelt(intent.helperAddress) ||
-      result.callAndProof.call.entrypoint !== "privacy_invoke"
-    ) {
-      fail();
-    }
+    const actions = assertPoolEnvelope(result.callAndProof, publicContext(context));
+    assertBoundIwaHelperAction(actions, publicContext(context), intent);
     await this.dependencies.submit({ context: publicContext(context), callAndProof: result.callAndProof });
   }
 

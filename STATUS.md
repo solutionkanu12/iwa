@@ -285,14 +285,21 @@ the authenticated vault manifest and encrypted portable recovery package.
   public-only endpoint accepts exactly `{ walletId }` and cannot receive any
   authority, proof, private state, vault data, recovery material, password,
   PIN, or passkey output.
-- The helper path is deliberately absent from the React lifecycle and UI. Its
-  low-level test boundary binds output to the declared helper and
-  `privacy_invoke`; B2-C must not replace that with a generic call surface.
+- The helper path is deliberately absent from the React lifecycle and UI. The
+  pinned SDK's outer call is `pool.apply_actions`, not the helper directly.
+  The local B2-B-R1 boundary decodes the proof-bound inner
+  `Span<ServerAction>` with the pinned SDK ABI and requires the exact ordered
+  action transcript, pool/account/network, helper target, nine helper
+  calldata felts, operation/nonce, and token/amount before submission.
+  Unknown, reordered, duplicate, extra, or `InvokeWithComputation` actions,
+  direct helper outer calls, malformed proof calldata, and substitutions fail
+  closed. B2-C must not replace this with a generic call surface.
 
 Focused local tests use fixtures and synthetic private state. The real
 SDK/prover/discovery/private-invoke proof remains a disposable GitHub
 Actions/devnet prerequisite because the exact privacy package registry denies
-unauthenticated local package reads. No temporary B2-B branch has been pushed.
+unauthenticated local package reads. No temporary B2-B branch has been pushed
+from this remediation yet.
 See `docs/IWA_WALLET_B2B.md` for the exact local boundary and remote-proof
 requirements.
 

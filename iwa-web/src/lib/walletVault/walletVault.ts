@@ -46,7 +46,6 @@ import {
 } from "./strk20ViewingAuthority";
 import {
   type IwaStrk20PrivacyRuntime,
-  type IwaHelperPrivateInvoke,
   type Strk20PrivateStateSummary,
 } from "./strk20PrivacyRuntime";
 import type { WalletVaultStore } from "./vaultStore";
@@ -148,15 +147,6 @@ export interface DiscoverStrk20PrivateStateInput {
   readonly walletId: string;
   readonly provider: RpcProvider;
   readonly runtime: IwaStrk20PrivacyRuntime;
-}
-
-export interface InvokeStrk20IwaHelperInput {
-  readonly walletId: string;
-  readonly provider: RpcProvider;
-  readonly runtime: IwaStrk20PrivacyRuntime;
-  readonly helperAddress: string;
-  /** A later B2-C settlement module supplies only contract-specific calldata. */
-  readonly build: IwaHelperPrivateInvoke["build"];
 }
 
 export interface StarknetAccountDeploymentResult {
@@ -736,33 +726,6 @@ export class WalletVault {
     }
     wipe(viewing.privateKey);
     return this.withStrk20Runtime(warm, session, epoch, input.provider, async (context) => input.runtime.discover(context));
-  }
-
-  /**
-   * Executes a single B2-B Iwa helper private operation with the recovered
-   * Starknet signer and viewing scalar. It deliberately contains no Iwa
-   * settlement authority; B2-C must supply approved settlement calldata.
-   */
-  async invokeStrk20IwaHelper(
-    session: WalletVaultSession,
-    input: InvokeStrk20IwaHelperInput,
-  ): Promise<void> {
-    const warm = this.requireWarm(session, input.walletId);
-    const epoch = this.operationEpoch;
-    const viewing = singleStrk20ViewingAuthority(warm.authorities);
-    if (viewing === null || viewing.descriptor.registrationState !== "registered") {
-      wipe(viewing?.privateKey);
-      fail();
-    }
-    wipe(viewing.privateKey);
-    await this.withStrk20Runtime(warm, session, epoch, input.provider, async (context) => input.runtime.invokeIwaHelper(context, {
-      walletId: context.walletId,
-      networkId: context.networkId,
-      poolAddress: context.poolAddress,
-      accountAddress: context.accountAddress,
-      helperAddress: input.helperAddress,
-      build: input.build,
-    }));
   }
 
   /** Signs a bounded proof only after validating its wallet, network, and account context. */

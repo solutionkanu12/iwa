@@ -59,10 +59,30 @@ rewrapped into the vault record. A retry first probes the protocol and never
 creates another viewing identity. Discovery returns a minimized in-process
 summary only; raw notes and the scalar remain inside the vault adapter.
 
-The low-level helper proof boundary verifies that the generated call targets the
-declared Iwa helper and exactly `privacy_invoke`. It is intentionally *not*
-exposed through the React lifecycle or UI as a generic call builder. B2-C must
-add only a reviewed fixed settlement intent.
+The pinned SDK does **not** submit `IwaStrk20Helper.privacy_invoke` as the
+outer account call. Its canonical output is instead
+`PrivacyPool.apply_actions(server_actions, screening)`: the intended Iwa
+operation is the proof-authenticated inner `ServerAction::Invoke`. The wallet
+therefore decodes `proof.output[1..]` as the pinned
+`Span<privacy::actions::ServerAction>` using the vendored SDK ABI, then
+round-trips it to reject malformed or trailing bytes. It never uses a string
+search or hand-written calldata offsets.
+
+Before submission the narrow B2-B operation reconstructs a trusted intent and
+requires exact equality for the pool, account, network, helper target, nine
+`privacy_invoke` calldata felts, Iwa operation, nonce, required token/amount,
+and complete ordered server-action transcript. The outer call must be that
+pool's `apply_actions`; the submitted action span must equal the proof action
+span; and the remaining screening suffix must match the pinned `Option`
+encoding. Unknown action forms, duplicate or additional invocations,
+unapproved transfers, reordered actions, an `InvokeWithComputation`, and any
+extra proof-bound action fail closed. The pool's `Invoke` dispatch has the
+protocol-defined `privacy_invoke` selector, so a different helper selector is
+represented as a different action type and is rejected.
+
+This remains intentionally *not* exposed through the React lifecycle, vault,
+or UI as a generic call builder. B2-C may add only a separately reviewed fixed
+settlement intent.
 
 ## Recovery and coordination
 
