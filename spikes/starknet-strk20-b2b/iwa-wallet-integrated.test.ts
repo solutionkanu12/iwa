@@ -162,6 +162,18 @@ function safeSdkFailureCategory(error: unknown): string {
   if (/invalid.?signature|invalid_signature/i.test(message)) return "signer-validation";
   if (/invalid.?nonce/i.test(message)) return "pool-nonce";
   if (/screening/i.test(message)) return "screening";
+  // Only public, fixed Cairo assertion labels are classified. The original
+  // provider message is never rendered because it may contain calldata.
+  if (/IWA: wrong round|WRONG_ROUND/i.test(message)) return "iwa-wrong-round";
+  if (/IWA: not a member|NOT_MEMBER/i.test(message)) return "iwa-not-member";
+  if (/IWA: obligation not found|OBLIGATION_NOT_FOUND/i.test(message)) return "iwa-obligation";
+  if (/IWA: invalid signature|IWA: invalid auth key|IWA: invalid config/i.test(message)) return "iwa-settlement-auth";
+  if (/IWA: unsupported asset|UNSUPPORTED_TOKEN/i.test(message)) return "iwa-token-context";
+  if (/IWA: wrong amount|INBOUND_BALANCE_MISMATCH/i.test(message)) return "iwa-inbound-amount";
+  if (/NOT_PRIVACY_POOL/i.test(message)) return "iwa-pool-caller";
+  if (/INVALID_INPUT_NOTE|INVALID_OUTPUT_NOTE/i.test(message)) return "iwa-note-shape";
+  if (/WRONG_STATE/i.test(message)) return "iwa-operation-state";
+  if (/simulated __execute__ emitted no server message/i.test(message)) return "proof-no-server-message";
   return "opaque-sdk-error";
 }
 
