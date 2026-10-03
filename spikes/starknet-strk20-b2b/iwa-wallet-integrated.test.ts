@@ -349,7 +349,7 @@ describe("Iwa B2-B-R2 integrated vault and STRK20 proof", () => {
       // submission and records just closed-set action names. It cannot expose
       // private calldata, proof data, account material, or viewing authority.
       helperActionTypes = "preview-building";
-      const preview = await buildHelper(transfersFor({ address: account.accountAddress, signer: account.signer }, bytesToBigInt(rawViewing), env), firstHelperIntent).execute();
+      const preview = await buildHelper(transfersFor(rawContext.account, rawContext.viewingKey, env), firstHelperIntent).execute();
       helperActionTypes = "preview-executed";
       const previewRecord = preview as { readonly callAndProof?: { readonly proof?: { readonly output?: unknown } } };
       const previewOutput = previewRecord.callAndProof?.proof?.output;
