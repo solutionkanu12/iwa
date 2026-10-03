@@ -423,18 +423,17 @@ describe("Iwa B2-B-R2 integrated vault and STRK20 proof", () => {
           helperAddress: iwa.helper, helperEntrypoint: "privacy_invoke", operation: 0,
           helperCalldata: ["0x0", `0x${circleId.toString(16)}`, "0x1", `0x${walletSettlement.memberRef.toString(16)}`, `0x${BigInt(env.env.strk).toString(16)}`, "0x0", `0x${nonce.toString(16)}`, `0x${signature.r.toString(16)}`, `0x${signature.s.toString(16)}`],
           nonce: `0x${nonce.toString(16)}`,
-          expectedFunding: { token: env.env.strk, amount: `0x${CONTRIBUTION_AMOUNT.toString(16)}` },
           expectedWithdrawal: { token: env.env.strk, amount: `0x${CONTRIBUTION_AMOUNT.toString(16)}` },
-          // Exact pinned privacy::deposit, withdraw and invoke_external result
-          // after the preceding self-channel setup.
-          expectedServerActionTypes: ["TransferFrom", "EmitDeposit", "TransferTo", "EmitWithdrawal", "Invoke"],
+          // This is the stateful path: the prior real private deposit supplies
+          // the helper withdrawal. The expected transcript is deliberately
+          // exact and will fail closed if the pinned SDK encodes another shape.
+          expectedServerActionTypes: ["EmitNoteUsed", "TransferTo", "EmitWithdrawal", "EmitEncNoteCreated", "Invoke"],
         };
       };
       const buildHelper = (transfers: unknown, intent: IwaHelperPrivateInvoke): Strk20PrivacyBuilder => (
         (transfers as PrivateTransfersInterface)
           .build({ autoSetup: true, autoDiscover: { notes: "refresh", channels: "refresh" } })
           .with(env.env.strk, (token) => token
-            .deposit({ amount: CONTRIBUTION_AMOUNT })
             .withdraw({ recipient: intent.helperAddress, amount: CONTRIBUTION_AMOUNT })
             // The integrated proof intentionally already owns a private note.
             // The pinned SDK requires the surplus to be expressed explicitly;
