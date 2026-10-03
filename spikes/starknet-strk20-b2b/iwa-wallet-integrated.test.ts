@@ -218,6 +218,11 @@ describe("Iwa B2-B-R2 integrated vault and STRK20 proof", () => {
     // error text, calldata, account identifier, or authority material.
     let registrationPath = "not-started";
     let helperActionTypes = "not-executed";
+    // Closed-set, secret-free SDK progress labels used only when the
+    // disposable integration witness fails before it can produce an action
+    // transcript. They distinguish the concrete provider boundary without
+    // rendering a provider error, calldata, note, account, or authority.
+    let helperSdkStage = "not-started";
     const store = new InMemoryVaultStore();
     const recoveryKey = crypto.getRandomValues(new Uint8Array(32));
     const initialPasskey = makePasskey("b2br2-initial-passkey", 1);
@@ -358,6 +363,51 @@ describe("Iwa B2-B-R2 integrated vault and STRK20 proof", () => {
       const buildHelper = (transfers: unknown, intent: IwaHelperPrivateInvoke): Strk20PrivacyBuilder => (
         (transfers as PrivateTransfersInterface).build({ autoSetup: true, autoDiscover: { notes: "refresh", channels: "refresh" } }).with(env.env.strk, (token) => token.deposit({ amount: CONTRIBUTION_AMOUNT }).withdraw({ recipient: intent.helperAddress, amount: CONTRIBUTION_AMOUNT })).invoke(() => ({ contractAddress: intent.helperAddress, entrypoint: intent.helperEntrypoint, calldata: intent.helperCalldata.map(BigInt) })) as unknown as Strk20PrivacyBuilder
       );
+      const helperProvingBase = new ScreeningCallMockProofProvider(env.env.node, constants.StarknetChainId.SN_SEPOLIA);
+      const helperProving = {
+        getDefaultDetails: async () => {
+          helperSdkStage = "proving-details";
+          const details = await helperProvingBase.getDefaultDetails();
+          helperSdkStage = "proving-details-complete";
+          return details;
+        },
+        prove: async (...args: Parameters<typeof helperProvingBase.prove>) => {
+          helperSdkStage = "proving";
+          const proof = await helperProvingBase.prove(...args);
+          helperSdkStage = "proof-complete";
+          return proof;
+        },
+      };
+      const helperDiscoveryBase = new IndexerDiscoveryProvider(env.indexer.apiUrl, env.env.privacy.address);
+      const helperDiscovery = new Proxy(helperDiscoveryBase, {
+        get(target, property, receiver) {
+          const value = Reflect.get(target, property, receiver);
+          if (typeof value !== "function") return value;
+          return (...args: unknown[]) => {
+            helperSdkStage = "discovery";
+            return value.apply(target, args);
+          };
+        },
+      });
+      const helperTransfersFor = (context: typeof rawContext): PrivateTransfersInterface => {
+        const signer = new Proxy(context.account.signer, {
+          get(target, property, receiver) {
+            const value = Reflect.get(target, property, receiver);
+            if (typeof value !== "function") return value;
+            return (...args: unknown[]) => {
+              helperSdkStage = "account-signer";
+              return value.apply(target, args);
+            };
+          },
+        });
+        return createPrivateTransfers({
+          account: { address: context.account.address, signer },
+          viewingKeyProvider: { getViewingKey: async () => context.viewingKey },
+          provingProvider: helperProving,
+          discoveryProvider: helperDiscovery,
+          poolContractAddress: env.env.privacy.address,
+        } as never) as unknown as PrivateTransfersInterface;
+      };
       const boundRuntime = new IwaStrk20PrivacyRuntime({
         sdk: privacySdkFactory(), provingProvider: new ScreeningCallMockProofProvider(env.env.node, constants.StarknetChainId.SN_SEPOLIA), discoveryProvider: new IndexerDiscoveryProvider(env.indexer.apiUrl, env.env.privacy.address), probeRegistration: registrationProbe,
         submit: async ({ callAndProof }) => { await devnet.executeOutside(callAndProof as never); await env.indexer.waitForBlock(devnet.url); }, buildIwaHelperOperation: buildHelper,
@@ -370,7 +420,7 @@ describe("Iwa B2-B-R2 integrated vault and STRK20 proof", () => {
       helperActionTypes = "preview-building";
       let preview: Awaited<ReturnType<Strk20PrivacyBuilder["execute"]>>;
       try {
-        preview = await buildHelper(transfersFor(rawContext.account, rawContext.viewingKey, env), firstHelperIntent).execute();
+        preview = await buildHelper(helperTransfersFor(rawContext), firstHelperIntent).execute();
       } catch (error) {
         helperActionTypes = `preview-${safeSdkFailureCategory(error)}`;
         throw error;
@@ -467,7 +517,7 @@ describe("Iwa B2-B-R2 integrated vault and STRK20 proof", () => {
       const registrationSuffix = phase === "register-viewing-key-through-vault"
         ? `:${registrationPath}`
         : phase === "validate-and-submit-genuine-sdk-helper-intent"
-          ? `:${helperActionTypes}`
+          ? `:${helperActionTypes}:${helperSdkStage}`
           : "";
       throw new Error(`B2BR2_PHASE_FAILED:${phase}:${category}${registrationSuffix}`);
     } finally {
