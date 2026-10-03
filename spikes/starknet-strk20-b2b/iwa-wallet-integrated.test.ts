@@ -178,6 +178,36 @@ function safeSdkFailureCategory(error: unknown): string {
 }
 
 /**
+ * CallMockProofProvider deliberately withholds the nested simulation trace
+ * when it sees no server message. This test-only diagnostic replays the
+ * already-generated proof invocation once, examines it only in memory, and
+ * reports a closed set of public Cairo assertion labels. It never serializes
+ * the invocation, trace, signatures, calldata, notes, or authorities.
+ */
+async function classifyNoMessageSimulation(node: unknown, invocation: unknown): Promise<string> {
+  const channel = (node as { channel?: { simulateTransaction?: (items: readonly unknown[], options: unknown) => Promise<unknown> } }).channel;
+  if (channel?.simulateTransaction === undefined) return "diagnostic-channel-unavailable";
+  try {
+    const simulation = await channel.simulateTransaction([invocation], { skipValidate: true, skipFeeCharge: true });
+    const serialized = JSON.stringify(simulation).toLowerCase();
+    const has = (label: string) => serialized.includes(label.toLowerCase()) || serialized.includes(`0x${Buffer.from(label, "ascii").toString("hex")}`);
+    if (has("IWA: window closed")) return "diagnostic-iwa-window";
+    if (has("IWA: invalid signature")) return "diagnostic-iwa-signature";
+    if (has("IWA: not member")) return "diagnostic-iwa-member";
+    if (has("IWA: wrong round")) return "diagnostic-iwa-round";
+    if (has("IWA: obligation not found")) return "diagnostic-iwa-obligation";
+    if (has("INBOUND_BALANCE")) return "diagnostic-helper-inbound";
+    if (has("WRONG_STATE")) return "diagnostic-helper-state";
+    if (has("NOT_PRIVACY_POOL")) return "diagnostic-helper-caller";
+    if (has("INVALID_INPUT_NOTE")) return "diagnostic-helper-input-note";
+    if (has("UNSUPPORTED_TOKEN")) return "diagnostic-helper-token";
+    return "diagnostic-unlabeled-revert";
+  } catch {
+    return "diagnostic-simulation-error";
+  }
+}
+
+/**
  * CI-only adversarial mutation. It begins with a genuine SDK result, decodes
  * the proof-bound action span with the same pinned ABI used by the production
  * validator, then substitutes only the inner Invoke target. The validator must
@@ -440,11 +470,21 @@ describe("Iwa B2-B-R2 integrated vault and STRK20 proof", () => {
       // submission and records just closed-set action names. It cannot expose
       // private calldata, proof data, account material, or viewing authority.
       helperActionTypes = "preview-building";
+      const previewBuilder = buildHelper(helperTransfersFor(rawContext), firstHelperIntent);
+      const diagnosticBuilder = previewBuilder as unknown as {
+        createProofInvocation?: () => Promise<{ readonly invocation: unknown }>;
+      };
+      const diagnosticInvocation = diagnosticBuilder.createProofInvocation === undefined
+        ? undefined
+        : await diagnosticBuilder.createProofInvocation();
       let preview: Awaited<ReturnType<Strk20PrivacyBuilder["execute"]>>;
       try {
-        preview = await buildHelper(helperTransfersFor(rawContext), firstHelperIntent).execute();
+        preview = await previewBuilder.execute();
       } catch (error) {
-        helperActionTypes = `preview-${safeSdkFailureCategory(error)}`;
+        const simulationCategory = diagnosticInvocation === undefined
+          ? "diagnostic-invocation-unavailable"
+          : await classifyNoMessageSimulation(env.env.node, diagnosticInvocation.invocation);
+        helperActionTypes = `preview-${safeSdkFailureCategory(error)}-${simulationCategory}`;
         throw error;
       }
       helperActionTypes = "preview-executed";
