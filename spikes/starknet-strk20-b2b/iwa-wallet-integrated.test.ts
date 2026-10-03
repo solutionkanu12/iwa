@@ -4,7 +4,7 @@
  * runtime-only WebAuthn PRF adapter and isolated-devnet authorities only.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { Account, CairoOption, CairoOptionVariant, CallData, RpcProvider, constants, ec, hash } from "starknet";
+import { Account, CairoOption, CairoOptionVariant, CallData, RpcProvider, TransactionType, constants, ec, hash } from "starknet";
 import { createPrivateTransfers, type PrivateTransfersInterface } from "@starkware-libs/starknet-privacy-sdk";
 import { Devnet, IndexerDiscoveryProvider, ScreeningCallMockProofProvider } from "@starkware-libs/starknet-privacy-sdk/testing";
 import { createHash } from "node:crypto";
@@ -188,7 +188,35 @@ async function classifyNoMessageSimulation(node: unknown, invocation: unknown): 
   const channel = (node as { channel?: { simulateTransaction?: (items: readonly unknown[], options: unknown) => Promise<unknown> } }).channel;
   if (channel?.simulateTransaction === undefined) return "diagnostic-channel-unavailable";
   try {
-    const simulation = await channel.simulateTransaction([invocation], { skipValidate: true, skipFeeCharge: true });
+    // Mirror pinned CallMockProofProvider.simulateExecute exactly. Its
+    // ProofInvocation is an internal representation, not an RPC invoke.
+    const proof = invocation as {
+      readonly sender_address: string;
+      readonly calldata: readonly string[];
+      readonly signature: readonly string[];
+      readonly nonce: string;
+      readonly version: string;
+      readonly resource_bounds: unknown;
+      readonly tip: string;
+      readonly paymaster_data: readonly string[];
+      readonly account_deployment_data: readonly string[];
+      readonly nonce_data_availability_mode: string;
+      readonly fee_data_availability_mode: string;
+    };
+    const simulation = await channel.simulateTransaction([{
+      type: TransactionType.INVOKE,
+      contractAddress: proof.sender_address,
+      calldata: proof.calldata,
+      signature: proof.signature,
+      nonce: proof.nonce,
+      version: proof.version,
+      resourceBounds: proof.resource_bounds,
+      tip: proof.tip,
+      paymasterData: proof.paymaster_data,
+      accountDeploymentData: proof.account_deployment_data,
+      nonceDataAvailabilityMode: proof.nonce_data_availability_mode,
+      feeDataAvailabilityMode: proof.fee_data_availability_mode,
+    }], { skipValidate: true, skipFeeCharge: true });
     const serialized = JSON.stringify(simulation).toLowerCase();
     const has = (label: string) => serialized.includes(label.toLowerCase()) || serialized.includes(`0x${Buffer.from(label, "ascii").toString("hex")}`);
     if (has("IWA: window closed")) return "diagnostic-iwa-window";
