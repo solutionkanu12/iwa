@@ -373,7 +373,17 @@ describe("Iwa B2-B-R2 integrated vault and STRK20 proof", () => {
         };
       };
       const buildHelper = (transfers: unknown, intent: IwaHelperPrivateInvoke): Strk20PrivacyBuilder => (
-        (transfers as PrivateTransfersInterface).build({ autoSetup: true, autoDiscover: { notes: "refresh", channels: "refresh" } }).with(env.env.strk, (token) => token.deposit({ amount: CONTRIBUTION_AMOUNT }).withdraw({ recipient: intent.helperAddress, amount: CONTRIBUTION_AMOUNT })).invoke(() => ({ contractAddress: intent.helperAddress, entrypoint: intent.helperEntrypoint, calldata: intent.helperCalldata.map(BigInt) })) as unknown as Strk20PrivacyBuilder
+        (transfers as PrivateTransfersInterface)
+          .build({ autoSetup: true, autoDiscover: { notes: "refresh", channels: "refresh" } })
+          .with(env.env.strk, (token) => token
+            .deposit({ amount: CONTRIBUTION_AMOUNT })
+            .withdraw({ recipient: intent.helperAddress, amount: CONTRIBUTION_AMOUNT })
+            // The integrated proof intentionally already owns a private note.
+            // The pinned SDK requires the surplus to be expressed explicitly;
+            // false retains it inside the privacy pool rather than producing an
+            // unrelated transparent withdrawal.
+            .surplusTo(account.accountAddress, false))
+          .invoke(() => ({ contractAddress: intent.helperAddress, entrypoint: intent.helperEntrypoint, calldata: intent.helperCalldata.map(BigInt) })) as unknown as Strk20PrivacyBuilder
       );
       const helperProvingBase = new ScreeningCallMockProofProvider(env.env.node, constants.StarknetChainId.SN_SEPOLIA);
       const helperProving = {
