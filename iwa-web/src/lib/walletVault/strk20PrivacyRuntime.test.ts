@@ -168,6 +168,59 @@ describe("Iwa STRK20 direct SDK runtime", () => {
     }));
   });
 
+  it("accepts the pinned devnet mock proof shape with an explicitly absent proof blob", async () => {
+    const devnetMockResult = genuineHelperPoolResult();
+    // The pinned upstream CallMockProofProvider returns `data: undefined!` for
+    // its local proof witness while retaining the proof field itself.
+    devnetMockResult.callAndProof.proof.data = undefined as never;
+    const sdk = fakeSdk({ registered: false, executeResult: devnetMockResult });
+    const submit = vi.fn(async () => undefined);
+    const runtime = new IwaStrk20PrivacyRuntime({
+      sdk: sdk.factory,
+      provingProvider: { testOnly: true },
+      discoveryProvider: { testOnly: true },
+      probeRegistration: async () => false,
+      submit,
+    });
+
+    await expect(runtime.ensureRegistered(context)).resolves.toEqual({ registration: "submitted" });
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({
+      callAndProof: expect.objectContaining({
+        proof: expect.objectContaining({ data: undefined }),
+      }),
+    }));
+  });
+
+  it("rejects missing or malformed proof blob fields before submission", async () => {
+    const malformed = [
+      (result: ReturnType<typeof genuineHelperPoolResult>) => {
+        delete (result.callAndProof.proof as Partial<typeof result.callAndProof.proof>).data;
+      },
+      (result: ReturnType<typeof genuineHelperPoolResult>) => {
+        result.callAndProof.proof.data = null as never;
+      },
+      (result: ReturnType<typeof genuineHelperPoolResult>) => {
+        result.callAndProof.proof.data = 1 as never;
+      },
+    ];
+
+    for (const mutate of malformed) {
+      const result = genuineHelperPoolResult();
+      mutate(result);
+      const submit = vi.fn(async () => undefined);
+      const runtime = new IwaStrk20PrivacyRuntime({
+        sdk: fakeSdk({ registered: false, executeResult: result }).factory,
+        provingProvider: { testOnly: true },
+        discoveryProvider: { testOnly: true },
+        probeRegistration: async () => false,
+        submit,
+      });
+
+      await expect(runtime.ensureRegistered(context)).rejects.toThrow();
+      expect(submit).not.toHaveBeenCalled();
+    }
+  });
+
   it("does not submit a duplicate registration when a protocol probe confirms the persisted identity", async () => {
     const sdk = fakeSdk({ registered: true, executeResult: genuineHelperPoolResult() });
     const submit = vi.fn(async () => undefined);

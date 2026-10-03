@@ -41,7 +41,13 @@ export interface Strk20PrivacyCall {
 export interface Strk20PrivacyCallAndProof {
   readonly call: Strk20PrivacyCall;
   readonly proof: {
-    readonly data: string;
+    /**
+     * Production proving services return an encoded proof string. The pinned
+     * upstream devnet CallMockProofProvider deliberately returns an explicit
+     * undefined value because its proof facts are sufficient for local
+     * validation. The field itself must always be present.
+     */
+    readonly data: string | undefined;
     readonly proofFacts: readonly string[];
     readonly output: readonly string[];
   };
@@ -331,12 +337,13 @@ function assertCallAndProof(value: unknown): asserts value is Strk20PrivacyCallA
   const record = callAndProof as { readonly call?: unknown; readonly proof?: unknown };
   if (typeof record.call !== "object" || record.call === null || typeof record.proof !== "object" || record.proof === null) fail();
   const call = record.call as Partial<Strk20PrivacyCall>;
-  const proof = record.proof as Partial<Strk20PrivacyCallAndProof["proof"]>;
+  const proof = record.proof as Record<string, unknown>;
   if (
     typeof call.contractAddress !== "string" ||
     typeof call.entrypoint !== "string" ||
     !Array.isArray(call.calldata) ||
-    typeof proof.data !== "string" ||
+    !Object.prototype.hasOwnProperty.call(proof, "data") ||
+    (typeof proof.data !== "string" && proof.data !== undefined) ||
     !Array.isArray(proof.proofFacts) ||
     !Array.isArray(proof.output)
   ) {
