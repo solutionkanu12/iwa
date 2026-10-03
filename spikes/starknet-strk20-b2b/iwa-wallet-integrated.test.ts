@@ -99,6 +99,21 @@ async function mintTestFunding(address: string, rpcUrl: string): Promise<void> {
   const payload = (await response.json()) as { result?: unknown; error?: unknown };
   if (!response.ok || payload.result === undefined || payload.error !== undefined) throw new Error("isolated deployment funding failed");
 }
+/**
+ * The pinned SDK proves at latest minus ten blocks. Its documented sequencing
+ * rule therefore requires every transparent prerequisite to be at least eleven
+ * blocks old. Devnet mints to an unrelated predeployed account create those
+ * disposable blocks without giving a sponsor any wallet authority.
+ */
+async function advanceDevnetForProvingBase(provider: RpcProvider, rpcUrl: string, nonAuthorityAddress: string): Promise<void> {
+  const firstBlock = await provider.getBlockNumber();
+  const requiredBlock = firstBlock + 11;
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    if (await provider.getBlockNumber() >= requiredBlock) return;
+    await mintTestFunding(nonAuthorityAddress, rpcUrl);
+  }
+  if (await provider.getBlockNumber() < requiredBlock) throw new Error("isolated devnet did not advance the SDK proving base");
+}
 function makePasskey(credentialId: string, prfInputStart: number): WalletPasskeyMetadata {
   return { credentialId, rpId: "wallet.example.test", prfInput: Uint8Array.from({ length: 32 }, (_, index) => prfInputStart + index) };
 }
@@ -200,6 +215,7 @@ describe("Iwa B2-B-R2 integrated vault and STRK20 proof", () => {
       expect(deployment.accountAddress).toBe(account.accountAddress);
       expect(deployment.resumed).toBe(false);
       expect(BigInt(await provider.getClassHashAt(account.accountAddress))).toBe(BigInt(accountClassHash));
+      await advanceDevnetForProvingBase(provider, devnet.url, env.env.admin.address);
 
       phase = "provision-encrypted-viewing-authority";
       const viewing = await initialVault.provisionStrk20ViewingAuthority(initialSession, { walletId: WALLET_ID, password: INITIAL_PASSWORD, networkId, poolAddress: env.env.privacy.address, accountAddress: account.accountAddress });
@@ -233,6 +249,7 @@ describe("Iwa B2-B-R2 integrated vault and STRK20 proof", () => {
       phase = "fund-and-create-private-test-state";
       await execute(env.env.alice, { contractAddress: env.env.strk, entrypoint: "transfer", calldata: [account.accountAddress, TEST_FUNDING_AMOUNT, 0n] });
       await execute(rawAccount, { contractAddress: env.env.strk, entrypoint: "approve", calldata: [env.env.privacy.address, PRIVATE_TEST_AMOUNT + CONTRIBUTION_AMOUNT * 2n, 0n] });
+      await advanceDevnetForProvingBase(provider, devnet.url, env.env.admin.address);
       const privateDeposit = await transfersFor(rawAccount, rawContext.viewingKey, env).build({ autoSetup: true, autoDiscover: { notes: "refresh", channels: "refresh" } }).with(env.env.strk, (token) => token.deposit({ amount: PRIVATE_TEST_AMOUNT })).surplusTo(account.accountAddress).execute();
       await devnet.executeOutside(privateDeposit.callAndProof);
       await env.indexer.waitForBlock(devnet.url);
