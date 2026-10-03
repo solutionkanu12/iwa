@@ -242,10 +242,36 @@ describe("Iwa B2-B-R2 integrated vault and STRK20 proof", () => {
         registrationPath = "probe-complete";
         return registered;
       };
+      const baseProvingProvider = new ScreeningCallMockProofProvider(env.env.node, constants.StarknetChainId.SN_SEPOLIA);
+      const tracedProvingProvider = {
+        getDefaultDetails: async () => {
+          registrationPath = "proving-details";
+          const details = await baseProvingProvider.getDefaultDetails();
+          registrationPath = "proving-details-complete";
+          return details;
+        },
+        prove: async (...args: Parameters<typeof baseProvingProvider.prove>) => {
+          registrationPath = "proving";
+          const proof = await baseProvingProvider.prove(...args);
+          registrationPath = "proof-complete";
+          return proof;
+        },
+      };
+      const baseDiscoveryProvider = new IndexerDiscoveryProvider(env.indexer.apiUrl, env.env.privacy.address);
+      const tracedDiscoveryProvider = new Proxy(baseDiscoveryProvider, {
+        get(target, property, receiver) {
+          const value = Reflect.get(target, property, receiver);
+          if (typeof value !== "function") return value;
+          return (...args: unknown[]) => {
+            registrationPath = "discovering";
+            return value.apply(target, args);
+          };
+        },
+      });
       const runtime = new IwaStrk20PrivacyRuntime({
         sdk: privacySdkFactory(),
-        provingProvider: new ScreeningCallMockProofProvider(env.env.node, constants.StarknetChainId.SN_SEPOLIA),
-        discoveryProvider: new IndexerDiscoveryProvider(env.indexer.apiUrl, env.env.privacy.address),
+        provingProvider: tracedProvingProvider,
+        discoveryProvider: tracedDiscoveryProvider,
         probeRegistration: registrationProbe,
         submit: async ({ callAndProof }) => {
           registrationPath = "submitting";
