@@ -186,6 +186,9 @@ describe("Iwa B2-B-R2 integrated vault and STRK20 proof", () => {
 
   it("proves one encrypted vault identity through deploy, canonical helper invocation, and same-authority recovery", async () => {
     let phase = "initialize";
+    // A fixed diagnostic label only. It intentionally contains no upstream
+    // error text, calldata, account identifier, or authority material.
+    let registrationPath = "not-started";
     const store = new InMemoryVaultStore();
     const recoveryKey = crypto.getRandomValues(new Uint8Array(32));
     const initialPasskey = makePasskey("b2br2-initial-passkey", 1);
@@ -221,15 +224,24 @@ describe("Iwa B2-B-R2 integrated vault and STRK20 proof", () => {
       const viewing = await initialVault.provisionStrk20ViewingAuthority(initialSession, { walletId: WALLET_ID, password: INITIAL_PASSWORD, networkId, poolAddress: env.env.privacy.address, accountAddress: account.accountAddress });
       expect(viewing.registrationState).toBe("local");
       const registrationProbe = async (context: { accountAddress: string; viewingKey: bigint }) => {
+        registrationPath = "probing";
         const stored = await env.env.node.callContract({ contractAddress: env.env.privacy.address, entrypoint: "get_public_key", calldata: [context.accountAddress] });
-        return BigInt(stored[0] ?? "0x0") === publicKeyX(context.viewingKey);
+        const registered = BigInt(stored[0] ?? "0x0") === publicKeyX(context.viewingKey);
+        registrationPath = "probe-complete";
+        return registered;
       };
       const runtime = new IwaStrk20PrivacyRuntime({
         sdk: privacySdkFactory(),
         provingProvider: new ScreeningCallMockProofProvider(env.env.node, constants.StarknetChainId.SN_SEPOLIA),
         discoveryProvider: new IndexerDiscoveryProvider(env.indexer.apiUrl, env.env.privacy.address),
         probeRegistration: registrationProbe,
-        submit: async ({ callAndProof }) => { await devnet.executeOutside(callAndProof as never); await env.indexer.waitForBlock(devnet.url); },
+        submit: async ({ callAndProof }) => {
+          registrationPath = "submitting";
+          await devnet.executeOutside(callAndProof as never);
+          registrationPath = "submitted";
+          await env.indexer.waitForBlock(devnet.url);
+          registrationPath = "indexed";
+        },
       });
       phase = "register-viewing-key-through-vault";
       await initialVault.registerStrk20ViewingAuthority(initialSession, { walletId: WALLET_ID, password: INITIAL_PASSWORD, provider, runtime });
@@ -372,7 +384,10 @@ describe("Iwa B2-B-R2 integrated vault and STRK20 proof", () => {
         : error instanceof Error
           ? error.name
           : "unknown";
-      throw new Error(`B2BR2_PHASE_FAILED:${phase}:${category}`);
+      const registrationSuffix = phase === "register-viewing-key-through-vault"
+        ? `:${registrationPath}`
+        : "";
+      throw new Error(`B2BR2_PHASE_FAILED:${phase}:${category}${registrationSuffix}`);
     } finally {
       initialVault?.lock(); recoveryKey.fill(0); rawSpending?.fill(0); rawViewing?.fill(0); restoredSpending?.fill(0); restoredViewing?.fill(0);
       if (inspectionPayload !== undefined) { inspectionPayload.rootSecret.fill(0); wipeVaultAuthorities(inspectionPayload.authorities); }
