@@ -337,6 +337,10 @@ describe("Iwa B2-B-R2 integrated vault and STRK20 proof", () => {
       await execute(env.env.alice, { contractAddress: iwa.circle, entrypoint: "create_circle", calldata: [env.env.strk, CONTRIBUTION_AMOUNT, 100n, 50n, 2n, 2n, walletSettlement.memberRef, bobSettlement.memberRef] });
       await execute(rawAccount, { contractAddress: iwa.circle, entrypoint: "join_circle", calldata: [1n, walletSettlement.inviteSecret, walletSettlement.publicKeyX] });
       await execute(env.env.bob, { contractAddress: iwa.circle, entrypoint: "join_circle", calldata: [1n, bobSettlement.inviteSecret, bobSettlement.publicKeyX] });
+      // The pinned SDK proves against latest minus ten blocks. The temporary
+      // circle/helper deployment and member state are transparent inputs to
+      // the authenticated inner Invoke, so they must exist at that base.
+      await advanceDevnetForProvingBase(provider, devnet.url);
       const helperIntent = (circleId: bigint, nonce: bigint): IwaHelperPrivateInvoke => {
         const signature = signIwa(walletSettlement.privateKey, contributionHash({ circleId, memberRef: walletSettlement.memberRef, helper: iwa.helper, pool: env.env.privacy.address, token: env.env.strk, nonce }));
         return {
