@@ -348,8 +348,17 @@ describe("Iwa B2-B-R2 integrated vault and STRK20 proof", () => {
       // Diagnostic only: this runs the same pinned SDK builder without
       // submission and records just closed-set action names. It cannot expose
       // private calldata, proof data, account material, or viewing authority.
+      helperActionTypes = "preview-building";
       const preview = await buildHelper(transfersFor({ address: account.accountAddress, signer: account.signer }, bytesToBigInt(rawViewing), env), firstHelperIntent).execute();
-      helperActionTypes = decodePinnedStrk20ServerActions(preview.callAndProof.proof.output.slice(1)).map((action) => action.type).join(",");
+      helperActionTypes = "preview-executed";
+      const previewRecord = preview as { readonly callAndProof?: { readonly proof?: { readonly output?: unknown } } };
+      const previewOutput = previewRecord.callAndProof?.proof?.output;
+      if (!Array.isArray(previewOutput)) {
+        helperActionTypes = "preview-missing-proof-output";
+        throw new Error("integrated SDK preview did not return proof output");
+      }
+      helperActionTypes = "preview-proof-output";
+      helperActionTypes = decodePinnedStrk20ServerActions(previewOutput.slice(1)).map((action) => action.type).join(",");
       await boundRuntime.invokeIwaHelper(rawContext, firstHelperIntent);
       const liability = await env.env.node.callContract({ contractAddress: iwa.helper, entrypoint: "get_token_liability", calldata: [env.env.strk] });
       expect(BigInt(liability[0] ?? "0x0")).toBe(CONTRIBUTION_AMOUNT);
