@@ -416,6 +416,10 @@ describe("Iwa B2-B-R2 integrated vault and STRK20 proof", () => {
       // circle/helper deployment and member state are transparent inputs to
       // the authenticated inner Invoke, so they must exist at that base.
       await advanceDevnetForProvingBase(provider, devnet.url);
+      // The pinned IndexerDiscoveryProvider must observe the same finalized
+      // height as the proof base. Empty Devnet blocks still advance that
+      // height even though they contain no private event.
+      await env.indexer.waitForBlock(devnet.url);
       const helperIntent = (circleId: bigint, nonce: bigint): IwaHelperPrivateInvoke => {
         const signature = signIwa(walletSettlement.privateKey, contributionHash({ circleId, memberRef: walletSettlement.memberRef, helper: iwa.helper, pool: env.env.privacy.address, token: env.env.strk, nonce }));
         return {
@@ -591,6 +595,11 @@ describe("Iwa B2-B-R2 integrated vault and STRK20 proof", () => {
       await execute(env.env.alice, { contractAddress: iwa.circle, entrypoint: "create_circle", calldata: [env.env.strk, CONTRIBUTION_AMOUNT, 100n, 50n, 2n, 2n, walletSettlement.memberRef, bobSettlement.memberRef] });
       await execute(recoveredAccount, { contractAddress: iwa.circle, entrypoint: "join_circle", calldata: [2n, walletSettlement.inviteSecret, walletSettlement.publicKeyX] });
       await execute(env.env.bob, { contractAddress: iwa.circle, entrypoint: "join_circle", calldata: [2n, bobSettlement.inviteSecret, bobSettlement.publicKeyX] });
+      // The recovered path consumes private state created by the first
+      // helper operation, so it too waits for both finalized proof age and
+      // indexer synchronization before producing a second proof.
+      await advanceDevnetForProvingBase(provider, devnet.url);
+      await env.indexer.waitForBlock(devnet.url);
       await boundRuntime.invokeIwaHelper(restoredContext, helperIntent(2n, 0x704n));
       expect(restoredVault.recoveryGeneration(restoredSession, WALLET_ID)).toBe(2);
       restoredVault.lock();
