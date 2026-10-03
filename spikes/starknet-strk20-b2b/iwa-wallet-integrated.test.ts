@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { createE2eTestEnv, type E2eTestEnv } from "../../src/harness.js";
 
 import { PrivacyPoolABI } from "./iwa-wallet-vault/../../../../scripts/demo/vendor/starknet-privacy-sdk/dist/internal/abi.js";
-import { type WalletPasskeyMetadata } from "./iwa-wallet-vault/vaultCrypto.ts";
+import { VaultError, type WalletPasskeyMetadata } from "./iwa-wallet-vault/vaultCrypto.ts";
 import { isStarknetVaultAuthority, isStrk20ViewingVaultAuthority, openRecoveryPackage, wipeVaultAuthorities } from "./iwa-wallet-vault/recoveryPackage.ts";
 import { IwaStrk20PrivacyRuntime, type IwaHelperPrivateInvoke, type Strk20PrivacyBuilder, type Strk20PrivacySdkFactory } from "./iwa-wallet-vault/strk20PrivacyRuntime.ts";
 import { InMemoryVaultStore } from "./iwa-wallet-vault/vaultStore.ts";
@@ -203,7 +203,7 @@ describe("Iwa B2-B-R2 integrated vault and STRK20 proof", () => {
 
       phase = "provision-encrypted-viewing-authority";
       const viewing = await initialVault.provisionStrk20ViewingAuthority(initialSession, { walletId: WALLET_ID, password: INITIAL_PASSWORD, networkId, poolAddress: env.env.privacy.address, accountAddress: account.accountAddress });
-      expect(viewing.registrationState).toBe("unregistered");
+      expect(viewing.registrationState).toBe("local");
       const registrationProbe = async (context: { accountAddress: string; viewingKey: bigint }) => {
         const stored = await env.env.node.callContract({ contractAddress: env.env.privacy.address, entrypoint: "get_public_key", calldata: [context.accountAddress] });
         return BigInt(stored[0] ?? "0x0") === publicKeyX(context.viewingKey);
@@ -346,8 +346,16 @@ describe("Iwa B2-B-R2 integrated vault and STRK20 proof", () => {
       await boundRuntime.invokeIwaHelper(restoredContext, helperIntent(2n, 0x704n));
       expect(restoredVault.recoveryGeneration(restoredSession, WALLET_ID)).toBe(2);
       restoredVault.lock();
-    } catch {
-      throw new Error(`B2BR2_PHASE_FAILED:${phase}`);
+    } catch (error) {
+      // The disposable log may identify only a public vault error category.
+      // It never includes a message because an upstream/provider error could
+      // contain sensitive protocol input.
+      const category = error instanceof VaultError
+        ? error.code
+        : error instanceof Error
+          ? error.name
+          : "unknown";
+      throw new Error(`B2BR2_PHASE_FAILED:${phase}:${category}`);
     } finally {
       initialVault?.lock(); recoveryKey.fill(0); rawSpending?.fill(0); rawViewing?.fill(0); restoredSpending?.fill(0); restoredViewing?.fill(0);
       if (inspectionPayload !== undefined) { inspectionPayload.rootSecret.fill(0); wipeVaultAuthorities(inspectionPayload.authorities); }
