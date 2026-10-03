@@ -151,6 +151,21 @@ function privacySdkFactory(): Strk20PrivacySdkFactory {
 }
 
 /**
+ * CI diagnostics never publish a provider message because it can contain
+ * protocol input. Categorize a small, fixed set of public SDK failures only.
+ */
+function safeSdkFailureCategory(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  if (/insufficient balance|negative intermediate balance/i.test(message)) return "insufficient-balance";
+  if (/missing channel|channel not found|channel context/i.test(message)) return "channel-context";
+  if (/viewing.?key|not registered/i.test(message)) return "viewing-key-state";
+  if (/invalid.?signature|invalid_signature/i.test(message)) return "signer-validation";
+  if (/invalid.?nonce/i.test(message)) return "pool-nonce";
+  if (/screening/i.test(message)) return "screening";
+  return "opaque-sdk-error";
+}
+
+/**
  * CI-only adversarial mutation. It begins with a genuine SDK result, decodes
  * the proof-bound action span with the same pinned ABI used by the production
  * validator, then substitutes only the inner Invoke target. The validator must
@@ -349,7 +364,13 @@ describe("Iwa B2-B-R2 integrated vault and STRK20 proof", () => {
       // submission and records just closed-set action names. It cannot expose
       // private calldata, proof data, account material, or viewing authority.
       helperActionTypes = "preview-building";
-      const preview = await buildHelper(transfersFor(rawContext.account, rawContext.viewingKey, env), firstHelperIntent).execute();
+      let preview: Awaited<ReturnType<Strk20PrivacyBuilder["execute"]>>;
+      try {
+        preview = await buildHelper(transfersFor(rawContext.account, rawContext.viewingKey, env), firstHelperIntent).execute();
+      } catch (error) {
+        helperActionTypes = `preview-${safeSdkFailureCategory(error)}`;
+        throw error;
+      }
       helperActionTypes = "preview-executed";
       const previewRecord = preview as { readonly callAndProof?: { readonly proof?: { readonly output?: unknown } } };
       const previewOutput = previewRecord.callAndProof?.proof?.output;
