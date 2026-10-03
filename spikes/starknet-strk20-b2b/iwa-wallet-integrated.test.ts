@@ -436,7 +436,11 @@ describe("Iwa B2-B-R2 integrated vault and STRK20 proof", () => {
       };
       const buildHelper = (transfers: unknown, intent: IwaHelperPrivateInvoke): Strk20PrivacyBuilder => (
         (transfers as PrivateTransfersInterface)
-          .build({ autoSetup: true, autoDiscover: { notes: "refresh", channels: "refresh" } })
+          // This bounded helper operation consumes only the wallet's own
+          // note and sends a transparent withdrawal to the fixed helper. It
+          // creates no private-recipient channel, so refreshing channels
+          // would add an unrelated discovery dependency.
+          .build({ autoSetup: true, autoDiscover: { notes: "refresh" } })
           .with(env.env.strk, (token) => token
             .withdraw({ recipient: intent.helperAddress, amount: CONTRIBUTION_AMOUNT })
             // The integrated proof intentionally already owns a private note.
