@@ -16,6 +16,7 @@ import { PrivacyPoolABI } from "./iwa-wallet-vault/../../../../scripts/demo/vend
 import { VaultError, type WalletPasskeyMetadata } from "./iwa-wallet-vault/vaultCrypto.ts";
 import { isStarknetVaultAuthority, isStrk20ViewingVaultAuthority, openRecoveryPackage, wipeVaultAuthorities } from "./iwa-wallet-vault/recoveryPackage.ts";
 import { IwaStrk20PrivacyRuntime, type IwaHelperPrivateInvoke, type Strk20PrivacyBuilder, type Strk20PrivacySdkFactory } from "./iwa-wallet-vault/strk20PrivacyRuntime.ts";
+import { decodePinnedStrk20ServerActions } from "./iwa-wallet-vault/strk20PoolActionDecoder.ts";
 import { InMemoryVaultStore } from "./iwa-wallet-vault/vaultStore.ts";
 import { WalletVault } from "./iwa-wallet-vault/walletVault.ts";
 
@@ -201,6 +202,7 @@ describe("Iwa B2-B-R2 integrated vault and STRK20 proof", () => {
     // A fixed diagnostic label only. It intentionally contains no upstream
     // error text, calldata, account identifier, or authority material.
     let registrationPath = "not-started";
+    let helperActionTypes = "not-executed";
     const store = new InMemoryVaultStore();
     const recoveryKey = crypto.getRandomValues(new Uint8Array(32));
     const initialPasskey = makePasskey("b2br2-initial-passkey", 1);
@@ -342,7 +344,13 @@ describe("Iwa B2-B-R2 integrated vault and STRK20 proof", () => {
         submit: async ({ callAndProof }) => { await devnet.executeOutside(callAndProof as never); await env.indexer.waitForBlock(devnet.url); }, buildIwaHelperOperation: buildHelper,
       });
       phase = "validate-and-submit-genuine-sdk-helper-intent";
-      await boundRuntime.invokeIwaHelper(rawContext, helperIntent(1n, 0x701n));
+      const firstHelperIntent = helperIntent(1n, 0x701n);
+      // Diagnostic only: this runs the same pinned SDK builder without
+      // submission and records just closed-set action names. It cannot expose
+      // private calldata, proof data, account material, or viewing authority.
+      const preview = await buildHelper(transfersFor({ address: account.accountAddress, signer: account.signer }, bytesToBigInt(rawViewing), env), firstHelperIntent).execute();
+      helperActionTypes = decodePinnedStrk20ServerActions(preview.callAndProof.proof.output.slice(1)).map((action) => action.type).join(",");
+      await boundRuntime.invokeIwaHelper(rawContext, firstHelperIntent);
       const liability = await env.env.node.callContract({ contractAddress: iwa.helper, entrypoint: "get_token_liability", calldata: [env.env.strk] });
       expect(BigInt(liability[0] ?? "0x0")).toBe(CONTRIBUTION_AMOUNT);
 
@@ -424,7 +432,9 @@ describe("Iwa B2-B-R2 integrated vault and STRK20 proof", () => {
           : "unknown";
       const registrationSuffix = phase === "register-viewing-key-through-vault"
         ? `:${registrationPath}`
-        : "";
+        : phase === "validate-and-submit-genuine-sdk-helper-intent"
+          ? `:${helperActionTypes}`
+          : "";
       throw new Error(`B2BR2_PHASE_FAILED:${phase}:${category}${registrationSuffix}`);
     } finally {
       initialVault?.lock(); recoveryKey.fill(0); rawSpending?.fill(0); rawViewing?.fill(0); restoredSpending?.fill(0); restoredViewing?.fill(0);
