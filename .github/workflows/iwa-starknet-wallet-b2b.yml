@@ -220,8 +220,19 @@ jobs:
           ln -s "$GITHUB_WORKSPACE/iwa-web/src/lib/walletVault" \
             "$IWA_PRIVACY_DIR/e2e/tests/devnet/iwa-wallet-vault"
           cp "$GITHUB_WORKSPACE/spikes/starknet-strk20-b2b/iwa-wallet-integrated.test.ts" "$harness"
+          if grep -nE 'console\.|process\.(stdout|stderr)|localStorage|sessionStorage|indexedDB|document\.cookie' "$harness"; then
+            echo 'Unsafe output or persistence dependency in integrated harness' >&2
+            exit 1
+          fi
+          set +e
           (cd "$IWA_PRIVACY_DIR/e2e" && IWA_ARTIFACT_DIR="$IWA_ARTIFACT_DIR" \
-            npx vitest run tests/devnet/iwa-wallet-integrated.test.ts --reporter=default --reporter=github-actions)
+            npx vitest run tests/devnet/iwa-wallet-integrated.test.ts --reporter=default --reporter=github-actions) 2>&1 | sed -E \
+              -e 's/((private|viewing|recovery)[_-]?(key|seed|secret)[[:space:]]*[:=][[:space:]]*)[^[:space:],}]+/\1[REDACTED]/Ig' \
+              -e 's/("private_key"[[:space:]]*:[[:space:]]*")[^"]+("?)/\1[REDACTED]\2/Ig'
+          status=${PIPESTATUS[0]}
+          set -e
+          test "$status" -eq 0
+          echo '- B2-B-R2 integrated encrypted-vault, SDK, recovery proof: **PASS**' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Record disposable cleanup boundary
         if: always()
